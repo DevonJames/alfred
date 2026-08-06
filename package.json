@@ -1,0 +1,30 @@
+{
+  "name": "alfred",
+  "private": true,
+  "version": "0.1.0",
+  "description": "ALFRED Conversation Core — provider-neutral conversational runtime",
+  "packageManager": "pnpm@9.15.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "pnpm -r run build",
+    "typecheck": "pnpm -r run typecheck",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "pnpm -r run lint",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "simulate": "pnpm --filter @alfred/simulator start",
+    "voice": "pnpm --filter @alfred/voice-agent start",
+    "client": "pnpm --filter @alfred/voice-client dev",
+    "memory": "pnpm --filter @alfred/voice-agent memory",
+    "clean": "pnpm -r exec rm -rf dist"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "prettier": "^3.4.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

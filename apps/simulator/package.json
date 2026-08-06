@@ -1,0 +1,37 @@
+{
+  "name": "@alfred/simulator",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "alfred-simulate": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "tsc -p tsconfig.json --noEmit",
+    "start": "tsx src/cli.ts"
+  },
+  "dependencies": {
+    "@alfred/agents": "workspace:*",
+    "@alfred/contracts": "workspace:*",
+    "@alfred/core": "workspace:*",
+    "@alfred/memory": "workspace:*",
+    "@alfred/persistence": "workspace:*",
+    "@alfred/providers": "workspace:*"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  },
+  "main": "./src/cli.ts",
+  "types": "./src/cli.ts",
+  "exports": {
+    ".": {
+      "types": "./src/cli.ts",
+      "import": "./src/cli.ts",
+      "default": "./src/cli.ts"
+    }
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "name": "@alfred/voice-agent",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "tsc -p tsconfig.json --noEmit",
+    "start": "tsx src/main.ts",
+    "token": "tsx src/mint-token.ts",
+    "memory": "tsx src/memory-cli.ts"
+  },
+  "dependencies": {
+    "@alfred/agents": "workspace:*",
+    "@alfred/contracts": "workspace:*",
+    "@alfred/core": "workspace:*",
+    "@alfred/livekit": "workspace:*",
+    "@alfred/memory": "workspace:*",
+    "@alfred/persistence": "workspace:*",
+    "@alfred/provider-deepgram": "workspace:*",
+    "@alfred/provider-elevenlabs": "workspace:*",
+    "@alfred/provider-openai": "workspace:*",
+    "@alfred/providers": "workspace:*",
+    "dotenv": "^16.4.7"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}

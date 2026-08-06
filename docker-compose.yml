@@ -1,0 +1,22 @@
+# Postgres scaffold for future persistence (M2+).
+# The M1 text-only simulator uses in-memory repositories and does not require this service.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: alfred
+      POSTGRES_PASSWORD: alfred
+      POSTGRES_DB: alfred
+    ports:
+      - "5432:5432"
+    volumes:
+      - alfred_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U alfred -d alfred"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  alfred_pg_data:
