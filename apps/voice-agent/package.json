@@ -8,6 +8,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "tsc -p tsconfig.json --noEmit",
     "start": "tsx src/main.ts",
+    "mint-token": "tsx src/mint-token.ts",
     "token": "tsx src/mint-token.ts",
     "memory": "tsx src/memory-cli.ts"
   },

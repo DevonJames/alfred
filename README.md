@@ -24,8 +24,9 @@ cp .env.example .env
 | `pnpm test`      | Run Vitest unit and scenario tests                |
 | `pnpm simulate`  | Run the 15 M1 CLI scenarios                       |
 | `pnpm voice`     | Start cascaded voice runtime (`apps/voice-agent`) |
-| `pnpm client`    | Local mic client with WebRTC AEC (`apps/voice-client`) |
-| `pnpm memory`    | Inspect / export / import local long-term memory  |
+| `pnpm client`     | Local mic client with WebRTC AEC (`apps/voice-client`) |
+| `pnpm mint-token` | Print a LiveKit join token (Meet / Playground)         |
+| `pnpm memory`     | Inspect / export / import local long-term memory       |
 | `pnpm typecheck` | TypeScript check across packages                  |
 | `pnpm format`    | Format with Prettier                              |
 | `pnpm build`     | Emit `dist/` for each package                     |
@@ -51,11 +52,13 @@ Prereqs in `.env`: `DEEPGRAM_API_KEY`, `OPENAI_API_KEY`, `ELEVENLABS_API_KEY`, `
 
 | Terminal | Command | What it does |
 | -------- | ------- | ------------ |
-| 1 | `pnpm --filter @alfred/voice-agent token` | Prints `{ url, room, identity, token }` for joining LiveKit Meet / Agents Playground (or for inspecting creds). One-shot; re-run when you need a fresh token. |
+| 1 | `pnpm mint-token` | Prints `{ url, room, identity, token }` for joining LiveKit Meet / Agents Playground (or for inspecting creds). One-shot; re-run when you need a fresh token. |
 | 2 | `pnpm voice` | Starts the cascaded voice agent. Joins `LIVEKIT_ROOM` as `alfred-agent`, listens on remote mic PCM, runs STT→LLM→TTS, publishes assistant audio. Leave this running. |
 | 3 | `pnpm client` | Starts the local mic client at http://localhost:5173 with WebRTC `echoCancellation` on. Open that URL, click **Connect** (it mints its own join token from `.env`), enable the mic, and talk. Leave this running. |
 
 Typical local loop: keep **terminal 2** (`pnpm voice`) and **terminal 3** (`pnpm client`) up. Use **terminal 1** when you want Meet/Playground instead of (or in addition to) the AEC client — paste the printed URL/token there. Prefer `pnpm client` for speakerphone testing; Meet does not guarantee AEC.
+
+> **Note:** Do not run `pnpm token` / `pnpm --filter … token` — `token` is a built-in pnpm CLI command (npm auth). Use `pnpm mint-token` (or `pnpm --filter @alfred/voice-agent run mint-token`).
 
 Echo stack (layered):
 
