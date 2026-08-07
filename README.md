@@ -94,6 +94,19 @@ pnpm memory -- export ./backup.jsonl
 pnpm memory -- import ./backup.jsonl
 ```
 
+**Ingest a cross-AI knowledge export** (from ChatGPT / Claude / etc.):
+
+```bash
+# Preview split without writing
+pnpm memory -- ingest-export ./path/to/export.md --dry-run
+
+# Archive full file, merge High-Priority + How to Work into USER.md,
+# import the rest as retrievable memory notes
+pnpm memory -- ingest-export ./path/to/export.md
+```
+
+Flags: `--dry-run`, `--no-user`, `--no-memory`. Full copies land in `data/knowledge/exports/` (gitignored). Re-running replaces the previous `<!-- alfred:ingest-export:* -->` block in `USER.md`.
+
 **Live recall check:** with `pnpm voice` running, say “My name is Devon.” After the reply, stop the agent, start `pnpm voice` again, and ask “What’s my name?” — it should recall from the JSONL file. Confirm startup logs show `Memory: memory.local path=...` and `Persona: .../SOUL=yes`.
 
 ## Documentation

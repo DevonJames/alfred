@@ -1,22 +1,27 @@
 /**
- * Local memory + persona inspect / export / import.
+ * Local memory + persona inspect / export / import / ingest-export.
  *
  *   pnpm memory -- inspect
  *   pnpm memory -- persona
  *   pnpm memory -- export [file]
  *   pnpm memory -- import <file>
+ *   pnpm memory -- ingest-export <report.md> [--dry-run] [--no-user] [--no-memory]
  */
 import { config as loadEnv } from "dotenv";
-import { readFile, writeFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import path, { resolve } from "node:path";
 import type { CanonicalMemoryRecord } from "@alfred/contracts";
 import {
   defaultMemoryPath,
   defaultPersonaDir,
   ensureAndLoadPersona,
+  ensurePersonaFiles,
   getItemKind,
   LocalFileMemoryProvider,
+  mergeUserMd,
   PERSONA_FILES,
+  planIngestExport,
+  resolveRepoRoot,
 } from "@alfred/memory";
 
 loadEnv({ path: resolve(process.cwd(), "../../.env") });
@@ -96,8 +101,89 @@ async function main(): Promise<void> {
     return;
   }
 
+  if (cmd === "ingest-export") {
+    const src = args[1];
+    if (!src) {
+      console.error(
+        "Usage: pnpm memory -- ingest-export <report.md> [--dry-run] [--no-user] [--no-memory]",
+      );
+      process.exitCode = 1;
+      return;
+    }
+    const flags = new Set(args.slice(2));
+    const dryRun = flags.has("--dry-run");
+    const noUser = flags.has("--no-user");
+    const noMemory = flags.has("--no-memory");
+
+    const abs = resolve(src);
+    const markdown = await readFile(abs, "utf8");
+    const sourceLabel = path.basename(abs);
+    const plan = planIngestExport(markdown, { sourceLabel });
+
+    console.log(`Source: ${abs}`);
+    console.log(`USER sections: ${plan.userSectionsFound.join(", ") || "(none found)"}`);
+    console.log(`Memory records planned: ${plan.memoryRecords.length}`);
+    console.log(`Skipped sections: ${plan.skippedSections.join(", ") || "(none)"}`);
+
+    const personaDir = defaultPersonaDir(profileId);
+    const userPath = path.join(personaDir, "USER.md");
+    const exportsDir = path.join(resolveRepoRoot(), "data", "knowledge", "exports");
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const archivePath = path.join(exportsDir, `${path.parse(sourceLabel).name}-${stamp}.md`);
+
+    if (dryRun) {
+      console.log("\n--dry-run: no files written");
+      if (plan.userPatch) {
+        console.log("\n----- USER.md patch preview (first 1200 chars) -----");
+        console.log(plan.userPatch.slice(0, 1200));
+      }
+      console.log("\n----- sample memory records -----");
+      for (const r of plan.memoryRecords.slice(0, 8)) {
+        console.log(`  [${r.metadata?.sourceId}] ${r.content.slice(0, 120)}`);
+      }
+      return;
+    }
+
+    await mkdir(exportsDir, { recursive: true });
+    await writeFile(archivePath, markdown, "utf8");
+    console.log(`Archived full export → ${archivePath}`);
+
+    if (!noUser) {
+      await ensurePersonaFiles(personaDir);
+      let existing = "";
+      try {
+        existing = await readFile(userPath, "utf8");
+      } catch {
+        existing = "# USER.md — User Model\n";
+      }
+      if (plan.userPatch) {
+        const merged = mergeUserMd(existing, plan.userPatch);
+        await writeFile(userPath, merged, "utf8");
+        console.log(`Updated USER.md ← ${plan.userSectionsFound.join(", ")}`);
+      } else {
+        console.log(
+          "No High-Priority / How to Work sections found — USER.md left unchanged.",
+        );
+      }
+    }
+
+    if (!noMemory && plan.memoryRecords.length) {
+      await provider.importCanonical(plan.memoryRecords);
+      console.log(`Imported ${plan.memoryRecords.length} memory notes → ${filePath}`);
+    } else if (noMemory) {
+      console.log("Skipped memory import (--no-memory)");
+    }
+
+    console.log("\nDone. Verify with:");
+    console.log("  pnpm memory -- persona");
+    console.log("  pnpm memory -- inspect");
+    return;
+  }
+
   console.error(`Unknown command: ${cmd}`);
-  console.error("Usage: pnpm memory -- inspect|persona|export|import");
+  console.error(
+    "Usage: pnpm memory -- inspect|persona|export|import|ingest-export",
+  );
   process.exitCode = 1;
 }
 
