@@ -28,12 +28,28 @@
     </header>
 
     <section class="stage">
+      <div id="user-panel" class="user-panel">
+        <div class="user-meta">
+          <span class="user-tag">YOU // MIC</span>
+          <span id="user-mode">IDLE</span>
+        </div>
+        <p id="user-caption" class="user-caption">
+          <span id="user-text" class="placeholder">Speak to uplink…</span
+          ><span id="user-cursor" class="cursor user-cursor" hidden></span>
+        </p>
+      </div>
+
       <canvas id="wave" width="1400" height="420" aria-label="Live speech waveform"></canvas>
       <div class="hud-ring" aria-hidden="true"></div>
+
       <div class="readout">
         <div class="readout-meta">
-          <span id="mode-tag">STANDBY</span>
-          <span id="level-tag">LVL --</span>
+          <span class="alfred-tag">ALFRED // OUT</span>
+          <span>
+            <span id="mode-tag">STANDBY</span>
+            ·
+            <span id="level-tag">LVL --</span>
+          </span>
         </div>
         <p id="caption" class="caption">
           <span id="caption-live"></span><span id="caption-rest" class="caption-rest"></span

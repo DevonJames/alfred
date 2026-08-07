@@ -1,5 +1,5 @@
 import type { AudioFrame, VadSignal } from "@alfred/contracts";
-import type { AssistantCaptionEvent, MediaPort } from "@alfred/core";
+import type { AssistantCaptionEvent, MediaPort, UserTranscriptEvent } from "@alfred/core";
 
 /**
  * LiveKit is transport only. Conversation policy stays in @alfred/core.
@@ -16,6 +16,9 @@ export class LiveKitMediaBridge implements MediaPort {
   private playbackHandlers = new Set<(frame: AudioFrame) => void | Promise<void>>();
   private stopHandlers = new Set<(reason?: string) => void>();
   private captionHandlers = new Set<(event: AssistantCaptionEvent) => void | Promise<void>>();
+  private userTranscriptHandlers = new Set<
+    (event: UserTranscriptEvent) => void | Promise<void>
+  >();
   private stopped = false;
 
   onAudioFrame(handler: (frame: AudioFrame) => void): () => void {
@@ -38,6 +41,12 @@ export class LiveKitMediaBridge implements MediaPort {
   onCaption(handler: (event: AssistantCaptionEvent) => void | Promise<void>): () => void {
     this.captionHandlers.add(handler);
     return () => this.captionHandlers.delete(handler);
+  }
+
+  /** Room session publishes user STT on the LiveKit data channel. */
+  onUserTranscript(handler: (event: UserTranscriptEvent) => void | Promise<void>): () => void {
+    this.userTranscriptHandlers.add(handler);
+    return () => this.userTranscriptHandlers.delete(handler);
   }
 
   /** Called by LiveKit track subscriber with decoded PCM. */
@@ -77,6 +86,12 @@ export class LiveKitMediaBridge implements MediaPort {
 
   async publishCaption(event: AssistantCaptionEvent): Promise<void> {
     for (const h of this.captionHandlers) {
+      await h(event);
+    }
+  }
+
+  async publishUserTranscript(event: UserTranscriptEvent): Promise<void> {
+    for (const h of this.userTranscriptHandlers) {
       await h(event);
     }
   }

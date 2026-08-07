@@ -92,6 +92,8 @@ export class VoiceSessionController {
   private readonly selfVoice = new SelfVoiceGate({
     nowMs: () => this.deps.clock.now(),
   });
+  private lastUserTranscriptPublishMs = 0;
+  private lastPublishedUserTranscript = "";
 
   constructor(private readonly deps: VoiceSessionDeps) {
     this.media = deps.media ?? new NullMediaPort();
@@ -223,6 +225,23 @@ export class VoiceSessionController {
     }
     this.mark("last_user_audio_at");
     await this.sttSession?.pushAudio(frame);
+  }
+
+  /** Push user STT to the client HUD (partials throttled). */
+  private async publishUserTranscriptUi(
+    text: string,
+    kind: "partial" | "final",
+  ): Promise<void> {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    const now = this.deps.clock.now();
+    if (kind === "partial") {
+      if (now - this.lastUserTranscriptPublishMs < 80) return;
+      if (trimmed === this.lastPublishedUserTranscript) return;
+    }
+    this.lastPublishedUserTranscript = trimmed;
+    this.lastUserTranscriptPublishMs = now;
+    await this.media.publishUserTranscript({ type: kind, text: trimmed });
   }
 
   private async onVad(signal: VadSignal): Promise<void> {
@@ -390,6 +409,9 @@ export class VoiceSessionController {
       case "start_of_turn":
         this.mark("speech_started_at");
         this.partialText = event.text ?? "";
+        if (!this.shouldIgnoreAsEcho(this.partialText)) {
+          await this.publishUserTranscriptUi(this.partialText, "partial");
+        }
         await this.deps.events.emit({
           sessionId: this.deps.sessionId,
           type: "stt.start_of_turn",
@@ -407,6 +429,7 @@ export class VoiceSessionController {
       case "partial_transcript":
         this.partialText = event.text ?? this.partialText;
         if (this.shouldIgnoreAsEcho(this.partialText)) return;
+        await this.publishUserTranscriptUi(this.partialText, "partial");
         await this.deps.events.emit({
           sessionId: this.deps.sessionId,
           type: "stt.partial_transcript",
@@ -421,8 +444,12 @@ export class VoiceSessionController {
           // Generating or speaking — don't start a second provisional reply.
           if (this.isRealBargeIn(this.partialText)) {
             this.pendingUserText = this.partialText;
+            await this.publishUserTranscriptUi(this.partialText, "partial");
           }
           return;
+        }
+        if (!this.shouldIgnoreAsEcho(this.partialText)) {
+          await this.publishUserTranscriptUi(this.partialText, "partial");
         }
         await this.deps.events.emit({
           sessionId: this.deps.sessionId,
@@ -440,8 +467,12 @@ export class VoiceSessionController {
         if (this.turnInFlight) {
           if (this.isRealBargeIn(this.partialText)) {
             this.pendingUserText = this.partialText;
+            await this.publishUserTranscriptUi(this.partialText, "partial");
           }
           return;
+        }
+        if (!this.shouldIgnoreAsEcho(this.partialText)) {
+          await this.publishUserTranscriptUi(this.partialText, "partial");
         }
         await this.deps.events.emit({
           sessionId: this.deps.sessionId,
@@ -606,6 +637,7 @@ export class VoiceSessionController {
       this.turnInFlight = true;
       this.lastUserTurn = commitText;
       this.pendingUserText = undefined;
+      await this.publishUserTranscriptUi(commitText, "final");
       console.log(`[voice] EndOfTurn committed: "${commitText.slice(0, 160)}"`);
       void this.runCommittedTurn(commitText).catch((err) => {
         console.error("[voice] runCommittedTurn failed:", err);
@@ -633,6 +665,7 @@ export class VoiceSessionController {
     this.pendingUserText = undefined;
     this.bargeInListening = false;
     this.bargeInDraft = undefined;
+    await this.publishUserTranscriptUi(text, "final");
     console.log(`[voice] EndOfTurn committed: "${text.slice(0, 160)}"`);
 
     // Run generate+speak in the background so the STT event loop can still hear barge-ins.
@@ -740,6 +773,7 @@ export class VoiceSessionController {
       if (pending) {
         this.bargeInListening = false;
         this.bargeInDraft = undefined;
+        await this.publishUserTranscriptUi(pending, "final");
         // Force-start the interrupting turn (do not re-queue as barge-in).
         await this.commitEndOfTurn(pending, { force: true });
       } else if (this.bargeInListening) {

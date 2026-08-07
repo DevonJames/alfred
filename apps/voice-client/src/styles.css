@@ -141,7 +141,59 @@ body {
   padding: 0 clamp(0.75rem, 3vw, 1.5rem);
   display: grid;
   align-content: center;
-  gap: 1.25rem;
+  gap: 1.1rem;
+}
+
+.user-panel {
+  padding: 0.85rem 0.15rem 0.35rem;
+  border-bottom: 1px solid rgba(255, 179, 71, 0.18);
+  transition:
+    border-color 0.2s ease,
+    opacity 0.2s ease;
+  opacity: 0.72;
+}
+
+.user-panel.active {
+  opacity: 1;
+  border-bottom-color: rgba(255, 179, 71, 0.45);
+}
+
+.user-panel.final {
+  border-bottom-color: rgba(255, 179, 71, 0.7);
+}
+
+.user-meta {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.68rem;
+  letter-spacing: 0.22em;
+  color: var(--muted);
+  margin-bottom: 0.5rem;
+}
+
+.user-tag,
+#user-mode {
+  color: var(--amber);
+}
+
+.user-caption {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: clamp(0.95rem, 2.2vw, 1.2rem);
+  line-height: 1.45;
+  letter-spacing: 0.02em;
+  min-height: 2.6em;
+  color: #ffe2b0;
+  text-align: left;
+}
+
+#user-text.placeholder {
+  color: rgba(255, 179, 71, 0.35);
+  font-style: italic;
+}
+
+.user-cursor {
+  background: var(--amber);
 }
 
 #wave {
@@ -193,7 +245,8 @@ body {
   margin-bottom: 0.65rem;
 }
 
-#mode-tag {
+#mode-tag,
+.alfred-tag {
   color: var(--mint);
 }
 

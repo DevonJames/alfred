@@ -113,6 +113,9 @@ export class LiveKitRoomSession {
     this.opts.media.onCaption((event) => {
       void this.publishCaption(event);
     });
+    this.opts.media.onUserTranscript((event) => {
+      void this.publishUserTranscript(event);
+    });
 
     // Attach to tracks already present.
     for (const participant of room.remoteParticipants.values()) {
@@ -165,23 +168,35 @@ export class LiveKitRoomSession {
     text?: string;
     reason?: string;
   }): Promise<void> {
+    await this.publishUiData("alfred.caption", event);
+  }
+
+  /** Broadcast user STT transcript to the room (voice-client HUD). */
+  private async publishUserTranscript(event: { type: string; text: string }): Promise<void> {
+    await this.publishUiData("alfred.user", event);
+  }
+
+  private async publishUiData(
+    channel: "alfred.caption" | "alfred.user",
+    event: Record<string, unknown>,
+  ): Promise<void> {
     const participant = this.room?.localParticipant;
     if (!participant || this.closed) return;
     try {
       const payload = new TextEncoder().encode(
         JSON.stringify({
           v: 1,
-          channel: "alfred.caption",
+          channel,
           ...event,
           atMs: Date.now(),
         }),
       );
       await participant.publishData(payload, {
         reliable: true,
-        topic: "alfred.caption",
+        topic: channel,
       });
     } catch (err) {
-      this.log.warn("[livekit] publishCaption failed", err);
+      this.log.warn(`[livekit] publish ${channel} failed`, err);
     }
   }
 

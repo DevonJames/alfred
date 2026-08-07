@@ -6,6 +6,11 @@ export type AssistantCaptionEvent =
   | { type: "reveal"; text: string }
   | { type: "end"; reason?: string };
 
+/** User mic STT for remote UI. */
+export type UserTranscriptEvent =
+  | { type: "partial"; text: string }
+  | { type: "final"; text: string };
+
 /**
  * Media transport boundary. LiveKit implements this; core never imports LiveKit.
  */
@@ -22,6 +27,8 @@ export interface MediaPort {
   resumePlayback(): void | Promise<void>;
   /** Broadcast what the assistant is saying (optional transport feature). */
   publishCaption(event: AssistantCaptionEvent): Promise<void>;
+  /** Broadcast what the user said (STT), for the client HUD. */
+  publishUserTranscript(event: UserTranscriptEvent): Promise<void>;
 }
 
 /** No-op media port for text-only sessions and unit tests. */
@@ -36,4 +43,5 @@ export class NullMediaPort implements MediaPort {
   async stopPlayback(): Promise<void> {}
   resumePlayback(): void {}
   async publishCaption(): Promise<void> {}
+  async publishUserTranscript(): Promise<void> {}
 }

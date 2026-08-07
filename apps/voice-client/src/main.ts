@@ -7,6 +7,7 @@ import {
   type RemoteParticipant,
 } from "livekit-client";
 import { CaptionHud, parseCaptionPayload } from "./captions.js";
+import { UserTranscriptHud, parseUserTranscriptPayload } from "./user-transcript.js";
 import { LiveWaveform } from "./waveform.js";
 
 const statusEl = document.querySelector<HTMLElement>("#status")!;
@@ -23,6 +24,13 @@ const captions = new CaptionHud({
   rest: document.querySelector<HTMLElement>("#caption-rest")!,
   cursor: document.querySelector<HTMLElement>("#cursor")!,
   mode: document.querySelector<HTMLElement>("#mode-tag")!,
+});
+
+const userTranscript = new UserTranscriptHud({
+  root: document.querySelector<HTMLElement>("#user-panel")!,
+  text: document.querySelector<HTMLElement>("#user-text")!,
+  mode: document.querySelector<HTMLElement>("#user-mode")!,
+  cursor: document.querySelector<HTMLElement>("#user-cursor")!,
 });
 
 const waveform = new LiveWaveform(waveCanvas);
@@ -111,9 +119,14 @@ async function connect(): Promise<void> {
       }
     })
     .on(RoomEvent.DataReceived, (payload, _participant, _kind, topic) => {
-      if (topic && topic !== "alfred.caption") return;
-      const msg = parseCaptionPayload(payload);
-      if (msg) captions.handle(msg);
+      if (!topic || topic === "alfred.caption") {
+        const msg = parseCaptionPayload(payload);
+        if (msg) captions.handle(msg);
+      }
+      if (!topic || topic === "alfred.user") {
+        const msg = parseUserTranscriptPayload(payload);
+        if (msg) userTranscript.handle(msg);
+      }
     })
     .on(RoomEvent.Disconnected, () => {
       teardownUi("Offline");
@@ -122,7 +135,6 @@ async function connect(): Promise<void> {
   await next.connect(payload.url, payload.token);
   await next.localParticipant.setMicrophoneEnabled(true);
 
-  // Caption + audio may already be present if agent joined first.
   for (const participant of next.remoteParticipants.values()) {
     for (const pub of participant.trackPublications.values()) {
       if (pub.track && pub.kind === Track.Kind.Audio) {
@@ -147,6 +159,7 @@ function teardownUi(status: string): void {
   remoteAudioEl.replaceChildren();
   waveform.detach();
   captions.reset();
+  userTranscript.reset();
   document.body.classList.remove("linked");
   linkDot.classList.remove("live", "speaking");
   levelTag.textContent = "LVL --";
@@ -171,5 +184,4 @@ disconnectBtn.addEventListener("click", () => {
   void disconnect();
 });
 
-// Idle line before connect
 waveform.detach();
