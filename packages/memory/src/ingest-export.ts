@@ -73,7 +73,11 @@ export function parseMarkdownSections(markdown: string): MdSection[] {
 }
 
 function normalizeTitle(title: string): string {
-  return title.replace(/^#+\s*/, "").trim();
+  return title
+    .replace(/^#+\s*/, "")
+    // Strip export numbering: "37. High-Priority…" / "1.2 Family" / "34)"
+    .replace(/^\d+(?:\.\d+)*[.)]?\s+/, "")
+    .trim();
 }
 
 function isUserSection(title: string): { key: string } | undefined {

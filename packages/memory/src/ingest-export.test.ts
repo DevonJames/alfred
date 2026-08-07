@@ -27,21 +27,21 @@ Preamble ignored.
 Building an iOS household interface for OpenClaw.
 Stack: Swift, LiveKit, Deepgram.
 
-## How to Work Effectively With Me
+## 34. How to Work Effectively With Me
 
 - Prefer concrete steps over lectures
 - Separate facts from recommendations
 
-## High-Priority Persistent Context
+## 37. High-Priority Persistent Context
 
 - Software developer and solopreneur (JF Customs)
 - Building Alfred voice + robot
 
-## Potentially Stale Information
+## 38. Potentially Stale Information
 
 - Old job application from 2024
 
-## Knowledge Gaps
+## 39. Knowledge Gaps
 
 - Exact GPU model unknown
 `;

@@ -8,6 +8,7 @@
  *   pnpm memory -- ingest-export <report.md> [--dry-run] [--no-user] [--no-memory]
  */
 import { config as loadEnv } from "dotenv";
+import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path, { resolve } from "node:path";
 import type { CanonicalMemoryRecord } from "@alfred/contracts";
@@ -23,6 +24,15 @@ import {
   planIngestExport,
   resolveRepoRoot,
 } from "@alfred/memory";
+
+function resolveInputPath(src: string): string {
+  if (path.isAbsolute(src)) return src;
+  const fromCwd = resolve(src);
+  if (existsSync(fromCwd)) return fromCwd;
+  const fromRepo = path.join(resolveRepoRoot(), src);
+  if (existsSync(fromRepo)) return fromRepo;
+  return fromCwd;
+}
 
 loadEnv({ path: resolve(process.cwd(), "../../.env") });
 loadEnv();
@@ -91,7 +101,7 @@ async function main(): Promise<void> {
       process.exitCode = 1;
       return;
     }
-    const raw = await readFile(resolve(src), "utf8");
+    const raw = await readFile(resolveInputPath(src), "utf8");
     const records: CanonicalMemoryRecord[] = raw
       .split("\n")
       .filter(Boolean)
@@ -115,7 +125,7 @@ async function main(): Promise<void> {
     const noUser = flags.has("--no-user");
     const noMemory = flags.has("--no-memory");
 
-    const abs = resolve(src);
+    const abs = resolveInputPath(src);
     const markdown = await readFile(abs, "utf8");
     const sourceLabel = path.basename(abs);
     const plan = planIngestExport(markdown, { sourceLabel });
