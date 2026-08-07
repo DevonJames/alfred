@@ -7,6 +7,7 @@
  *   pnpm memory -- import <file>
  *   pnpm memory -- ingest-export <report.md> [--dry-run] [--no-user] [--no-memory]
  *   pnpm memory -- dedupe-user [--dry-run]
+ *   pnpm memory -- cleanup-user [--dry-run] [--no-memory] [--target N]
  */
 import { config as loadEnv } from "dotenv";
 import { existsSync } from "node:fs";
@@ -14,6 +15,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path, { resolve } from "node:path";
 import type { CanonicalMemoryRecord } from "@alfred/contracts";
 import {
+  cleanupUserMd,
   dedupeUserMd,
   defaultMemoryPath,
   defaultPersonaDir,
@@ -25,6 +27,7 @@ import {
   PERSONA_FILES,
   planIngestExport,
   resolveRepoRoot,
+  USER_MD_MAX_CHARS,
 } from "@alfred/memory";
 
 function resolveInputPath(src: string): string {
@@ -79,6 +82,16 @@ async function main(): Promise<void> {
       const body = persona[key];
       console.log(`\n===== ${name} =====`);
       console.log(body ?? "(empty or missing)");
+      if (name === "USER.md") {
+        const onDisk = await readFile(path.join(persona.dir, "USER.md"), "utf8").catch(() => "");
+        const diskChars = onDisk.trim().length;
+        const injected = body?.replace(/\n\n…\[truncated[\s\S]*$/, "").length ?? 0;
+        if (diskChars > USER_MD_MAX_CHARS) {
+          console.log(
+            `\n(USER.md on disk: ${diskChars} chars; inject budget ${USER_MD_MAX_CHARS}; showing ~${injected}. Run: pnpm memory -- cleanup-user)`,
+          );
+        }
+      }
     }
     return;
   }
@@ -229,9 +242,70 @@ async function main(): Promise<void> {
     return;
   }
 
+  if (cmd === "cleanup-user") {
+    const dryRun = args.includes("--dry-run");
+    const noMemory = args.includes("--no-memory");
+    const targetIdx = args.indexOf("--target");
+    const targetChars =
+      targetIdx >= 0 && args[targetIdx + 1] ? Number(args[targetIdx + 1]) : undefined;
+    if (targetIdx >= 0 && (targetChars === undefined || Number.isNaN(targetChars))) {
+      console.error("Usage: pnpm memory -- cleanup-user [--dry-run] [--no-memory] [--target N]");
+      process.exitCode = 1;
+      return;
+    }
+
+    const personaDir = defaultPersonaDir(profileId);
+    const userPath = path.join(personaDir, "USER.md");
+    await ensurePersonaFiles(personaDir);
+    const existing = await readFile(userPath, "utf8");
+    const result = cleanupUserMd(existing, {
+      targetChars,
+      sourceLabel: "cleanup-user",
+    });
+
+    console.log(`USER.md: ${userPath}`);
+    console.log(
+      `Chars: ${result.beforeChars} → ${result.afterChars} (inject budget ${USER_MD_MAX_CHARS})`,
+    );
+    console.log(
+      `Dropped junk units: ${result.droppedJunk}; overflow notes: ${result.overflowNotes.length}`,
+    );
+    if (result.notes.length) {
+      console.log(`Notes: ${result.notes.slice(0, 8).join("; ")}`);
+    }
+
+    if (dryRun) {
+      console.log("\n--dry-run: no files written");
+      console.log("\n----- preview (first 2000 chars) -----");
+      console.log(result.text.slice(0, 2000));
+      if (result.overflowNotes.length) {
+        console.log("\n----- overflow sample -----");
+        for (const r of result.overflowNotes.slice(0, 6)) {
+          console.log(`  [${r.metadata?.sourceId}] ${r.content.slice(0, 140)}`);
+        }
+      }
+      return;
+    }
+
+    const backup = `${userPath}.bak-${new Date().toISOString().replace(/[:.]/g, "-")}`;
+    await writeFile(backup, existing, "utf8");
+    await writeFile(userPath, result.text, "utf8");
+    console.log(`Wrote cleaned USER.md (backup: ${backup})`);
+
+    if (!noMemory && result.overflowNotes.length) {
+      await provider.importCanonical(result.overflowNotes);
+      console.log(`Imported ${result.overflowNotes.length} overflow notes → ${filePath}`);
+    } else if (noMemory) {
+      console.log("Skipped overflow memory import (--no-memory)");
+    }
+
+    console.log("\nVerify with: pnpm memory -- persona");
+    return;
+  }
+
   console.error(`Unknown command: ${cmd}`);
   console.error(
-    "Usage: pnpm memory -- inspect|persona|export|import|ingest-export|dedupe-user",
+    "Usage: pnpm memory -- inspect|persona|export|import|ingest-export|dedupe-user|cleanup-user",
   );
   process.exitCode = 1;
 }

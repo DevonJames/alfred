@@ -19,8 +19,9 @@ export interface LoadedPersonaContext extends PersonaContext {
 }
 
 const MAX_CHARS_PER_FILE = 20_000;
-/** USER.md is always injected — keep room for ingest-export high-priority blocks. */
-const MAX_CHARS_USER = 12_000;
+/** USER.md is always injected — keep under this or prompts truncate. */
+export const USER_MD_MAX_CHARS = 12_000;
+const MAX_CHARS_USER = USER_MD_MAX_CHARS;
 
 export function defaultPersonaDir(profileId: string): string {
   const fromEnv = process.env.ALFRED_PERSONA_DIR;

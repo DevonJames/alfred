@@ -1,3 +1,4 @@
+export * from "./cleanup-user-md.js";
 export * from "./controller.js";
 export * from "./dedupe-user-md.js";
 export * from "./fake-provider.js";
