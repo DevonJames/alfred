@@ -50,6 +50,7 @@ export class LocalFileMemoryProvider implements MemoryProvider {
   readonly manifest: MemoryProviderManifest;
   private items: NormalizedMemoryItem[] = [];
   private loaded = false;
+  private reextracted = false;
 
   constructor(
     private readonly filePath: string,
@@ -96,6 +97,63 @@ export class LocalFileMemoryProvider implements MemoryProvider {
       this.items = [];
     }
     this.loaded = true;
+    // Backfill facts from historical user turns (e.g. after extractor improvements).
+    if (!this.reextracted) {
+      this.reextracted = true;
+      const scrubbed = this.scrubEchoNameFacts();
+      const extracted = this.reextractFactsFromTurns();
+      if (scrubbed || extracted) {
+        await this.persist();
+      }
+    }
+  }
+
+  /** Drop name facts that are clearly false positives (echo / filler words). */
+  private scrubEchoNameFacts(): boolean {
+    const before = this.items.length;
+    this.items = this.items.filter((i) => {
+      if (i.sourceId !== "fact:name") return true;
+      const m = i.content.match(/\bname is\s+([A-Za-z][\w'-]*)/i);
+      const name = m?.[1] ?? "";
+      if (
+        /^(alfred|albert|still|glad|here|just|trying|going|sure|butler)$/i.test(name)
+      ) {
+        return false;
+      }
+      return true;
+    });
+    return this.items.length !== before;
+  }
+
+  /** Re-run heuristic extraction over stored user turns; returns true if anything changed. */
+  private reextractFactsFromTurns(): boolean {
+    let changed = false;
+    const before = this.items.filter((i) => getItemKind(i) === "fact").length;
+    for (const item of [...this.items]) {
+      if (getItemKind(item) !== "turn") continue;
+      if (item.provenance?.role !== "user") continue;
+      const text = item.content.replace(/^user:\s*/i, "");
+      const commit: MemoryTurnCommit = {
+        profileId: String(item.provenance?.profileId ?? "profile.default"),
+        sessionId: String(item.provenance?.sessionId ?? "reextract"),
+        turnId: item.sourceId,
+        role: "user",
+        text,
+        metadata: {},
+      };
+      const now = item.createdAt || new Date().toISOString();
+      for (const fact of extractFactsFromUserText(text)) {
+        const existing = this.items.find(
+          (i) => i.sourceId === fact.sourceId && getItemKind(i) === "fact",
+        );
+        if (!existing) {
+          this.upsertFact(fact.sourceId, fact.content, now, commit);
+          changed = true;
+        }
+      }
+    }
+    const after = this.items.filter((i) => getItemKind(i) === "fact").length;
+    return changed || after > before;
   }
 
   /** Atomic persist: write temp then rename. */
@@ -131,11 +189,27 @@ export class LocalFileMemoryProvider implements MemoryProvider {
       .sort((a, b) => (b.relevance ?? 0) - (a.relevance ?? 0))
       .slice(0, maxTurns);
 
-    // If query looks identity-related, ensure name fact is included when present.
-    if (/\b(name|who am i|what's my|what is my)\b/i.test(query.text)) {
+    // Recall / identity questions: pin durable facts even if keyword overlap is thin.
+    if (isRecallQuery(query.text)) {
+      const pinned = scored
+        .filter((i) => getItemKind(i) === "fact" || getItemKind(i) === "note")
+        .sort((a, b) => (b.relevance ?? 0) - (a.relevance ?? 0));
+      for (const fact of pinned) {
+        if (facts.some((f) => f.id === fact.id)) continue;
+        facts.unshift({ ...fact, relevance: Math.max(fact.relevance ?? 0, 0.9) });
+        if (facts.length > maxFacts) facts.pop();
+      }
+      // Prefer job fact when asking about work.
+      if (/\b(job|work|do for a living|occupation|role)\b/i.test(query.text)) {
+        const job = scored.find((i) => i.sourceId === "fact:job");
+        if (job && !facts.some((f) => f.id === job.id)) {
+          facts.unshift({ ...job, relevance: 0.98 });
+          if (facts.length > maxFacts) facts.pop();
+        }
+      }
       const nameFact = scored.find((i) => i.sourceId === "fact:name");
       if (nameFact && !facts.some((f) => f.id === nameFact.id)) {
-        facts.unshift({ ...nameFact, relevance: Math.max(nameFact.relevance ?? 0, 0.95) });
+        facts.unshift({ ...nameFact, relevance: 0.95 });
         if (facts.length > maxFacts) facts.pop();
       }
     }
@@ -307,14 +381,18 @@ function scoreItem(
     score += (hits / tokens.length) * 0.45;
   }
 
-  // Identity boost
-  if (
-    (kind === "fact" || kind === "note") &&
-    /\bname\b/i.test(query) &&
-    /\bname is\b/i.test(content)
-  ) {
-    score += 0.4;
+  // Identity / recall boosts
+  if (kind === "fact" || kind === "note") {
+    if (/\bname\b/i.test(query) && /\bname is\b/i.test(content)) score += 0.4;
+    if (/\b(job|work|role)\b/i.test(query) && /\b(job|role)\b/i.test(content)) score += 0.4;
+    if (isRecallQuery(query)) score += 0.25;
   }
 
   return Math.min(1, score);
+}
+
+function isRecallQuery(text: string): boolean {
+  return /\b(who am i|what'?s my|what is my|do you remember|what did i (tell|say)|remind me|my name|my job|where do i live|what do you know about me)\b/i.test(
+    text,
+  );
 }

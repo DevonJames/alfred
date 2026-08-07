@@ -33,11 +33,44 @@ describe("LocalFileMemoryProvider", () => {
       text: "Hello, my name is Devon.",
       metadata: {},
     });
+    await a.commitTurn({
+      profileId: "p1",
+      sessionId: "s1",
+      turnId: "t2",
+      role: "user",
+      text: "I'm a software developer.",
+      metadata: {},
+    });
 
     const b = new LocalFileMemoryProvider(file);
-    const result = await b.retrieve({ text: "What is my name?", limit: 5 });
-    expect(result.items.some((i) => i.content.includes("Devon"))).toBe(true);
-    expect(result.items.some((i) => i.sourceId === "fact:name")).toBe(true);
+    const name = await b.retrieve({ text: "What is my name?", limit: 5 });
+    expect(name.items.some((i) => i.content.includes("Devon"))).toBe(true);
+    expect(name.items.some((i) => i.sourceId === "fact:name")).toBe(true);
+
+    const job = await b.retrieve({ text: "What is my job?", limit: 5 });
+    expect(job.items.some((i) => i.sourceId === "fact:job")).toBe(true);
+  });
+
+  it("backfills facts from older user turns on load", async () => {
+    const file = path.join(await mkdtemp(path.join(tmpdir(), "alfred-mem-")), "p.jsonl");
+    dirs.push(path.dirname(file));
+    const { writeFile } = await import("node:fs/promises");
+    await writeFile(
+      file,
+      JSON.stringify({
+        id: "mem_old",
+        content: "user: Remember that the garage code is 9999.",
+        sourceId: "t_old",
+        providerId: "memory.local",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        provenance: { kind: "turn", role: "user", profileId: "p1", sessionId: "s0" },
+      }) + "\n",
+      "utf8",
+    );
+
+    const p = new LocalFileMemoryProvider(file);
+    const result = await p.retrieve({ text: "Do you remember the garage code?", limit: 5 });
+    expect(result.items.some((i) => /9999/.test(i.content))).toBe(true);
   });
 
   it("prefers facts over unrelated turns for name queries", async () => {

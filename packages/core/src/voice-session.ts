@@ -496,12 +496,19 @@ export class VoiceSessionController {
       await this.deps.fsm.force("GeneratingResponse", "stt.eager_eot");
     }
 
+    const memory = await this.deps.memory.retrieve({
+      text,
+      profileId: this.deps.profileId,
+      sessionId: this.deps.sessionId,
+      limit: 8,
+    });
+
     const prompt = this.promptAssembler.assemble({
       systemInstructions: this.deps.config.systemInstructions,
       currentUserTurn: text,
       recentConversation: [],
       personaContext: this.deps.personaContext,
-      retrievedMemory: [],
+      retrievedMemory: memory.items,
       mode: "initial",
       lateAddenda: [],
       agentResults: [],
@@ -656,17 +663,28 @@ export class VoiceSessionController {
       text,
       profileId: this.deps.profileId,
       sessionId: this.deps.sessionId,
-      limit: 5,
+      limit: 8,
+    });
+    const hasDurableMemory = memory.items.some((m) => {
+      const kind = m.provenance?.kind;
+      return kind === "fact" || kind === "note";
     });
 
     try {
       let responseId = this.provisionalResponseId;
       let assistantText = responseId ? this.deps.responseLedger.getProposedText(responseId) : "";
 
-      if (!responseId || !assistantText.trim()) {
+      // Always regenerate when durable memory is available — provisional EagerEOT
+      // often raced before facts were relevant, or reused a no-memory draft.
+      if (!responseId || !assistantText.trim() || hasDurableMemory) {
         this.provisionalAbort?.abort({ reason: "superseded_generation" });
         responseId = this.deps.responseLedger.beginResponse(this.deps.sessionId, turnId);
         this.provisionalResponseId = responseId;
+        if (hasDurableMemory && process.env.ALFRED_LOG_VOICE === "1") {
+          console.log(
+            `[voice] regenerating with ${memory.items.length} memory item(s) (durable facts/notes)`,
+          );
+        }
         const prompt = this.promptAssembler.assemble({
           systemInstructions: this.deps.config.systemInstructions,
           currentUserTurn: text,
@@ -695,6 +713,14 @@ export class VoiceSessionController {
       this.activeResponseId = responseId;
       console.log(`[voice] speaking: "${assistantText.slice(0, 160)}"`);
       await this.speakWithMultiContext(responseId, assistantText, "primary");
+      await this.deps.memory.commitTurn({
+        profileId: this.deps.profileId,
+        sessionId: this.deps.sessionId,
+        turnId: createId("turn"),
+        role: "assistant",
+        text: assistantText,
+        metadata: { responseId },
+      });
       console.log("[voice] turn playback complete");
     } catch (err) {
       console.error("[voice] commitEndOfTurn failed:", err);
