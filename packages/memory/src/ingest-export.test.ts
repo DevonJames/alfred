@@ -4,6 +4,7 @@ import {
   INGEST_START,
   mergeUserMd,
   parseMarkdownSections,
+  parseOutlineSections,
   planIngestExport,
 } from "./ingest-export.js";
 
@@ -59,7 +60,7 @@ describe("planIngestExport", () => {
     const plan = planIngestExport(SAMPLE, { sourceLabel: "test.md" });
     expect(plan.userSectionsFound).toContain("High-Priority Persistent Context");
     expect(plan.userSectionsFound).toContain("How to Work Effectively With Me");
-    expect(plan.userPatch).toContain(INGEST_START);
+    expect(plan.userPatch).toContain("alfred:ingest-export:test:start");
     expect(plan.userPatch).toContain("JF Customs");
     expect(plan.userPatch).toContain("Prefer concrete steps");
   });
@@ -79,6 +80,71 @@ describe("planIngestExport", () => {
         (r) => !String(r.metadata?.section ?? "").match(/High-Priority|How to Work/i),
       ),
     ).toBe(true);
+  });
+});
+
+const OPENCLAW_STYLE = `I've gone through everything.
+
+───
+
+1. Personal and Family Context
+
+Explicit Facts
+
+Name: Devon James
+Telegram: @DevonOfAlexandria
+
+───
+
+23. How to Work Effectively With Me
+
+• Be direct. No filler.
+• Give exact pin numbers.
+
+───
+
+24. Negative Preferences (Consolidated)
+
+• Dislikes sycophancy
+
+───
+
+25. High-Priority Persistent Context
+
+Identity: Devon James. Building Alfred.
+
+───
+
+26. Potentially Stale Information
+
+1. Robot hardware state — verify
+
+───
+
+8. Knowledge Gaps (Things I Don't Know)
+
+• Exact MOS unknown
+`;
+
+describe("parseOutlineSections / openclaw-style", () => {
+  it("parses numbered plain-text sections", () => {
+    const sections = parseOutlineSections(OPENCLAW_STYLE);
+    expect(sections.some((s) => /How to Work/i.test(s.title))).toBe(true);
+    expect(sections.some((s) => /High-Priority/i.test(s.title))).toBe(true);
+  });
+
+  it("ingests openclaw-style exports into USER + memory", () => {
+    const plan = planIngestExport(OPENCLAW_STYLE, { sourceLabel: "openclaw.md" });
+    expect(plan.userSectionsFound).toEqual(
+      expect.arrayContaining([
+        "How to Work Effectively With Me",
+        "High-Priority Persistent Context",
+        "Negative Preferences",
+      ]),
+    );
+    expect(plan.skippedSections.some((s) => /stale|knowledge gaps/i.test(s))).toBe(true);
+    expect(plan.memoryRecords.length).toBeGreaterThan(0);
+    expect(plan.memoryRecords.some((r) => /Devon James|Telegram/i.test(r.content))).toBe(true);
   });
 });
 

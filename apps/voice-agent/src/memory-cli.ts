@@ -167,9 +167,11 @@ async function main(): Promise<void> {
         existing = "# USER.md — User Model\n";
       }
       if (plan.userPatch) {
-        const merged = mergeUserMd(existing, plan.userPatch);
+        const merged = mergeUserMd(existing, plan.userPatch, plan.markers);
         await writeFile(userPath, merged, "utf8");
-        console.log(`Updated USER.md ← ${plan.userSectionsFound.join(", ")}`);
+        console.log(
+          `Updated USER.md ← ${plan.userSectionsFound.join(", ")} (${plan.markers.start})`,
+        );
       } else {
         console.log(
           "No High-Priority / How to Work sections found — USER.md left unchanged.",

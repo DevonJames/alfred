@@ -1,8 +1,18 @@
 import { createHash } from "node:crypto";
 import type { CanonicalMemoryRecord } from "@alfred/contracts";
 
+/** Legacy single-block markers (still replaced when sourceLabel is omitted). */
 export const INGEST_START = "<!-- alfred:ingest-export:start -->";
 export const INGEST_END = "<!-- alfred:ingest-export:end -->";
+
+export function ingestMarkers(sourceLabel?: string): { start: string; end: string } {
+  if (!sourceLabel) return { start: INGEST_START, end: INGEST_END };
+  const tag = slug(sourceLabel.replace(/\.[^.]+$/, "")) || "export";
+  return {
+    start: `<!-- alfred:ingest-export:${tag}:start -->`,
+    end: `<!-- alfred:ingest-export:${tag}:end -->`,
+  };
+}
 
 export interface MdSection {
   level: number;
@@ -15,26 +25,28 @@ export interface IngestExportResult {
   userSectionsFound: string[];
   memoryRecords: CanonicalMemoryRecord[];
   skippedSections: string[];
+  /** Markers used for this patch (source-specific when label provided). */
+  markers: { start: string; end: string };
 }
 
 const USER_SECTION_MATCHERS: { key: string; pattern: RegExp }[] = [
   {
     key: "High-Priority Persistent Context",
-    pattern: /^high[- ]?priority persistent context$/i,
+    pattern: /^high[- ]?priority persistent context\b/i,
   },
   {
     key: "How to Work Effectively With Me",
-    pattern: /^how to work effectively with me$/i,
+    pattern: /^how to work effectively with me\b/i,
   },
   {
     key: "Negative Preferences",
-    pattern: /^(negative preferences|things i dislike|dislikes)$/i,
+    pattern: /^(negative preferences|things i dislike|dislikes)\b/i,
   },
 ];
 
 const SKIP_SECTION_PATTERNS = [
-  /^potentially stale information$/i,
-  /^knowledge gaps$/i,
+  /^potentially stale information\b/i,
+  /^knowledge gaps\b/i,
 ];
 
 /**
@@ -70,6 +82,66 @@ export function parseMarkdownSections(markdown: string): MdSection[] {
   }
   flush();
   return sections;
+}
+
+/**
+ * Parse plain-text / OpenClaw-style numbered outlines:
+ *   1. Personal and Family Context
+ *   23. How to Work Effectively With Me
+ * Separators like ─── are ignored.
+ */
+export function parseOutlineSections(text: string): MdSection[] {
+  const lines = text.replace(/\r\n/g, "\n").split("\n");
+  const sections: MdSection[] = [];
+  let level = 0;
+  let title = "(preamble)";
+  let body: string[] = [];
+
+  const flush = () => {
+    const content = body.join("\n").trim();
+    if (level === 0 && !content) {
+      body = [];
+      return;
+    }
+    sections.push({ level, title, body: content });
+    body = [];
+  };
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    // Decorative rules (box-drawing or markdown hr)
+    if (/^[─\-_=*]{3,}$/.test(trimmed)) continue;
+
+    const numbered = /^(\d+)[.)]\s+(.+)$/.exec(trimmed);
+    if (numbered) {
+      const rest = numbered[2]!.trim();
+      // Avoid treating inline numbered list items as section headers:
+      // "1. Robot face design: Project registry incorrectly stated…"
+      const colonIdx = rest.indexOf(": ");
+      const hasLongTailAfterColon = colonIdx >= 0 && rest.length - colonIdx > 28;
+      const looksLikeHeader = rest.length <= 100 && !hasLongTailAfterColon;
+      if (looksLikeHeader) {
+        flush();
+        level = 2;
+        title = rest;
+        continue;
+      }
+    }
+
+    body.push(line);
+  }
+  flush();
+  return sections;
+}
+
+/** Prefer ATX markdown headings when present; otherwise numbered outline. */
+export function parseExportSections(text: string): MdSection[] {
+  const atx = parseMarkdownSections(text).filter((s) => s.level >= 1);
+  if (atx.length >= 3) return parseMarkdownSections(text);
+  const outline = parseOutlineSections(text);
+  const outlineSections = outline.filter((s) => s.level >= 1);
+  if (outlineSections.length > atx.length) return outline;
+  return parseMarkdownSections(text);
 }
 
 function normalizeTitle(title: string): string {
@@ -115,7 +187,7 @@ export function planIngestExport(
   opts?: { sourceLabel?: string },
 ): IngestExportResult {
   const sourceLabel = opts?.sourceLabel ?? "export";
-  const sections = parseMarkdownSections(markdown);
+  const sections = parseExportSections(markdown);
   const userPieces: { key: string; body: string }[] = [];
   const userSectionsFound: string[] = [];
   const skippedSections: string[] = [];
@@ -158,13 +230,15 @@ export function planIngestExport(
     if (!prev || r.content.length > prev.content.length) bySource.set(sid, r);
   }
 
-  const userPatch = buildUserPatch(userPieces);
+  const markers = ingestMarkers(sourceLabel);
+  const userPatch = buildUserPatch(userPieces, markers);
 
   return {
     userPatch,
     userSectionsFound,
     memoryRecords: [...bySource.values()],
     skippedSections,
+    markers,
   };
 }
 
@@ -231,7 +305,9 @@ function sectionToRecords(
 function extractBullets(body: string): string[] {
   const out: string[] = [];
   for (const line of body.split("\n")) {
-    const m = /^\s*[-*+]\s+(.+)$/.exec(line) ?? /^\s*\d+[.)]\s+(.+)$/.exec(line);
+    const m =
+      /^\s*[-*+•]\s+(.+)$/.exec(line) ??
+      /^\s*\d+[.)]\s+(.+)$/.exec(line);
     if (m?.[1]) out.push(m[1].trim());
   }
   return out;
@@ -252,7 +328,10 @@ function chunkText(text: string, max: number): string[] {
   return parts.filter(Boolean);
 }
 
-function buildUserPatch(pieces: { key: string; body: string }[]): string {
+function buildUserPatch(
+  pieces: { key: string; body: string }[],
+  markers: { start: string; end: string } = { start: INGEST_START, end: INGEST_END },
+): string {
   if (!pieces.length) return "";
   const order = [
     "High-Priority Persistent Context",
@@ -271,17 +350,21 @@ function buildUserPatch(pieces: { key: string; body: string }[]): string {
     if (order.includes(key)) continue;
     blocks.push(`## ${key}\n\n${body}`);
   }
-  return `${INGEST_START}\n\n${blocks.join("\n\n")}\n\n${INGEST_END}`;
+  return `${markers.start}\n\n${blocks.join("\n\n")}\n\n${markers.end}`;
 }
 
-/** Merge ingest patch into USER.md, replacing prior ingest block if present. */
-export function mergeUserMd(existing: string, ingestPatch: string): string {
+/** Merge ingest patch into USER.md, replacing the matching marker block if present. */
+export function mergeUserMd(
+  existing: string,
+  ingestPatch: string,
+  markers: { start: string; end: string } = { start: INGEST_START, end: INGEST_END },
+): string {
   if (!ingestPatch.trim()) return existing;
-  const start = existing.indexOf(INGEST_START);
-  const end = existing.indexOf(INGEST_END);
+  const start = existing.indexOf(markers.start);
+  const end = existing.indexOf(markers.end);
   if (start !== -1 && end !== -1 && end > start) {
     const before = existing.slice(0, start).trimEnd();
-    const after = existing.slice(end + INGEST_END.length).trimStart();
+    const after = existing.slice(end + markers.end.length).trimStart();
     return [before, ingestPatch, after].filter(Boolean).join("\n\n") + "\n";
   }
   const base = existing.trimEnd();
