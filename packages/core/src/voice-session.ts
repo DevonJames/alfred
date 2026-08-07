@@ -236,6 +236,7 @@ export class VoiceSessionController {
     this.isSpeaking = false;
     this.selfVoice.clear();
     await this.media.stopPlayback(reason);
+    await this.media.publishCaption({ type: "end", reason });
     this.mark("audio_stopped_at");
     if (this.activeContextId) {
       const ctx = this.activeContextId;
@@ -784,6 +785,7 @@ export class VoiceSessionController {
     this.partialText = "";
     this.selfVoice.clear();
     this.selfVoice.arm();
+    await this.media.publishCaption({ type: "start", text });
 
     // One flush for the full reply — sentence chunking caused mid-answer skips when
     // the next flush started before ElevenLabs finished the previous audio.
@@ -793,6 +795,7 @@ export class VoiceSessionController {
     let firstPlayed = true;
     let charCursor = 0;
     let bargedIn = false;
+    let lastReveal = "";
 
     this.mark("first_speakable_chunk_at");
     for await (const ev of this.ttsSession.synthesizeToContext(contextId, text, {
@@ -849,6 +852,11 @@ export class VoiceSessionController {
         if (slice) {
           await this.deps.responseLedger.markDelivered(responseId, slice);
           charCursor = Math.max(charCursor, ev.characterEnd);
+          const revealed = text.slice(0, charCursor);
+          if (revealed !== lastReveal) {
+            lastReveal = revealed;
+            await this.media.publishCaption({ type: "reveal", text: revealed });
+          }
         }
       } else if (ev.type === "playback-confirmed") {
         await this.deps.events.emit({
@@ -868,6 +876,7 @@ export class VoiceSessionController {
 
     if (bargedIn || signal.aborted) {
       this.isSpeaking = false;
+      await this.media.publishCaption({ type: "end", reason: "interrupted" });
       return;
     }
 
@@ -875,12 +884,16 @@ export class VoiceSessionController {
     if (!this.deps.responseLedger.getDeliveredText(responseId)) {
       await this.deps.responseLedger.markDelivered(responseId, text);
     }
+    if (lastReveal !== text) {
+      await this.media.publishCaption({ type: "reveal", text });
+    }
 
     await this.ttsSession.closeContext(contextId, "complete");
     this.isSpeaking = false;
     this.activeContextId = undefined;
     this.armEchoGuard();
     this.partialText = "";
+    await this.media.publishCaption({ type: "end", reason: "complete" });
     if (this.deps.fsm.canTransition("Listening")) {
       await this.deps.fsm.transition("Listening", "voice.turn_complete");
     } else {

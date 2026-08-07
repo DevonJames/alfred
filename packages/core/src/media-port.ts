@@ -1,5 +1,11 @@
 import type { AudioFrame, VadSignal } from "@alfred/contracts";
 
+/** Live caption events for remote UI (LiveKit data channel, etc.). */
+export type AssistantCaptionEvent =
+  | { type: "start"; text: string }
+  | { type: "reveal"; text: string }
+  | { type: "end"; reason?: string };
+
 /**
  * Media transport boundary. LiveKit implements this; core never imports LiveKit.
  */
@@ -14,6 +20,8 @@ export interface MediaPort {
   stopPlayback(reason?: string): Promise<void>;
   /** Allow playPcm again after a barge-in stop. */
   resumePlayback(): void | Promise<void>;
+  /** Broadcast what the assistant is saying (optional transport feature). */
+  publishCaption(event: AssistantCaptionEvent): Promise<void>;
 }
 
 /** No-op media port for text-only sessions and unit tests. */
@@ -27,4 +35,5 @@ export class NullMediaPort implements MediaPort {
   async playPcm(): Promise<void> {}
   async stopPlayback(): Promise<void> {}
   resumePlayback(): void {}
+  async publishCaption(): Promise<void> {}
 }

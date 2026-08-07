@@ -110,6 +110,9 @@ export class LiveKitRoomSession {
     this.opts.media.onStopPlayback(() => {
       this.clearOutboundQueue();
     });
+    this.opts.media.onCaption((event) => {
+      void this.publishCaption(event);
+    });
 
     // Attach to tracks already present.
     for (const participant of room.remoteParticipants.values()) {
@@ -154,6 +157,32 @@ export class LiveKitRoomSession {
   /** Clear outbound queue on barge-in (called after media.stopPlayback). */
   clearOutboundQueue(): void {
     this.audioSource?.clearQueue();
+  }
+
+  /** Broadcast assistant speech captions to the room (voice-client HUD). */
+  private async publishCaption(event: {
+    type: string;
+    text?: string;
+    reason?: string;
+  }): Promise<void> {
+    const participant = this.room?.localParticipant;
+    if (!participant || this.closed) return;
+    try {
+      const payload = new TextEncoder().encode(
+        JSON.stringify({
+          v: 1,
+          channel: "alfred.caption",
+          ...event,
+          atMs: Date.now(),
+        }),
+      );
+      await participant.publishData(payload, {
+        reliable: true,
+        topic: "alfred.caption",
+      });
+    } catch (err) {
+      this.log.warn("[livekit] publishCaption failed", err);
+    }
   }
 
   private async publishAssistantTrack(): Promise<void> {
