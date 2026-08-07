@@ -6,6 +6,7 @@
  *   pnpm memory -- export [file]
  *   pnpm memory -- import <file>
  *   pnpm memory -- ingest-export <report.md> [--dry-run] [--no-user] [--no-memory]
+ *   pnpm memory -- dedupe-user [--dry-run]
  */
 import { config as loadEnv } from "dotenv";
 import { existsSync } from "node:fs";
@@ -13,6 +14,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path, { resolve } from "node:path";
 import type { CanonicalMemoryRecord } from "@alfred/contracts";
 import {
+  dedupeUserMd,
   defaultMemoryPath,
   defaultPersonaDir,
   ensureAndLoadPersona,
@@ -192,9 +194,44 @@ async function main(): Promise<void> {
     return;
   }
 
+  if (cmd === "dedupe-user") {
+    const dryRun = args.includes("--dry-run");
+    const personaDir = defaultPersonaDir(profileId);
+    const userPath = path.join(personaDir, "USER.md");
+    await ensurePersonaFiles(personaDir);
+    const existing = await readFile(userPath, "utf8");
+    const result = dedupeUserMd(existing);
+
+    console.log(`USER.md: ${userPath}`);
+    console.log(
+      `Chars: ${result.beforeChars} → ${result.afterChars} (removed ${result.removedUnits} redundant units, kept ${result.keptUnits} content units)`,
+    );
+    if (result.notes.length) {
+      console.log(`Notes: ${result.notes.slice(0, 5).join("; ")}`);
+    }
+
+    if (dryRun) {
+      console.log("\n--dry-run: no files written");
+      console.log("\n----- preview (first 1500 chars) -----");
+      console.log(result.text.slice(0, 1500));
+      return;
+    }
+
+    if (result.removedUnits === 0 && result.text === existing) {
+      console.log("Nothing to dedupe.");
+      return;
+    }
+
+    const backup = `${userPath}.bak-${new Date().toISOString().replace(/[:.]/g, "-")}`;
+    await writeFile(backup, existing, "utf8");
+    await writeFile(userPath, result.text, "utf8");
+    console.log(`Wrote deduped USER.md (backup: ${backup})`);
+    return;
+  }
+
   console.error(`Unknown command: ${cmd}`);
   console.error(
-    "Usage: pnpm memory -- inspect|persona|export|import|ingest-export",
+    "Usage: pnpm memory -- inspect|persona|export|import|ingest-export|dedupe-user",
   );
   process.exitCode = 1;
 }

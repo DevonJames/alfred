@@ -107,6 +107,15 @@ pnpm memory -- ingest-export ./path/to/export.md
 
 Flags: `--dry-run`, `--no-user`, `--no-memory`. Full copies land in `data/knowledge/exports/` (gitignored). Re-running replaces the previous `<!-- alfred:ingest-export:* -->` block in `USER.md`.
 
+After multiple ingests, trim redundant USER.md lines:
+
+```bash
+pnpm memory -- dedupe-user --dry-run
+pnpm memory -- dedupe-user
+```
+
+(Writes a timestamped `USER.md.bak-*` backup beside the file.)
+
 **Live recall check:** with `pnpm voice` running, say “My name is Devon.” After the reply, stop the agent, start `pnpm voice` again, and ask “What’s my name?” — it should recall from the JSONL file. Confirm startup logs show `Memory: memory.local path=...` and `Persona: .../SOUL=yes`.
 
 ## Documentation

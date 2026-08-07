@@ -1,4 +1,5 @@
 export * from "./controller.js";
+export * from "./dedupe-user-md.js";
 export * from "./fake-provider.js";
 export * from "./fact-extractor.js";
 export * from "./ingest-export.js";
