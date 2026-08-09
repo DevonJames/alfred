@@ -8,7 +8,7 @@
 **Product:** Alfred
 **Component:** Memory and Retrieval System
 **Primary use case:** Long-term personal memory for conversational AI
-**Architecture principle:** OIP-compatible records in filesystem memory packages are the canonical durable memory; SQLite/FTS, vector, lexical, temporal, and graph stores are disposable rebuildable indexes.
+**Architecture principle:** OIP-compatible records in filesystem memory packages are the canonical durable private memory; public OIP records describe public web knowledge; SQLite/FTS, vector, lexical, temporal, graph, reminder, and discovery stores are disposable rebuildable indexes.
 
 ---
 
@@ -68,7 +68,7 @@ The architectural distinction is:
 
 **Source artifacts establish why Alfred believes something.**
 
-The system should eventually function as a machine-readable autobiographical memory.
+The system should eventually function as a machine-readable autobiographical memory connected selectively to a public machine-readable knowledge graph.
 
 ---
 
@@ -94,7 +94,8 @@ Alfred should determine:
 6. When did Alfred learn it?
 7. Where did the information come from?
 8. Does it correct, reinforce, supersede, contradict, or describe a new experience related to anything already known?
-9. How should it be retrieved later?
+9. Should Alfred bring it back to the user's attention at a future date or time?
+10. How should it be retrieved later?
 
 The user should not need to manually organize information into folders, tags, notebooks, databases, or projects.
 
@@ -231,6 +232,14 @@ This keeps old experiences historically true while allowing Alfred's current-sta
 
 ---
 
+## 3.11 Private memory and public knowledge have a hard boundary
+
+Alfred should be able to consume and publish public OIP metadata about public web objects, but private user memory must not leak into the public graph by default.
+
+Public knowledge can flow inward for discovery. Private knowledge flows outward only after explicit user authorization.
+
+---
+
 # 4. Existing OIP Foundation
 
 The implementation should extend the existing Open Index Protocol architecture rather than build an unrelated memory schema.
@@ -255,7 +264,9 @@ For Alfred Memory, OIP becomes the canonical semantic memory protocol, while the
 
 Permanent publication to public networks such as Arweave is **not** required and should not be the default for personal memories.
 
-The logical memory representation and physical storage location must remain separate concepts. OIP-compatible records may later be published, synchronized, mirrored, or indexed elsewhere, but private Alfred memory defaults to local filesystem packages.
+Public OIP publication is appropriate for metadata and analysis about public web objects when copyright, safety, and trust requirements are satisfied. Private Alfred memories remain local by default.
+
+The logical memory representation and physical storage location must remain separate concepts. OIP-compatible private records may later be synchronized, mirrored, or explicitly published, but private Alfred memory defaults to local filesystem packages. Public OIP records may be referenced from private memory through `dref`s without copying the public record into the private store.
 
 ---
 
@@ -355,7 +366,7 @@ The initial implementation should use a deliberately small number of fundamental
 
 Avoid creating dozens of specialized memory types prematurely.
 
-The initial five are:
+The initial five private memory primitives are:
 
 1. Entity
 2. Episode
@@ -364,6 +375,8 @@ The initial five are:
 5. Observation
 
 Each primitive is stored inside a logical memory package. A package may represent an Entity, Episode, Assertion, Observation, Artifact record, or another future memory type.
+
+Public knowledge records are separate OIP-compatible record types used for public web discovery. They may be referenced by private memory packages but are not themselves private memories.
 
 ---
 
@@ -795,6 +808,97 @@ the two timestamps differ.
 
 This distinction must be supported from the first production schema because it is difficult to retrofit later.
 
+## 13.3 Reminder and scheduled surfacing time
+
+Alfred must also distinguish temporal facts about the memory from scheduled surfacing metadata.
+
+Fields such as `eventTime`, `validFrom`, `validUntil`, and `learnedAt` describe the memory itself.
+
+`remindAt` describes when Alfred should bring that memory back to the user's attention.
+
+Example:
+
+```json
+{
+  "summary": "Passport expires November 18, 2027",
+  "eventTime": "2027-11-18",
+  "remindAt": "2027-05-18",
+  "reminderReason": "expiration",
+  "reminderStatus": "pending"
+}
+```
+
+These fields must not be conflated. A passport expiration date is a fact about the world. The reminder date is a requested or derived surfacing schedule.
+
+Reminder-capable memory records SHOULD support:
+
+```text
+remindAt
+reminderTimezone
+reminderStatus
+reminderRecurrence
+reminderReason
+reminderCreatedAt
+reminderCompletedAt
+reminderLastSurfacedAt
+reminderSnoozedUntil
+```
+
+`remindAt` may be either a date-only value or a full timestamp. Alfred must preserve that distinction.
+
+Date-only example:
+
+```json
+{
+  "summary": "Call the insurance company",
+  "subject": "did:memory:person-devon",
+  "remindAt": "2026-08-15",
+  "reminderTimezone": "America/Los_Angeles",
+  "reminderStatus": "pending",
+  "reminderReason": "user_requested"
+}
+```
+
+Timestamp example:
+
+```json
+{
+  "summary": "Call the insurance company",
+  "subject": "did:memory:person-devon",
+  "remindAt": "2026-08-15T09:00:00-07:00",
+  "reminderTimezone": "America/Los_Angeles",
+  "reminderStatus": "pending",
+  "reminderReason": "user_requested"
+}
+```
+
+If the user says "on Friday" or "on August 15th" without a time, Alfred must not silently invent a time such as 9 AM. A date-only reminder is eligible for that day's daily brief and other date-level surfacing.
+
+Initial reminder statuses:
+
+```text
+pending
+surfaced
+completed
+dismissed
+snoozed
+```
+
+Initial reminder reasons:
+
+```text
+user_requested
+deadline
+follow_up
+expiration
+maintenance
+derived
+```
+
+User-requested reminders should be clearly distinguishable from reminders Alfred inferred from deadlines, expirations, maintenance intervals, or follow-up opportunities.
+
+Reminder metadata belongs on the memory record or package revision so that scheduled surfacing points to the full memory graph, not just a disconnected task string.
+
 ---
 
 # 14. Supersession and Historical Facts
@@ -1068,6 +1172,10 @@ The extraction model identifies:
 * quantities
 * identifiers
 * source provenance
+* reminder intent
+* scheduled surfacing fields
+* public web object identity
+* public analysis publication eligibility
 
 ---
 
@@ -1113,6 +1221,7 @@ Generate/update disposable indexes:
 * embeddings
 * graph adjacency index
 * temporal index
+* reminder/scheduled-surfacing index
 
 All indexes must be rebuildable from canonical filesystem packages and content-addressed artifacts.
 
@@ -1132,6 +1241,19 @@ Example:
   "assertions": [],
   "relationships": [],
   "temporalReferences": [],
+  "scheduledSurfacing": {
+    "remindAt": null,
+    "reminderTimezone": null,
+    "reminderStatus": null,
+    "reminderRecurrence": null,
+    "reminderReason": null
+  },
+  "publicKnowledge": {
+    "isPublicSource": false,
+    "canonicalPublicObjectId": null,
+    "publicationEligible": false,
+    "recommendedPublicRecordType": null
+  },
   "memoryImportance": 0.82,
   "ambiguities": [],
   "needsResolution": []
@@ -1141,6 +1263,10 @@ Example:
 Freeform model prose must never directly become canonical memory.
 
 Schema validation is mandatory.
+
+If the user asks Alfred to "remind me" about something on a future date or time, extraction must produce both the normal memory content and the scheduled surfacing fields.
+
+If the source is a public web object, extraction should also identify the canonical public object, whether public metadata publication is allowed, and whether the result should become a private memory, a public analysis candidate, or both.
 
 ---
 
@@ -1191,6 +1317,11 @@ alfred:Conversation
 alfred:Task
 alfred:PersonalFact
 alfred:Relationship
+alfred:Interest
+alfred:InterestRule
+alfred:PublicObject
+alfred:PublicAnalysis
+alfred:PrivateKnowledgeRelationship
 ```
 
 Do not distort information merely to fit schema.org.
@@ -1214,6 +1345,8 @@ Retrieval consists of:
 9. reranking
 10. source loading
 11. answer generation
+
+Discovery retrieval additionally compares private interest records against public OIP knowledge records. This must be treated as recommendation retrieval, not as recall from the user's private memory.
 
 ---
 
@@ -1388,6 +1521,9 @@ graphScore
 temporalScore
 recencyScore
 confidenceScore
+publicTrustScore
+noveltyScore
+personalRelevanceScore
 ```
 
 A fusion layer combines those results.
@@ -1587,7 +1723,7 @@ alfred-memory/
 
 Only `memory/`, `artifacts/`, and storage-format metadata are canonical. `indexes/` can be deleted and recreated.
 
-Supported index or mirror adapters may include:
+Supported index, mirror, or public-knowledge adapters may include:
 
 ```text
 SQLite
@@ -1596,6 +1732,8 @@ local vector index
 graph adjacency index
 Elasticsearch/OpenSearch
 GUN
+public OIP knowledge network
+trusted public knowledge mirrors
 future graph DB
 future decentralized store
 ```
@@ -1679,7 +1817,7 @@ verify hashes and revision chains
         ↓
 resolve current revisions
         ↓
-rebuild SQLite/FTS/vector/graph/temporal indexes
+rebuild SQLite/FTS/vector/graph/temporal/reminder/public-discovery indexes
 ```
 
 If `alfred-memory.sqlite`, the vector index, or the graph index is deleted or corrupted, Alfred should be able to reconstruct retrieval state from the filesystem without memory loss.
@@ -1702,7 +1840,339 @@ The product promise is: user's memories are not trapped in Alfred; they are ordi
 
 ---
 
-# 35. Graph Database Requirement
+# 35. Public Knowledge and Distributed Discovery
+
+Alfred Memory should support a public knowledge layer for public web objects that many Alfred nodes may encounter independently.
+
+The public web item already exists. Alfred must not republish the source content by default. Instead, an Alfred node that processes a public item may publish a public OIP metadata or analysis record about that item.
+
+Examples of public web objects:
+
+* YouTube video
+* GitHub repository
+* X post
+* blog post
+* paper
+* website
+* podcast episode
+* public documentation page
+
+This creates a distributed discovery network:
+
+```text
+PUBLIC WEB
+   ↓
+Alfred node encounters public item
+   ↓
+extracts structured metadata and analysis
+   ↓
+publishes public OIP record
+   ↓
+other Alfred nodes discover record
+   ↓
+compare against private user interests
+   ↓
+surface relevant items in Daily Brief
+   ↓
+user decides whether to save/link privately
+```
+
+The intended product behavior is discovery, not automatic private memorization.
+
+If a new public record matches a user's private interest graph, Alfred may brief the user:
+
+> A new tutorial on maintaining character consistency in generative video was indexed yesterday. It looks related to your generative-content work. Want me to add it to your memory?
+
+No private memory is created merely because a public record was discovered. If the user accepts, Alfred creates a private relationship to the public record.
+
+## 35.1 Public object, public analysis, private relationship
+
+The system must distinguish three concepts.
+
+### Public object
+
+The thing on the public internet.
+
+Example fields:
+
+```json
+{
+  "type": "PublicObject",
+  "canonicalId": "webcontent:youtube:ABC123",
+  "canonicalUrl": "https://www.youtube.com/watch?v=ABC123",
+  "sourceType": "video",
+  "title": "New technique for consistent AI characters",
+  "creator": "Example Creator",
+  "publishedAt": "2026-08-08T15:00:00Z",
+  "contentHash": "blake3:...",
+  "sourceMetadata": {
+    "durationSeconds": 1243,
+    "platform": "youtube"
+  }
+}
+```
+
+The public object record establishes identity. It does not make any one node's interpretation authoritative.
+
+### Public analysis
+
+What a specific Alfred node or publisher claims about the public object.
+
+Example fields:
+
+```json
+{
+  "type": "PublicAnalysis",
+  "target": "webcontent:youtube:ABC123",
+  "analysisRevision": "blake3:...",
+  "summary": "A workflow for maintaining character consistency in AI-generated video.",
+  "topics": [
+    "generative content creation",
+    "video generation",
+    "character consistency",
+    "ComfyUI"
+  ],
+  "claims": [
+    "The workflow uses reference images to maintain identity across shots."
+  ],
+  "skillsOrTechniques": [
+    "character reference workflow",
+    "video generation pipeline"
+  ],
+  "indexedAt": "2026-08-09T04:15:00Z",
+  "indexedBy": "did:oip:...",
+  "model": "...",
+  "confidence": 0.82
+}
+```
+
+Multiple public analyses may exist for the same public object:
+
+```text
+PUBLIC OBJECT
+YouTube: ABC123
+      │
+      ├── Analysis A by node X
+      ├── Analysis B by node Y
+      └── Analysis C by node Z
+```
+
+The first node to publish establishes an early record, not the final truth.
+
+### Private relationship
+
+What the public object means to a specific user.
+
+Examples:
+
+```text
+Devon saved this.
+Devon liked this.
+Devon wants to revisit this.
+Devon learned a technique from this.
+Devon dismissed this recommendation.
+```
+
+Private relationship records remain in the user's private memory store and may `dref` the public object or a specific public analysis.
+
+Example:
+
+```json
+{
+  "type": "PrivateKnowledgeRelationship",
+  "subject": "did:memory:person-devon",
+  "predicate": "saved",
+  "object": "did:oip:public-analysis-...",
+  "reason": "User approved from Daily Brief",
+  "createdAt": "2026-08-09T08:23:00-07:00"
+}
+```
+
+Do not duplicate the full public analysis into private memory unless offline durability, user annotation, or trust requirements justify a local snapshot.
+
+## 35.2 Canonical public object identity and deduplication
+
+Public objects need stable normalized identifiers so different Alfred nodes converge on the same object.
+
+Preferred canonical IDs for known platforms:
+
+```text
+youtube:video:<video-id>
+github:repo:<owner>/<repo>
+github:commit:<owner>/<repo>/<sha>
+x:post:<post-id>
+arxiv:<paper-id>
+doi:<doi>
+```
+
+For arbitrary web pages, use:
+
+```text
+normalized URL
++ content hash where available
++ retrieval timestamp/version metadata
+```
+
+Canonicalization rules should remove tracking parameters, normalize host casing, normalize known short URLs, and preserve platform-specific identifiers.
+
+Examples that should resolve to one object:
+
+```text
+https://youtube.com/watch?v=ABC123
+https://youtu.be/ABC123
+https://www.youtube.com/watch?v=ABC123&utm_source=newsletter
+```
+
+All public object identifiers and hashes must be algorithm-tagged and canonicalization-versioned.
+
+## 35.3 Publication policy
+
+Publishing public metadata is allowed only for public source material and only for metadata, summaries, transformations, and references that Alfred is allowed to publish.
+
+Alfred must not publish:
+
+* private user memories
+* private annotations
+* private interest records
+* private engagement behavior
+* copyrighted source copies beyond permitted metadata or short excerpts
+* private files merely because they mention public URLs
+
+Public knowledge can flow inward freely. Private knowledge flows outward only after explicit user authorization.
+
+This is an architectural invariant.
+
+## 35.4 Interest graph and discovery matching
+
+User interests should be private graph records, not simple keyword subscriptions.
+
+Example:
+
+```text
+Devon
+ ├── interestedIn -> generative content creation
+ │                     ├── video generation
+ │                     ├── image generation
+ │                     ├── AI filmmaking
+ │                     └── ComfyUI
+ └── stronglyInterestedIn -> local AI
+```
+
+Interest rules may include:
+
+```json
+{
+  "type": "InterestRule",
+  "topic": "did:memory:topic-humanoid-robotics",
+  "minimumNovelty": "high",
+  "minimumSignificance": "high",
+  "briefingEligible": true,
+  "cadence": "daily",
+  "sourceTrustThreshold": 0.7
+}
+```
+
+Discovery matching compares new public OIP records against the user's private interest graph using structured topics, graph relationships, lexical signals, embeddings, novelty, significance, recency, and trust.
+
+The user's interest graph should remain local/private. Alfred should not need to publish a user's interests in order to discover relevant public records.
+
+## 35.5 Daily Brief public discovery
+
+Daily Brief generation should eventually combine:
+
+1. scheduled private memories
+2. overdue reminders
+3. private follow-up items
+4. new public OIP records matching private interest rules
+5. personally relevant public knowledge updates
+
+Public discovery candidates should be ranked by:
+
+* personal relevance
+* novelty
+* significance
+* source trust
+* analysis confidence
+* recency
+* diversity across interests
+* prior user feedback
+
+The Daily Brief should present public discoveries as recommendations and ask whether the user wants to save or learn them.
+
+If the user accepts, Alfred creates a private relationship record that `dref`s the public object or analysis.
+
+If the user dismisses the item, Alfred may create a private negative-feedback relationship for future ranking, without publishing that behavior by default.
+
+## 35.6 Trust, reputation, and abuse resistance
+
+The public knowledge layer must assume adversarial input.
+
+Risks:
+
+* spam and SEO poisoning
+* low-quality analysis records
+* maliciously wrong topic labels
+* prompt injection inside public content
+* Sybil attacks from many coordinated nodes
+* stale or changed public content
+* public content disappearing
+* copyright violations
+
+Mitigations should include:
+
+* signed publisher identity where available
+* source canonicalization and content versioning
+* multiple analyses per object
+* analysis provenance and model metadata
+* trust weighting by publisher, original creator, or corroboration
+* local prompt-injection isolation for public content processing
+* copyright-aware storage limits
+* user-controlled trust thresholds
+* abuse reporting or suppression lists
+
+Reputation should not be based only on who published first. It should emerge from corroboration, user outcomes, and trusted publisher signals.
+
+Potential aggregate utility signals:
+
+```text
+indexed by N nodes
+saved by N users
+marked useful by N users
+used successfully N times
+dismissed N times
+corroborated by trusted analyses
+```
+
+Aggregate signals should be privacy-preserving. Alfred must not expose identifiable user behavior without explicit consent.
+
+## 35.7 Freshness and versioning
+
+Public objects can change.
+
+Examples:
+
+* GitHub repositories receive commits
+* documentation pages are edited
+* videos are removed or descriptions change
+* X posts are deleted
+* web pages change content at the same URL
+
+Public object records should distinguish stable object identity from observed versions.
+
+For mutable sources, analyses should reference the observed version, retrieval timestamp, content hash where possible, and source metadata needed to determine whether re-analysis is required.
+
+## 35.8 Local public knowledge cache
+
+Alfred may maintain a local cache or index of public OIP records for matching and Daily Brief generation.
+
+This cache is not the source of truth for private user memory. It is rebuildable from the public OIP network or configured public knowledge mirrors.
+
+Private relationship records that reference public objects remain canonical in the user's private filesystem memory store.
+
+
+---
+
+# 36. Graph Database Requirement
 
 A dedicated graph database is **not required for MVP**.
 
@@ -1720,7 +2190,7 @@ The canonical data model must not depend on any of them.
 
 ---
 
-# 36. Graphiti Evaluation
+# 37. Graphiti Evaluation
 
 Graphiti should be evaluated as:
 
@@ -1745,7 +2215,7 @@ Any Graphiti integration should sit behind an adapter boundary.
 
 ---
 
-# 37. Model Independence
+# 38. Model Independence
 
 Every AI-dependent stage should use the existing Alfred model-provider abstraction where possible.
 
@@ -1776,7 +2246,7 @@ No memory should become inaccessible because a model provider changes.
 
 ---
 
-# 38. Privacy Modes
+# 39. Privacy Modes
 
 The system should eventually support at least three privacy profiles.
 
@@ -1815,7 +2285,7 @@ Advanced users configure:
 
 ---
 
-# 39. Multi-User / Household Memory
+# 40. Multi-User / Household Memory
 
 The architecture should anticipate multiple users even if MVP initially supports one.
 
@@ -1843,7 +2313,7 @@ Do not assume all memories within one Alfred installation belong to everyone.
 
 ---
 
-# 40. API Requirements
+# 41. API Requirements
 
 Initial APIs should conceptually support:
 
@@ -1892,6 +2362,76 @@ POST /api/memory/ask
 ```
 
 Performs full query interpretation, hybrid retrieval, and answer generation.
+
+---
+
+## Index public source
+
+```http
+POST /api/public-knowledge/index
+```
+
+Accepts a public URL or source identifier, canonicalizes the public object, extracts metadata and analysis, and prepares a publishable public OIP record if policy allows.
+
+---
+
+## Publish public analysis
+
+```http
+POST /api/public-knowledge/publish
+```
+
+Publishes metadata or analysis for a public object. This endpoint must reject private memories, private annotations, and private user behavior unless the user explicitly authorizes publication.
+
+---
+
+## Discover public knowledge
+
+```http
+POST /api/public-knowledge/discover
+```
+
+Matches new or updated public OIP records against private user interest rules and returns recommendation candidates for briefing or review.
+
+---
+
+## Save public knowledge privately
+
+```http
+POST /api/memory/link-public
+```
+
+Creates a private relationship from the user or a private memory to a public object or public analysis after user approval.
+
+---
+
+## Get due memories for daily brief
+
+```http
+GET /api/memory/due?date=2026-08-15&timezone=America/Los_Angeles
+```
+
+Returns pending memories whose `remindAt` date or timestamp is due for the user's current briefing window, including overdue reminders that have not been completed, dismissed, or rescheduled.
+
+---
+
+## Mark reminder surfaced
+
+```http
+POST /api/memory/:id/reminder/surfaced
+```
+
+Updates reminder metadata by appending a new memory revision or reminder-state revision, preserving history.
+
+---
+
+## Complete, dismiss, or snooze reminder
+
+```http
+POST /api/memory/:id/reminder/status
+```
+
+Supported actions include `completed`, `dismissed`, and `snoozed`. Snoozing must set a new due date or timestamp.
 
 ---
 
@@ -1955,7 +2495,7 @@ Regenerates disposable SQLite/FTS/vector/graph/temporal indexes from the canonic
 
 ---
 
-# 41. Internal Adapter Interfaces
+# 42. Internal Adapter Interfaces
 
 Recommended interfaces:
 
@@ -1975,6 +2515,13 @@ EntityResolver
 QueryInterpreter
 CandidateReranker
 MemoryAnswerer
+ReminderScheduler
+DailyBriefMemorySelector
+PublicObjectCanonicalizer
+PublicKnowledgePublisher
+PublicKnowledgeDiscoveryIndex
+InterestMatcher
+TrustReputationScorer
 ArtifactStore
 ContentAddressedArtifactStore
 ```
@@ -1983,7 +2530,7 @@ Each should be independently replaceable.
 
 ---
 
-# 42. MVP Scope
+# 43. MVP Scope
 
 The first production implementation should deliberately avoid trying to solve all possible human memory.
 
@@ -1996,6 +2543,7 @@ MVP should support:
 * photographs
 * screenshots
 * basic documents
+* public URLs and source identifiers
 
 ### Core memory
 
@@ -2004,6 +2552,9 @@ MVP should support:
 * assertions
 * observations
 * artifacts
+* scheduled surfacing metadata for reminders and daily brief inclusion
+* private interest records and interest rules
+* private relationships to public OIP records
 
 ### Canonical storage
 
@@ -2015,6 +2566,8 @@ MVP should support:
 * BLAKE3 local content hashes
 * content-addressed artifact storage
 * disposable/rebuildable SQLite/FTS/vector/graph indexes
+* disposable/rebuildable reminder due-date index
+* disposable/rebuildable public discovery cache/index
 
 ### Entity classes
 
@@ -2050,6 +2603,11 @@ sourceOf
 derivedFrom
 supersedes
 contradicts
+interestedIn
+stronglyInterestedIn
+saved
+dismissed
+publicDref
 ```
 
 ### Retrieval
@@ -2060,6 +2618,7 @@ contradicts
 * graph expansion
 * temporal filtering
 * hybrid ranking
+* public discovery matching against private interest rules
 
 ### Time
 
@@ -2076,7 +2635,7 @@ contradicts
 
 ---
 
-# 43. Explicit MVP Non-Goals
+# 44. Explicit MVP Non-Goals
 
 Do not initially attempt:
 
@@ -2092,10 +2651,13 @@ Do not initially attempt:
 * psychological modeling
 * emotion inference as authoritative fact
 * automatic deletion based solely on model judgment
+* automatic publication of private data
+* treating the first public analysis of an object as authoritative
+* public discovery ranking without trust/spam controls
 
 ---
 
-# 44. Reference Scenario 1: Wine at Sarah's
+# 45. Reference Scenario 1: Wine at Sarah's
 
 Input:
 
@@ -2148,7 +2710,7 @@ Expected result:
 
 ---
 
-# 45. Reference Scenario 2: Changing Household Fact
+# 46. Reference Scenario 2: Changing Household Fact
 
 2026 input:
 
@@ -2192,7 +2754,7 @@ Answer:
 
 ---
 
-# 46. Reference Scenario 3: Recommendation
+# 47. Reference Scenario 3: Recommendation
 
 Input:
 
@@ -2236,7 +2798,7 @@ Expected answer:
 
 ---
 
-# 47. Reference Scenario 4: Document Memory
+# 48. Reference Scenario 4: Document Memory
 
 User photographs HVAC service invoice.
 
@@ -2277,7 +2839,7 @@ Expected system behavior:
 
 ---
 
-# 48. Evaluation Framework
+# 49. Evaluation Framework
 
 Memory quality must be measured with repeatable tests.
 
@@ -2321,9 +2883,18 @@ Test query categories:
 
 > "Where did you get that from?"
 
+
+### Public discovery relevance
+
+> New public records match a user's private interest graph.
+
+### Public trust and spam resistance
+
+> Low-quality or adversarial public analyses are downranked or suppressed.
+
 ---
 
-# 49. Retrieval Metrics
+# 50. Retrieval Metrics
 
 Track:
 
@@ -2337,6 +2908,9 @@ temporal accuracy
 provenance accuracy
 false-memory rate
 unsupported-answer rate
+public-discovery relevance
+public-analysis trust calibration
+spam/adversarial suppression rate
 ```
 
 The most important product metric is:
@@ -2345,7 +2919,7 @@ The most important product metric is:
 
 ---
 
-# 50. Reliability Requirement
+# 51. Reliability Requirement
 
 When memory evidence is insufficient, Alfred should say so.
 
@@ -2363,7 +2937,7 @@ Confident fabrication is a critical failure.
 
 ---
 
-# 51. Performance Goals
+# 52. Performance Goals
 
 Initial production targets:
 
@@ -2380,7 +2954,7 @@ Memory indexing may occur asynchronously after immediate conversational acknowle
 
 ---
 
-# 52. Memory Importance
+# 53. Memory Importance
 
 Every observation need not be given equal long-term retrieval weight.
 
@@ -2400,7 +2974,7 @@ Importance should influence ranking but not determine truth.
 
 ---
 
-# 53. Consolidation
+# 54. Consolidation
 
 The system should eventually perform controlled memory consolidation.
 
@@ -2432,7 +3006,81 @@ Automated consolidation can be limited or disabled in MVP.
 
 ---
 
-# 54. Integrity and Index Rebuild
+# 55. Daily Brief Reminder Inclusion
+
+Daily Brief generation must query memory for due scheduled surfacing records.
+
+The daily brief pipeline should be:
+
+```text
+Create Daily Brief
+       ↓
+Determine user's local date/time and briefing window
+       ↓
+Query disposable reminder index
+       ↓
+Find pending reminders with remindAt due or overdue
+       ↓
+Retrieve canonical memory packages
+       ↓
+Resolve relevant drefs/context
+       ↓
+Query private interest rules against new public OIP records
+       ↓
+Rank public discovery candidates by relevance, novelty, significance, and trust
+       ↓
+Build briefing prompt from private reminders and public discovery recommendations
+       ↓
+Append surfaced-state metadata where appropriate
+```
+
+The reminder query should use due-or-overdue semantics rather than exact-date-only semantics. A missed daily brief must not permanently lose a reminder.
+
+Conceptual SQLite query:
+
+```sql
+SELECT record_id
+FROM memory_reminders
+WHERE reminder_status IN ('pending', 'surfaced')
+  AND remind_at_sort_key <= :briefing_window_end
+  AND (reminder_snoozed_until IS NULL OR reminder_snoozed_until <= :briefing_window_end)
+ORDER BY remind_at_sort_key ASC;
+```
+
+Date-only reminders are due for the user's local date. Timestamp reminders are due when their timestamp falls within or before the briefing window.
+
+Daily Brief prompt construction should include the whole relevant memory context, not only the reminder summary.
+
+Example prompt evidence:
+
+```text
+REMINDER
+Call Sarah about the cabin.
+
+RELATED MEMORY
+Sarah offered the cabin for the October trip.
+
+RELATED PEOPLE
+Sarah
+
+RELATED EPISODE
+Conversation on July 12
+
+RELATED ARTIFACT
+Original voice note
+```
+
+This allows Alfred to brief the user with context:
+
+> You wanted to call Sarah today about using her cabin for the October trip.
+
+Daily Brief inclusion is an index/query behavior over canonical memory records and public OIP discovery indexes. It must not require a separate reminder database as the source of truth.
+
+For public discoveries, the Daily Brief should clearly distinguish "Alfred found something public that may interest you" from "Alfred remembers this about you." User approval creates the private relationship record.
+
+---
+
+# 56. Integrity and Index Rebuild
 
 Because filesystem memory packages and content-addressed artifacts are canonical, every index representation must be reproducible.
 
@@ -2447,7 +3095,7 @@ current revision resolution
         ↓
 index reconstruction process
         ↓
-complete SQLite/FTS/vector/graph/temporal indexes
+complete SQLite/FTS/vector/graph/temporal/reminder/public-discovery indexes
 ```
 
 Rebuild must cover:
@@ -2457,6 +3105,8 @@ Rebuild must cover:
 * vector indexes
 * graph adjacency indexes
 * temporal indexes
+* reminder/scheduled-surfacing indexes
+* public discovery indexes and caches
 * retrieval metadata caches
 
 Integrity verification must cover:
@@ -2467,12 +3117,13 @@ Integrity verification must cover:
 * artifact content hashes
 * `dref` resolution
 * index provenance back to canonical packages
+* public discovery cache provenance back to public OIP records
 
 No index should contain irreplaceable knowledge.
 
 ---
 
-# 55. Future Extensions
+# 57. Future Extensions
 
 The architecture should leave room for:
 
@@ -2495,10 +3146,13 @@ The architecture should leave room for:
 * robot observations
 * user-owned memory synchronization
 * portable encrypted memory archives
+* public OIP web knowledge publishing
+* trusted public knowledge mirrors
+* privacy-preserving public utility/reputation signals
 
 ---
 
-# 56. Future Agent Integration
+# 58. Future Agent Integration
 
 The memory system should remain independent of autonomous action.
 
@@ -2521,7 +3175,7 @@ This separation provides:
 
 ---
 
-# 57. Future "Life Inbox" Integration
+# 59. Future "Life Inbox" Integration
 
 This memory system should form the foundation of a later consumer-facing Life Inbox.
 
@@ -2554,7 +3208,7 @@ Memory becomes the common semantic layer through which those modules interact.
 
 ---
 
-# 58. Key Architectural Decisions
+# 60. Key Architectural Decisions
 
 The following decisions should be considered foundational unless implementation evidence strongly argues otherwise.
 
@@ -2640,31 +3294,75 @@ Facts support valid time and knowledge time.
 
 ### Decision 21
 
-Corrections create new revisions instead of mutating historical revision files.
+Reminder/scheduled-surfacing time is distinct from event time, valid time, and learned time.
 
 ### Decision 22
 
-New experiences/events create new memories rather than rewriting old episodes.
+User-requested reminders are stored on memory records/packages, not in a disconnected reminder database.
 
 ### Decision 23
 
-Assertions distinguish explicit information from model inference.
+Daily Brief generation includes due and overdue pending reminders by querying rebuildable indexes over canonical memory records.
 
 ### Decision 24
 
-All indexes must be rebuildable from canonical filesystem packages and artifacts.
+Corrections create new revisions instead of mutating historical revision files.
 
 ### Decision 25
 
-Integrity verification must detect hash mismatches, broken revision chains, missing artifacts, and index knowledge without canonical provenance.
+New experiences/events create new memories rather than rewriting old episodes.
 
 ### Decision 26
 
+Assertions distinguish explicit information from model inference.
+
+### Decision 27
+
+All indexes must be rebuildable from canonical filesystem packages and artifacts.
+
+### Decision 28
+
+Integrity verification must detect hash mismatches, broken revision chains, missing artifacts, and index knowledge without canonical provenance.
+
+### Decision 29
+
 AI providers must remain replaceable.
+
+### Decision 30
+
+Public web objects may have public OIP metadata records; Alfred must not republish source content by default.
+
+### Decision 31
+
+Public object identity is separate from public analysis. The first node to publish does not become authoritative.
+
+### Decision 32
+
+Multiple public analyses may exist for the same public object and should be ranked by trust, provenance, corroboration, freshness, and user outcomes.
+
+### Decision 33
+
+Private user relationships to public objects are private memory records and should `dref` public OIP records rather than duplicate them by default.
+
+### Decision 34
+
+Private interest graphs drive public discovery matching locally. User interests must not be published merely to receive recommendations.
+
+### Decision 35
+
+Daily Brief generation may include public discovery recommendations, but must clearly distinguish them from private remembered facts.
+
+### Decision 36
+
+Public metadata publication must include trust, spam, copyright, freshness, and prompt-injection controls from the start.
+
+### Decision 37
+
+Public knowledge can flow inward freely; private knowledge flows outward only after explicit user authorization.
 
 ---
 
-# 59. Recommended Initial Implementation Order
+# 61. Recommended Initial Implementation Order
 
 ## Phase 0 — Filesystem Store and Integrity
 
@@ -2677,6 +3375,7 @@ Build:
 * BLAKE3 hashing for revisions and artifacts
 * append-only revision chain validation
 * content-addressed artifact store
+* reminder/scheduled-surfacing fields
 * basic index rebuild command
 
 Success condition:
@@ -2695,6 +3394,7 @@ Build:
 * Observation template
 * Artifact template
 * temporal fields
+* reminder/scheduled-surfacing fields
 * provenance fields
 * `dref` relationships
 * default stable-ID `dref` resolution
@@ -2724,7 +3424,7 @@ audio → memory
 
 Success condition:
 
-Reference scenarios produce valid OIP-compatible memory packages and content-addressed artifact references.
+Reference scenarios and user-requested reminders produce valid OIP-compatible memory packages, scheduled surfacing metadata, and content-addressed artifact references.
 
 ---
 
@@ -2755,6 +3455,7 @@ Implement:
 * embeddings in a disposable vector index
 * 1–2 hop graph expansion from rebuildable adjacency indexes
 * temporal filters
+* reminder due-date retrieval for Daily Brief
 * reciprocal-rank fusion
 * reranking
 
@@ -2783,7 +3484,25 @@ A user can naturally store, retrieve, correct, and delete memories without under
 
 ---
 
-## Phase 6 — Evaluation
+## Phase 6 — Public Knowledge Discovery
+
+Build:
+
+* public object canonicalization for known platforms
+* public analysis record schema
+* private interest and interest-rule records
+* local public OIP discovery cache
+* trust/reputation scoring interface
+* Daily Brief public recommendation selection
+* private save/dismiss relationship flow
+
+Success condition:
+
+A public YouTube video, GitHub repository, or web page can be canonicalized, represented as a public object, associated with one or more public analyses, matched against a private interest rule, surfaced as a Daily Brief recommendation, and saved privately only after user approval.
+
+---
+
+## Phase 7 — Evaluation
 
 Build a regression benchmark.
 
@@ -2794,6 +3513,11 @@ Every change to:
 * entity resolution
 * ranking
 * graph logic
+* reminder due-date logic
+* Daily Brief memory selection
+* public object canonicalization
+* public discovery matching
+* trust/reputation scoring
 * canonicalization
 * revision hashing
 * index rebuild logic
@@ -2802,7 +3526,7 @@ must be tested against the memory benchmark.
 
 ---
 
-# 60. MVP Acceptance Criteria
+# 62. MVP Acceptance Criteria
 
 The first production-quality milestone is complete when all of the following work reliably:
 
@@ -2838,39 +3562,69 @@ The first production-quality milestone is complete when all of the following wor
 
 16. Revision-specific provenance references can resolve exact historical revisions.
 
-17. Alfred can retrieve information through exact lexical queries.
+17. Alfred can store a user-requested future reminder as `remindAt` plus reminder metadata on the relevant memory.
 
-18. Alfred can retrieve information through semantically different wording.
+18. Alfred preserves date-only reminders separately from timestamp reminders.
 
-19. Alfred can retrieve information through relationships.
+19. Alfred can index pending reminders by due date/time in SQLite without making SQLite canonical.
 
-20. Alfred can answer simple historical-state questions.
+20. Daily Brief generation includes pending reminders due today or overdue, resolves their relevant memory graph context, and avoids losing reminders when a prior briefing did not run.
 
-21. Alfred can supersede an outdated fact without losing the historical fact.
+21. Alfred can mark reminders surfaced, completed, dismissed, or snoozed without mutating historical revision files.
 
-22. Alfred can distinguish explicit facts from inference.
+22. Alfred can retrieve information through exact lexical queries.
 
-23. Alfred can expose the source of a remembered answer.
+23. Alfred can retrieve information through semantically different wording.
 
-24. User corrections change future answers appropriately.
+24. Alfred can retrieve information through relationships.
 
-25. User deletion removes private canonical records/artifacts as requested and regenerates affected indexes.
+25. Alfred can answer simple historical-state questions.
 
-26. The SQLite/FTS structured index can be deleted and rebuilt without memory loss.
+26. Alfred can supersede an outdated fact without losing the historical fact.
 
-27. The vector index can be deleted and rebuilt without memory loss.
+27. Alfred can distinguish explicit facts from inference.
 
-28. The graph index can be deleted and rebuilt without memory loss.
+28. Alfred can expose the source of a remembered answer.
 
-29. Integrity verification detects edited revision files, broken revision chains, and artifact hash mismatches.
+29. User corrections change future answers appropriately.
 
-30. Directory movement or storage reorganization does not change semantic relationships because the graph comes from `dref`s.
+30. User deletion removes private canonical records/artifacts as requested and regenerates affected indexes.
 
-31. The system operates with at least one completely local model configuration.
+31. The SQLite/FTS structured index can be deleted and rebuilt without memory loss.
 
-32. No single external AI provider is required.
+32. The vector index can be deleted and rebuilt without memory loss.
 
-33. The query:
+33. The graph index can be deleted and rebuilt without memory loss.
+
+34. The reminder due-date index can be deleted and rebuilt without memory loss.
+
+35. Integrity verification detects edited revision files, broken revision chains, and artifact hash mismatches.
+
+36. Directory movement or storage reorganization does not change semantic relationships because the graph comes from `dref`s.
+
+37. The system operates with at least one completely local model configuration.
+
+38. No single external AI provider is required.
+
+39. Alfred can canonicalize known public web identifiers such as YouTube videos, GitHub repositories, X posts, arXiv papers, and DOI-linked papers.
+
+40. Alfred can create or consume public object records separately from public analysis records.
+
+41. Alfred can represent multiple public analyses for the same public object without treating the first analysis as authoritative.
+
+42. Alfred can maintain private interest records and match them against new public OIP records.
+
+43. Daily Brief generation can include public discovery recommendations while clearly distinguishing them from private remembered facts.
+
+44. Accepting a public discovery creates a private relationship record that `dref`s the public object or public analysis.
+
+45. Dismissing a public discovery can update private ranking feedback without publishing private behavior.
+
+46. Public metadata publication rejects private memories, private annotations, and wholesale copyrighted source copies by default.
+
+47. Public discovery ranking includes trust, spam, freshness, and adversarial-content controls.
+
+48. The query:
 
 > "What was the wine we had at Sarah's?"
 
@@ -2878,7 +3632,7 @@ can return the correct wine even when those exact words never appeared together 
 
 ---
 
-# 61. Product North Star
+# 63. Product North Star
 
 The system should eventually pass a very simple human test:
 
