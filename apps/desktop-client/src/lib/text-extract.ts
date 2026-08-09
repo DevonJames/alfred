@@ -2,13 +2,14 @@
  * Extract plain text from .txt / .md / .rtf uploads.
  */
 
-export type IngestTextKind = "txt" | "md" | "rtf" | "unknown";
+export type IngestTextKind = "txt" | "md" | "rtf" | "json" | "unknown";
 
 export function kindFromFilename(filename: string): IngestTextKind {
   const ext = filename.toLowerCase().split(".").pop() ?? "";
   if (ext === "txt" || ext === "text") return "txt";
   if (ext === "md" || ext === "markdown" || ext === "mdown") return "md";
   if (ext === "rtf") return "rtf";
+  if (ext === "json") return "json";
   return "unknown";
 }
 
@@ -20,6 +21,8 @@ export function mimeForKind(kind: IngestTextKind): string {
       return "application/rtf";
     case "txt":
       return "text/plain";
+    case "json":
+      return "application/json";
     default:
       return "application/octet-stream";
   }
@@ -28,13 +31,13 @@ export function mimeForKind(kind: IngestTextKind): string {
 export function extractPlainText(bytes: Buffer, filename: string): { text: string; kind: IngestTextKind } {
   const kind = kindFromFilename(filename);
   if (kind === "unknown") {
-    throw new Error(`Unsupported file type (use .txt, .md, or .rtf): ${filename}`);
+    throw new Error(`Unsupported file type (use .txt, .md, .rtf, or .json): ${filename}`);
   }
   const raw = bytes.toString("utf8");
   if (kind === "rtf") {
     return { text: rtfToPlainText(raw), kind };
   }
-  // txt / md — keep as-is (markdown stays markdown for FTS; structure is fine)
+  // txt / md / json — keep as-is
   return { text: raw.replace(/^\uFEFF/, ""), kind };
 }
 

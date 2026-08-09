@@ -111,20 +111,22 @@ export class OipLocalMemoryProvider implements MemoryProvider {
     type: MemoryRevision["type"],
     body: Parameters<PackageStore["createPackage"]>[0]["body"],
     logicalId?: string,
+    opts?: { reindex?: boolean },
   ): Promise<MemoryRevision> {
     await this.ensureReady();
     const record = await this.packages.createPackage({ type, body, logicalId });
-    await this.rebuildIndexes();
+    if (opts?.reindex !== false) await this.rebuildIndexes();
     return record;
   }
 
   async updateRecord(
     didOrLogicalId: string,
     patch: Partial<MemoryRevision>,
+    opts?: { reindex?: boolean },
   ): Promise<MemoryRevision> {
     await this.ensureReady();
     const record = await this.packages.appendRevision(didOrLogicalId, patch);
-    await this.rebuildIndexes();
+    if (opts?.reindex !== false) await this.rebuildIndexes();
     return record;
   }
 
@@ -286,30 +288,41 @@ export class OipLocalMemoryProvider implements MemoryProvider {
 
   async putArtifactBytes(
     bytes: Buffer,
-    opts: { mimeType?: string; originalFilename?: string; name?: string } = {},
+    opts: {
+      mimeType?: string;
+      originalFilename?: string;
+      name?: string;
+      reindex?: boolean;
+    } = {},
   ): Promise<MemoryRevision> {
     await this.ensureReady();
     const stored = await this.artifacts.putBytes(bytes, opts);
-    return this.createRecord("Artifact", {
-      name: opts.name ?? opts.originalFilename ?? stored.contentHash,
-      contentHash: stored.contentHash,
-      mimeType: stored.mimeType,
-      byteSize: stored.byteSize,
-      originalFilename: stored.originalFilename,
-      storedAt: stored.storedAt,
-      ingestedAt: new Date().toISOString(),
-      schemaType: "https://schema.org/MediaObject",
-      schema: {
-        "@type": "MediaObject",
-        name: opts.name ?? opts.originalFilename,
-        contentSize: String(stored.byteSize),
-        encodingFormat: stored.mimeType,
+    return this.createRecord(
+      "Artifact",
+      {
+        name: opts.name ?? opts.originalFilename ?? stored.contentHash,
+        contentHash: stored.contentHash,
+        mimeType: stored.mimeType,
+        byteSize: stored.byteSize,
+        originalFilename: stored.originalFilename,
+        storedAt: stored.storedAt,
+        ingestedAt: new Date().toISOString(),
+        schemaType: "https://schema.org/MediaObject",
+        schema: {
+          "@type": "MediaObject",
+          name: opts.name ?? opts.originalFilename,
+          contentSize: String(stored.byteSize),
+          encodingFormat: stored.mimeType,
+        },
+        alfred: { visibility: "private", confidence: 1 },
+        provenance: { sourceType: "artifact_ingest", learnedAt: new Date().toISOString() },
       },
-      alfred: { visibility: "private", confidence: 1 },
-      provenance: { sourceType: "artifact_ingest", learnedAt: new Date().toISOString() },
-    });
+      undefined,
+      { reindex: opts.reindex },
+    );
   }
 }
+
 
 export function createOipLocalProvider(profileId = "profile.default"): OipLocalMemoryProvider {
   return OipLocalMemoryProvider.forProfile(profileId);

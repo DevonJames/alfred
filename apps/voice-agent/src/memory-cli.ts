@@ -13,6 +13,8 @@
  *   pnpm memory -- oip-rebuild
  *   pnpm memory -- oip-export [file]
  *   pnpm memory -- oip-import <file>
+ *   pnpm memory -- erase --yes [--all]
+ *   pnpm memory -- ingest-knowledge <file.json|.md> [--dry-run]
  */
 import { config as loadEnv } from "dotenv";
 import { existsSync } from "node:fs";
@@ -27,7 +29,9 @@ import {
   defaultPersonaDir,
   ensureAndLoadPersona,
   ensurePersonaFiles,
+  eraseOipMemory,
   getItemKind,
+  ingestKnowledgeDocument,
   LocalFileMemoryProvider,
   mergeUserMd,
   OipLocalMemoryProvider,
@@ -57,6 +61,64 @@ async function main(): Promise<void> {
   const provider = new LocalFileMemoryProvider(filePath);
   const oipRoot = defaultOipMemoryRoot(profileId);
   const oip = () => new OipLocalMemoryProvider(oipRoot);
+
+  if (cmd === "erase") {
+    const yes = args.includes("--yes") || args.includes("-y");
+    const includeLocalJsonl = args.includes("--all");
+    if (!yes) {
+      console.error(
+        "This permanently deletes local OIP memory packages/artifacts/indexes" +
+          (includeLocalJsonl ? " and memory.local JSONL" : "") +
+          ".\nRe-run with --yes to confirm.\n  pnpm memory -- erase --yes\n  pnpm memory -- erase --yes --all",
+      );
+      process.exitCode = 1;
+      return;
+    }
+    const result = await eraseOipMemory({ profileId, includeLocalJsonl });
+    console.log(`Erased OIP memory under ${result.oipRoot}`);
+    for (const p of result.removed) console.log(`  removed ${p}`);
+    if (result.jsonlPath) console.log(`  removed JSONL ${result.jsonlPath}`);
+    console.log("USER.md / persona files were not modified.");
+    return;
+  }
+
+  if (cmd === "ingest-knowledge") {
+    const src = args[1];
+    if (!src) {
+      console.error("Usage: pnpm memory -- ingest-knowledge <file.json|.md> [--dry-run]");
+      process.exitCode = 1;
+      return;
+    }
+    const dryRun = args.includes("--dry-run");
+    const abs = resolveInputPath(src);
+    const text = await readFile(abs, "utf8");
+    if (dryRun) {
+      const planned = planIngestExport(text, { sourceLabel: path.basename(abs) });
+      console.log(`Source: ${abs}`);
+      console.log(`Mode preview: ${text.trim().startsWith("{") ? "json-or-markdown" : "markdown"}`);
+      console.log(`USER sections: ${planned.userSectionsFound.join(", ") || "(none)"}`);
+      console.log(`Memory chunks (markdown splitter): ${planned.memoryRecords.length}`);
+      console.log("--dry-run: no files written (JSON path not fully simulated)");
+      return;
+    }
+    const result = await ingestKnowledgeDocument({
+      filename: path.basename(abs),
+      text,
+      bytes: Buffer.from(text, "utf8"),
+      profileId,
+    });
+    console.log(`Ingested ${result.filename} as ${result.mode} → ${result.providerId}`);
+    console.log(`USER.md updated: ${result.userMdUpdated} ${result.userSections.join(", ")}`);
+    console.log(
+      `Created: entities=${result.created.entities} episodes=${result.created.episodes} assertions=${result.created.assertions} observations=${result.created.observations} notes=${result.created.notes}`,
+    );
+    if (result.errors.length) {
+      console.log(`Warnings (${result.errors.length}):`);
+      for (const e of result.errors.slice(0, 20)) console.log(`  ${e}`);
+    }
+    console.log(`Root: ${result.root}`);
+    return;
+  }
 
   if (cmd === "oip-inspect") {
     const p = oip();
@@ -381,7 +443,7 @@ async function main(): Promise<void> {
 
   console.error(`Unknown command: ${cmd}`);
   console.error(
-    "Usage: pnpm memory -- inspect|persona|export|import|ingest-export|dedupe-user|cleanup-user|oip-inspect|oip-verify|oip-rebuild|oip-export|oip-import",
+    "Usage: pnpm memory -- inspect|persona|export|import|ingest-export|ingest-knowledge|dedupe-user|cleanup-user|erase|oip-inspect|oip-verify|oip-rebuild|oip-export|oip-import",
   );
   process.exitCode = 1;
 }

@@ -1,11 +1,15 @@
 /**
  * /memory — local memory ingest UI + API
  *
- * GET  /memory/ingest  — browser form to upload .txt / .md / .rtf
+ * GET  /memory/ingest  — browser form to upload knowledge exports
  * POST /memory/ingest  — multipart upload (field: file) or raw text body
+ *
+ * Preferred: Alfred knowledge-export JSON (see docs/knowledge-export-prompt.md).
+ * Also accepts markdown/txt/rtf exports (section-split + USER.md patch).
  */
 
 import { Hono } from "hono";
+import type { IngestFileResult } from "../lib/memory-ingest.js";
 import { ingestTextFile } from "../lib/memory-ingest.js";
 import { kindFromFilename } from "../lib/text-extract.js";
 
@@ -35,15 +39,16 @@ memoryRouter.post("/ingest", async (c) => {
       contentType.includes("text/plain") ||
       contentType.includes("text/markdown") ||
       contentType.includes("application/rtf") ||
-      contentType.includes("text/rtf")
+      contentType.includes("text/rtf") ||
+      contentType.includes("application/json")
     ) {
       const qName = c.req.query("filename");
       if (qName) filename = qName;
+      else if (contentType.includes("json")) filename = "upload.json";
       else if (contentType.includes("markdown")) filename = "upload.md";
       else if (contentType.includes("rtf")) filename = "upload.rtf";
       bytes = Buffer.from(await c.req.arrayBuffer());
     } else {
-      // Try multipart-less form field `text` + optional `filename`
       const body = await c.req.parseBody();
       const text = typeof body.text === "string" ? body.text : null;
       if (!text) {
@@ -51,7 +56,7 @@ memoryRouter.post("/ingest", async (c) => {
           {
             error: "unsupported_content_type",
             message:
-              "Send multipart file field 'file', or text/plain|text/markdown|application/rtf body",
+              "Send multipart file field 'file', or text/plain|text/markdown|application/json|application/rtf body",
           },
           415,
         );
@@ -62,7 +67,7 @@ memoryRouter.post("/ingest", async (c) => {
 
     if (kindFromFilename(filename) === "unknown") {
       return c.json(
-        { error: "unsupported_extension", message: "Use .txt, .md, or .rtf" },
+        { error: "unsupported_extension", message: "Use .json, .txt, .md, or .rtf" },
         400,
       );
     }
@@ -113,7 +118,7 @@ function ingestPageHtml(providerId: string): string {
       padding: 2rem 1rem;
     }
     main {
-      width: min(34rem, 100%);
+      width: min(36rem, 100%);
       background: color-mix(in srgb, var(--panel) 92%, black);
       border: 1px solid var(--line);
       padding: 2rem 1.75rem 1.75rem;
@@ -126,7 +131,7 @@ function ingestPageHtml(providerId: string): string {
     }
     .brand { color: var(--accent); }
     p {
-      margin: 0 0 1.4rem;
+      margin: 0 0 1.1rem;
       color: var(--muted);
       line-height: 1.45;
       font-size: 1rem;
@@ -159,16 +164,23 @@ function ingestPageHtml(providerId: string): string {
       color: var(--muted);
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     }
+    ul { color: var(--muted); margin: 0 0 1.2rem 1.1rem; padding: 0; line-height: 1.4; }
   </style>
 </head>
 <body>
   <main>
     <h1><span class="brand">Alfred</span> memory ingest</h1>
-    <p>Upload a <code>.txt</code>, <code>.md</code>, or <code>.rtf</code> file. It will be stored in the local memory provider (<code>${escapeHtml(providerId)}</code>).</p>
+    <p>Upload a knowledge export. Alfred will:</p>
+    <ul>
+      <li>Merge high-priority / how-to-work sections into <code>USER.md</code></li>
+      <li>Split remaining details into individual OIP memory records</li>
+      <li>Keep the original file as a content-addressed artifact</li>
+    </ul>
+    <p>Prefer <code>.json</code> (see <code>docs/knowledge-export-prompt.md</code>). Markdown / txt / rtf still work via section splitting. Provider: <code>${escapeHtml(providerId)}</code>.</p>
     <form method="post" action="/memory/ingest" enctype="multipart/form-data">
-      <label for="file">Text file</label>
-      <input id="file" name="file" type="file" accept=".txt,.md,.markdown,.rtf,text/plain,text/markdown,application/rtf" required />
-      <button type="submit">Ingest into memory</button>
+      <label for="file">Knowledge export</label>
+      <input id="file" name="file" type="file" accept=".json,.txt,.md,.markdown,.rtf,application/json,text/plain,text/markdown,application/rtf" required />
+      <button type="submit">Analyze &amp; ingest</button>
     </form>
     <p class="meta">POST /memory/ingest · multipart field <code>file</code></p>
   </main>
@@ -176,15 +188,8 @@ function ingestPageHtml(providerId: string): string {
 </html>`;
 }
 
-function successPageHtml(result: {
-  filename: string;
-  providerId: string;
-  textChars: number;
-  observationId?: string;
-  artifactId?: string;
-  noteId?: string;
-  root: string;
-}): string {
+function successPageHtml(result: IngestFileResult): string {
+  const c = result.created;
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -196,7 +201,7 @@ function successPageHtml(result: {
       margin: 0; min-height: 100vh; display: grid; place-items: center;
       font-family: Georgia, serif; background: #1a1f1c; color: #e8efe6; padding: 2rem;
     }
-    main { width: min(34rem, 100%); border: 1px solid #3a463d; padding: 1.75rem; background: #243028; }
+    main { width: min(36rem, 100%); border: 1px solid #3a463d; padding: 1.75rem; background: #243028; }
     a { color: #c4a35a; }
     code { font-family: ui-monospace, Menlo, monospace; font-size: 0.85em; }
   </style>
@@ -204,12 +209,24 @@ function successPageHtml(result: {
 <body>
   <main>
     <h1>Ingested</h1>
-    <p><strong>${escapeHtml(result.filename)}</strong> → <code>${escapeHtml(result.providerId)}</code></p>
-    <p>${result.textChars} characters stored.</p>
-    ${result.observationId ? `<p>Observation: <code>${escapeHtml(result.observationId)}</code></p>` : ""}
-    ${result.artifactId ? `<p>Artifact: <code>${escapeHtml(result.artifactId)}</code></p>` : ""}
-    ${result.noteId ? `<p>Note: <code>${escapeHtml(result.noteId)}</code></p>` : ""}
+    <p><strong>${escapeHtml(result.filename)}</strong> → <code>${escapeHtml(result.providerId)}</code> (<code>${escapeHtml(result.mode)}</code>)</p>
+    <p>${result.textChars} characters analyzed.</p>
+    <p>USER.md updated: <strong>${result.userMdUpdated ? "yes" : "no"}</strong>
+      ${result.userSections.length ? `(${escapeHtml(result.userSections.join(", "))})` : ""}</p>
+    <p>Created records —
+      entities ${c.entities},
+      episodes ${c.episodes},
+      assertions ${c.assertions},
+      observations ${c.observations},
+      notes ${c.notes}</p>
+    ${result.artifactId ? `<p>Source artifact: <code>${escapeHtml(result.artifactId)}</code></p>` : ""}
+    ${result.userMdPath ? `<p>USER.md: <code>${escapeHtml(result.userMdPath)}</code></p>` : ""}
     <p>Root: <code>${escapeHtml(result.root)}</code></p>
+    ${
+      result.errors.length
+        ? `<p>Warnings: ${result.errors.length} (see JSON response / logs)</p>`
+        : ""
+    }
     <p><a href="/memory/ingest">Ingest another</a></p>
   </main>
 </body>
