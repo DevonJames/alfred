@@ -84,7 +84,7 @@ It MUST validate against this shape:
   "memories": [
     {
       "tempId": "memory-…",
-      "kind": "fact|note|preference|project|open_loop|timeline|technical|business|creative",
+      "kind": "fact|note|preference|project|open_loop|timeline|technical|business|creative|career",
       "title": "short title",
       "text": "self-contained detail (one atomic memory unit)",
       "confidence": "explicit|supported|tentative|superseded",

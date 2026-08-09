@@ -13,7 +13,8 @@ import {
 } from "./ingest-export.js";
 import {
   KnowledgeExportSchema,
-  tryParseKnowledgeExportJson,
+  looksLikeKnowledgeExportJson,
+  parseKnowledgeExportJson,
   type ExportConfidence,
   type KnowledgeExport,
 } from "./knowledge-export-schema.js";
@@ -82,11 +83,11 @@ export async function ingestKnowledgeDocument(opts: {
   const providerId =
     opts.providerId ?? process.env.ALFRED_MEMORY_PROVIDER_ID ?? OIP_LOCAL_MEMORY_PROVIDER_ID;
   const errors: string[] = [];
-  const json = tryParseKnowledgeExportJson(opts.text);
+  const parsed = parseKnowledgeExportJson(opts.text);
 
-  if (json) {
+  if (parsed.ok) {
     return ingestJsonExport({
-      doc: json,
+      doc: parsed.data,
       filename: opts.filename,
       bytes: opts.bytes ?? Buffer.from(opts.text, "utf8"),
       profileId,
@@ -94,6 +95,15 @@ export async function ingestKnowledgeDocument(opts: {
       storeArtifact: opts.storeArtifact !== false,
       errors,
     });
+  }
+
+  // Looks like our JSON export but failed validation — do not silently treat as markdown.
+  if (looksLikeKnowledgeExportJson(opts.text, opts.filename)) {
+    const detail = parsed.issues.slice(0, 12).join("; ");
+    throw new Error(
+      `Knowledge-export JSON failed validation (${parsed.reason}): ${detail || "unknown error"}` +
+        (parsed.issues.length > 12 ? ` (+${parsed.issues.length - 12} more)` : ""),
+    );
   }
 
   return ingestMarkdownExport({

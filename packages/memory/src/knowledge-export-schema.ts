@@ -14,11 +14,23 @@ export const UserPatchSchema = z.object({
   negativePreferences: z.string().optional(),
 });
 
+/** Unwrap markdown-link schemaTypes from chat UIs: [https://…](https://…) */
+export function normalizeSchemaType(raw: string | undefined): string {
+  if (!raw?.trim()) return "https://schema.org/Thing";
+  const md = /^\[([^\]]+)\]\([^)]+\)$/.exec(raw.trim());
+  if (md?.[1]) return md[1].trim();
+  // Also handle accidental "URL](URL" leftovers
+  const url = raw.match(/https?:\/\/schema\.org\/[A-Za-z0-9]+/);
+  if (url) return url[0];
+  return raw.trim();
+}
+
 export const ExportEntitySchema = z.object({
   tempId: z.string().min(1),
   schemaType: z
     .string()
     .default("https://schema.org/Thing")
+    .transform(normalizeSchemaType)
     .describe("schema.org URL, e.g. https://schema.org/Person"),
   entityClass: z
     .string()
@@ -64,21 +76,10 @@ export const ExportEpisodeSchema = z.object({
   confidence: ConfidenceSchema.default("explicit"),
 });
 
+/** Known kinds; unknown strings (e.g. "career") are kept as-is. */
 export const ExportMemorySchema = z.object({
   tempId: z.string().min(1),
-  kind: z
-    .enum([
-      "fact",
-      "note",
-      "preference",
-      "project",
-      "open_loop",
-      "timeline",
-      "technical",
-      "business",
-      "creative",
-    ])
-    .default("note"),
+  kind: z.string().min(1).default("note"),
   title: z.string().min(1),
   text: z.string().min(1),
   confidence: ConfidenceSchema.default("explicit"),
@@ -105,16 +106,49 @@ export const KnowledgeExportSchema = z.object({
 
 export type KnowledgeExport = z.infer<typeof KnowledgeExportSchema>;
 
+export type KnowledgeExportParseResult =
+  | { ok: true; data: KnowledgeExport }
+  | { ok: false; reason: "not_json" | "invalid_json" | "schema"; issues: string[] };
+
 /** Detect whether text looks like a v1 knowledge-export JSON document. */
-export function tryParseKnowledgeExportJson(text: string): KnowledgeExport | null {
+export function parseKnowledgeExportJson(text: string): KnowledgeExportParseResult {
   const trimmed = text.trim();
-  if (!trimmed.startsWith("{")) return null;
+  if (!trimmed.startsWith("{")) return { ok: false, reason: "not_json", issues: [] };
   let parsed: unknown;
   try {
     parsed = JSON.parse(trimmed);
-  } catch {
-    return null;
+  } catch (e) {
+    return {
+      ok: false,
+      reason: "invalid_json",
+      issues: [e instanceof Error ? e.message : String(e)],
+    };
   }
   const result = KnowledgeExportSchema.safeParse(parsed);
-  return result.success ? result.data : null;
+  if (result.success) return { ok: true, data: result.data };
+  return {
+    ok: false,
+    reason: "schema",
+    issues: result.error.issues.map(
+      (i) => `${i.path.join(".") || "(root)"}: ${i.message}`,
+    ),
+  };
+}
+
+/** @deprecated prefer parseKnowledgeExportJson */
+export function tryParseKnowledgeExportJson(text: string): KnowledgeExport | null {
+  const r = parseKnowledgeExportJson(text);
+  return r.ok ? r.data : null;
+}
+
+export function looksLikeKnowledgeExportJson(text: string, filename?: string): boolean {
+  if (filename && /\.json$/i.test(filename)) return true;
+  const t = text.trim();
+  if (!t.startsWith("{")) return false;
+  try {
+    const obj = JSON.parse(t) as Record<string, unknown>;
+    return obj?.version === 1 && typeof obj.userPatch === "object" && obj.userPatch !== null;
+  } catch {
+    return false;
+  }
 }
