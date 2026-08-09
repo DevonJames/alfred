@@ -8,6 +8,11 @@
  *   pnpm memory -- ingest-export <report.md> [--dry-run] [--no-user] [--no-memory]
  *   pnpm memory -- dedupe-user [--dry-run]
  *   pnpm memory -- cleanup-user [--dry-run] [--no-memory] [--target N]
+ *   pnpm memory -- oip-inspect
+ *   pnpm memory -- oip-verify
+ *   pnpm memory -- oip-rebuild
+ *   pnpm memory -- oip-export [file]
+ *   pnpm memory -- oip-import <file>
  */
 import { config as loadEnv } from "dotenv";
 import { existsSync } from "node:fs";
@@ -18,12 +23,14 @@ import {
   cleanupUserMd,
   dedupeUserMd,
   defaultMemoryPath,
+  defaultOipMemoryRoot,
   defaultPersonaDir,
   ensureAndLoadPersona,
   ensurePersonaFiles,
   getItemKind,
   LocalFileMemoryProvider,
   mergeUserMd,
+  OipLocalMemoryProvider,
   PERSONA_FILES,
   planIngestExport,
   resolveRepoRoot,
@@ -48,6 +55,75 @@ async function main(): Promise<void> {
   const profileId = process.env.ALFRED_PROFILE_ID ?? "profile.default";
   const filePath = defaultMemoryPath(profileId);
   const provider = new LocalFileMemoryProvider(filePath);
+  const oipRoot = defaultOipMemoryRoot(profileId);
+  const oip = () => new OipLocalMemoryProvider(oipRoot);
+
+  if (cmd === "oip-inspect") {
+    const p = oip();
+    const items = await p.inspect(200);
+    console.log(`OIP memory root: ${oipRoot}`);
+    console.log(`Packages (current revisions): ${items.length}\n`);
+    for (const item of items) {
+      const type = String(item.provenance?.type ?? "?");
+      console.log(`  [${type}] ${item.id}`);
+      console.log(`    ${item.content.slice(0, 160)}`);
+    }
+    return;
+  }
+
+  if (cmd === "oip-verify") {
+    const p = oip();
+    const report = await p.verify();
+    console.log(`OIP memory root: ${oipRoot}`);
+    console.log(
+      `ok=${report.ok} packages=${report.packagesChecked} revisions=${report.revisionsChecked} artifacts=${report.artifactsChecked}`,
+    );
+    for (const issue of report.issues) {
+      console.log(`  [${issue.severity}] ${issue.code}: ${issue.message}`);
+      if (issue.path) console.log(`    path: ${issue.path}`);
+    }
+    if (!report.ok) process.exitCode = 1;
+    return;
+  }
+
+  if (cmd === "oip-rebuild") {
+    const p = oip();
+    await p.rebuildIndexes();
+    console.log(`Rebuilt indexes under ${path.join(oipRoot, "indexes")}`);
+    return;
+  }
+
+  if (cmd === "oip-export") {
+    const p = oip();
+    const out = args[1];
+    const records = await p.exportCanonical();
+    const body = records.map((r) => JSON.stringify(r)).join("\n") + (records.length ? "\n" : "");
+    if (out) {
+      await writeFile(resolve(out), body, "utf8");
+      console.log(`Exported ${records.length} OIP records → ${resolve(out)}`);
+    } else {
+      process.stdout.write(body);
+    }
+    return;
+  }
+
+  if (cmd === "oip-import") {
+    const src = args[1];
+    if (!src) {
+      console.error("Usage: pnpm memory -- oip-import <file.jsonl>");
+      process.exitCode = 1;
+      return;
+    }
+    const p = oip();
+    const raw = await readFile(resolveInputPath(src), "utf8");
+    const records: CanonicalMemoryRecord[] = raw
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as CanonicalMemoryRecord);
+    await p.importCanonical(records);
+    console.log(`Imported ${records.length} OIP records → ${oipRoot}`);
+    return;
+  }
 
   if (cmd === "inspect") {
     const items = await provider.inspect(200);
@@ -305,7 +381,7 @@ async function main(): Promise<void> {
 
   console.error(`Unknown command: ${cmd}`);
   console.error(
-    "Usage: pnpm memory -- inspect|persona|export|import|ingest-export|dedupe-user|cleanup-user",
+    "Usage: pnpm memory -- inspect|persona|export|import|ingest-export|dedupe-user|cleanup-user|oip-inspect|oip-verify|oip-rebuild|oip-export|oip-import",
   );
   process.exitCode = 1;
 }
