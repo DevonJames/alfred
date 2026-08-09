@@ -1,0 +1,602 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Alfred — Memory graph</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,400&family=Fraunces:opsz,wght@9..144,500;9..144,600&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg0: #0e1210;
+      --bg1: #171c18;
+      --panel: rgba(28, 36, 30, 0.92);
+      --ink: #e7eee6;
+      --muted: #93a094;
+      --line: #334038;
+      --brass: #c4a35a;
+      --sage: #6b9e78;
+      --coral: #d4785a;
+      --steel: #7eb8c9;
+      --stone: #9a9588;
+      --focus: #f0e6c8;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      height: 100%;
+      overflow: hidden;
+      background: var(--bg0);
+      color: var(--ink);
+      font-family: "DM Sans", system-ui, sans-serif;
+    }
+    #stage {
+      position: fixed;
+      inset: 0;
+      background:
+        radial-gradient(ellipse 80% 60% at 20% 10%, rgba(107, 158, 120, 0.12), transparent 55%),
+        radial-gradient(ellipse 70% 50% at 90% 80%, rgba(196, 163, 90, 0.08), transparent 50%),
+        linear-gradient(165deg, #121714 0%, var(--bg0) 45%, #0c100e 100%);
+    }
+    #graph { width: 100%; height: 100%; }
+
+    .chrome {
+      position: fixed;
+      z-index: 5;
+      pointer-events: none;
+    }
+    .chrome > * { pointer-events: auto; }
+
+    header.top {
+      top: 1rem;
+      left: 1rem;
+      right: 1rem;
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 1rem;
+      pointer-events: none;
+    }
+    header.top > * { pointer-events: auto; }
+
+    .brand-block h1 {
+      margin: 0;
+      font-family: Fraunces, Georgia, serif;
+      font-weight: 600;
+      font-size: clamp(1.6rem, 3vw, 2.1rem);
+      letter-spacing: 0.01em;
+      line-height: 1.1;
+    }
+    .brand-block h1 span { color: var(--brass); }
+    .brand-block p {
+      margin: 0.35rem 0 0;
+      color: var(--muted);
+      font-size: 0.92rem;
+      max-width: 28rem;
+    }
+
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      backdrop-filter: blur(10px);
+      box-shadow: 0 12px 40px rgba(0,0,0,0.35);
+    }
+
+    .controls {
+      width: min(20rem, calc(100vw - 2rem));
+      padding: 0.9rem 1rem 1rem;
+    }
+    .controls label {
+      display: block;
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+      margin: 0.7rem 0 0.35rem;
+    }
+    .controls input[type="search"] {
+      width: 100%;
+      border: 1px solid var(--line);
+      background: #121714;
+      color: var(--ink);
+      padding: 0.55rem 0.65rem;
+      font: inherit;
+      font-size: 0.95rem;
+      outline: none;
+    }
+    .controls input[type="search"]:focus { border-color: var(--brass); }
+
+    .filters {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.4rem;
+      margin-top: 0.35rem;
+    }
+    .filters button {
+      border: 1px solid var(--line);
+      background: transparent;
+      color: var(--muted);
+      font: inherit;
+      font-size: 0.78rem;
+      padding: 0.28rem 0.55rem;
+      cursor: pointer;
+    }
+    .filters button.on {
+      color: var(--ink);
+      border-color: currentColor;
+    }
+    .filters button[data-type="Entity"].on { color: var(--brass); }
+    .filters button[data-type="Episode"].on { color: var(--sage); }
+    .filters button[data-type="Assertion"].on { color: var(--coral); }
+    .filters button[data-type="Observation"].on { color: var(--steel); }
+    .filters button[data-type="Artifact"].on { color: var(--stone); }
+
+    .row-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.45rem;
+      margin-top: 0.85rem;
+    }
+    .row-actions button, .detail-actions button {
+      border: 1px solid var(--brass);
+      background: transparent;
+      color: var(--ink);
+      font: inherit;
+      font-size: 0.85rem;
+      padding: 0.4rem 0.7rem;
+      cursor: pointer;
+    }
+    .row-actions button:hover, .detail-actions button:hover {
+      background: color-mix(in srgb, var(--brass) 18%, transparent);
+    }
+    .row-actions button.ghost {
+      border-color: var(--line);
+      color: var(--muted);
+    }
+
+    .stats {
+      margin-top: 0.85rem;
+      font-size: 0.78rem;
+      color: var(--muted);
+      font-variant-numeric: tabular-nums;
+      line-height: 1.45;
+    }
+
+    .detail {
+      position: fixed;
+      top: 1rem;
+      right: 1rem;
+      width: min(24rem, calc(100vw - 2rem));
+      max-height: calc(100vh - 2rem);
+      overflow: auto;
+      padding: 1.1rem 1.15rem 1.2rem;
+      transform: translateX(110%);
+      transition: transform 220ms ease;
+      z-index: 6;
+    }
+    .detail.open { transform: translateX(0); }
+    .detail .type-pill {
+      display: inline-block;
+      font-size: 0.72rem;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      padding: 0.15rem 0.45rem;
+      border: 1px solid currentColor;
+      margin-bottom: 0.5rem;
+    }
+    .detail h2 {
+      margin: 0 0 0.4rem;
+      font-family: Fraunces, Georgia, serif;
+      font-size: 1.45rem;
+      font-weight: 600;
+      line-height: 1.2;
+    }
+    .detail .meta {
+      color: var(--muted);
+      font-size: 0.8rem;
+      word-break: break-all;
+      margin-bottom: 0.85rem;
+    }
+    .detail .body {
+      font-size: 0.95rem;
+      line-height: 1.45;
+      white-space: pre-wrap;
+      margin-bottom: 1rem;
+    }
+    .detail h3 {
+      margin: 1rem 0 0.4rem;
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+      font-weight: 500;
+    }
+    .neighbors { list-style: none; margin: 0; padding: 0; }
+    .neighbors li {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 0.35rem 0.55rem;
+      padding: 0.4rem 0;
+      border-top: 1px solid var(--line);
+      font-size: 0.88rem;
+      cursor: pointer;
+    }
+    .neighbors li:hover .n-label { color: var(--brass); }
+    .neighbors .pred {
+      color: var(--muted);
+      font-size: 0.75rem;
+      grid-column: 1 / -1;
+    }
+    .neighbors .dir {
+      color: var(--stone);
+      font-size: 0.75rem;
+    }
+    .close-x {
+      position: absolute;
+      top: 0.65rem;
+      right: 0.75rem;
+      border: none;
+      background: transparent;
+      color: var(--muted);
+      font-size: 1.4rem;
+      cursor: pointer;
+      line-height: 1;
+    }
+
+    .hint {
+      position: fixed;
+      bottom: 1rem;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 4;
+      color: var(--muted);
+      font-size: 0.78rem;
+      background: rgba(14, 18, 16, 0.75);
+      border: 1px solid var(--line);
+      padding: 0.35rem 0.75rem;
+      pointer-events: none;
+    }
+
+    .empty {
+      position: fixed;
+      inset: 0;
+      display: none;
+      place-items: center;
+      z-index: 3;
+      text-align: center;
+      padding: 2rem;
+    }
+    .empty.show { display: grid; }
+    .empty h2 {
+      font-family: Fraunces, Georgia, serif;
+      margin: 0 0 0.5rem;
+    }
+    .empty a { color: var(--brass); }
+
+    @media (max-width: 720px) {
+      header.top { flex-direction: column; }
+      .detail {
+        top: auto;
+        bottom: 0;
+        right: 0;
+        left: 0;
+        width: 100%;
+        max-height: 45vh;
+        transform: translateY(110%);
+      }
+      .detail.open { transform: translateY(0); }
+    }
+  </style>
+</head>
+<body>
+  <div id="stage"><div id="graph"></div></div>
+
+  <header class="top chrome">
+    <div class="brand-block">
+      <h1><span>Alfred</span> memory graph</h1>
+      <p>Browse linked people, places, projects, and facts. Click a node to inspect; search to focus a neighborhood.</p>
+    </div>
+    <div class="panel controls">
+      <label for="q">Search</label>
+      <input id="q" type="search" placeholder="Sarah, Barolo, USPTO…" autocomplete="off" />
+      <label>Show types</label>
+      <div class="filters" id="filters">
+        <button type="button" class="on" data-type="Entity">Entity</button>
+        <button type="button" class="on" data-type="Episode">Episode</button>
+        <button type="button" class="on" data-type="Assertion">Assertion</button>
+        <button type="button" class="on" data-type="Observation">Observation</button>
+        <button type="button" data-type="Artifact">Artifact</button>
+      </div>
+      <div class="row-actions">
+        <button type="button" id="btn-reload">Reload</button>
+        <button type="button" class="ghost" id="btn-reset">Reset view</button>
+        <button type="button" class="ghost" id="btn-ingest">Ingest</button>
+      </div>
+      <div class="stats" id="stats">Loading…</div>
+    </div>
+  </header>
+
+  <aside class="panel detail" id="detail" aria-live="polite">
+    <button type="button" class="close-x" id="detail-close" aria-label="Close">×</button>
+    <div id="detail-body"></div>
+  </aside>
+
+  <div class="hint">Drag to pan · scroll to zoom · click node for details · double-click to center</div>
+  <div class="empty" id="empty">
+    <div>
+      <h2>No memory graph yet</h2>
+      <p>Ingest a knowledge export first, then reload.</p>
+      <p><a href="/memory/ingest">Open ingest →</a></p>
+    </div>
+  </div>
+
+  <script src="https://unpkg.com/force-graph@1.49.0/dist/force-graph.min.js"></script>
+  <script>
+    const COLORS = {
+      Entity: "#c4a35a",
+      Episode: "#6b9e78",
+      Assertion: "#d4785a",
+      Observation: "#7eb8c9",
+      Artifact: "#9a9588",
+    };
+
+    const state = {
+      raw: null,
+      types: new Set(["Entity", "Episode", "Assertion", "Observation"]),
+      query: "",
+      focusId: null,
+      graph: null,
+    };
+
+    const elGraph = document.getElementById("graph");
+    const elStats = document.getElementById("stats");
+    const elDetail = document.getElementById("detail");
+    const elDetailBody = document.getElementById("detail-body");
+    const elEmpty = document.getElementById("empty");
+    const elQ = document.getElementById("q");
+
+    function typeColor(t) {
+      return COLORS[t] || "#93a094";
+    }
+
+    function matchesQuery(node, q) {
+      if (!q) return true;
+      const hay = (node.label + " " + node.searchText + " " + node.type).toLowerCase();
+      return q.split(/\s+/).filter(Boolean).every((t) => hay.includes(t));
+    }
+
+    function filteredGraph() {
+      if (!state.raw) return { nodes: [], links: [] };
+      const q = state.query.trim().toLowerCase();
+      let nodes = state.raw.nodes.filter((n) => state.types.has(n.type));
+
+      if (q) {
+        const hitIds = new Set(nodes.filter((n) => matchesQuery(n, q)).map((n) => n.id));
+        // Expand one hop around hits so the neighborhood stays visible
+        for (const l of state.raw.links) {
+          if (hitIds.has(l.source) || hitIds.has(l.source?.id)) hitIds.add(typeof l.target === "object" ? l.target.id : l.target);
+          if (hitIds.has(l.target) || hitIds.has(l.target?.id)) hitIds.add(typeof l.source === "object" ? l.source.id : l.source);
+        }
+        // Re-include only typed nodes in the expanded set
+        const typed = new Set(nodes.map((n) => n.id));
+        nodes = state.raw.nodes.filter((n) => typed.has(n.id) && hitIds.has(n.id));
+      }
+
+      const ids = new Set(nodes.map((n) => n.id));
+      const links = state.raw.links
+        .filter((l) => {
+          const s = typeof l.source === "object" ? l.source.id : l.source;
+          const t = typeof l.target === "object" ? l.target.id : l.target;
+          return ids.has(s) && ids.has(t);
+        })
+        .map((l) => ({
+          source: typeof l.source === "object" ? l.source.id : l.source,
+          target: typeof l.target === "object" ? l.target.id : l.target,
+          predicate: l.predicate,
+        }));
+
+      return {
+        nodes: nodes.map((n) => ({ ...n })),
+        links,
+      };
+    }
+
+    function renderGraph() {
+      const data = filteredGraph();
+      elEmpty.classList.toggle("show", data.nodes.length === 0);
+
+      if (!state.graph) {
+        state.graph = ForceGraph()(elGraph)
+          .backgroundColor("rgba(0,0,0,0)")
+          .nodeId("id")
+          .nodeLabel((n) => `${n.label}\n${n.type}${n.schemaType ? " · " + n.schemaType.replace("https://schema.org/", "") : ""}`)
+          .nodeRelSize(5)
+          .nodeVal((n) => 2 + Math.min(12, n.degree || 0))
+          .nodeColor((n) => {
+            if (state.focusId && n.id === state.focusId) return "var(--focus)" || "#f0e6c8";
+            return typeColor(n.type);
+          })
+          .linkColor(() => "rgba(147, 160, 148, 0.35)")
+          .linkWidth((l) => (state.focusId && (l.source.id === state.focusId || l.target.id === state.focusId) ? 2.2 : 1))
+          .linkDirectionalArrowLength(3.5)
+          .linkDirectionalArrowRelPos(1)
+          .linkLabel((l) => l.predicate)
+          .onNodeClick((n) => selectNode(n.id))
+          .onNodeDblClick((n) => {
+            state.graph.centerAt(n.x, n.y, 600);
+            state.graph.zoom(2.2, 600);
+          })
+          .onBackgroundClick(() => {
+            state.focusId = null;
+            closeDetail();
+            paint();
+          });
+      }
+
+      state.graph.graphData(data);
+      paint();
+    }
+
+    function paint() {
+      if (!state.graph) return;
+      state.graph
+        .nodeColor((n) => {
+          if (state.focusId) {
+            if (n.id === state.focusId) return "#f0e6c8";
+            const g = state.graph.graphData();
+            const linked = g.links.some((l) => {
+              const s = l.source.id || l.source;
+              const t = l.target.id || l.target;
+              return (s === state.focusId && t === n.id) || (t === state.focusId && s === n.id);
+            });
+            if (!linked) return "rgba(147,160,148,0.18)";
+          }
+          return typeColor(n.type);
+        })
+        .linkColor((l) => {
+          if (!state.focusId) return "rgba(147, 160, 148, 0.35)";
+          const s = l.source.id || l.source;
+          const t = l.target.id || l.target;
+          if (s === state.focusId || t === state.focusId) return "rgba(196, 163, 90, 0.75)";
+          return "rgba(147, 160, 148, 0.08)";
+        });
+    }
+
+    async function selectNode(id) {
+      state.focusId = id;
+      paint();
+      elDetail.classList.add("open");
+      elDetailBody.innerHTML = "<p class='meta'>Loading…</p>";
+      try {
+        const res = await fetch("/memory/graph/node/" + encodeURIComponent(id));
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.message || "Not found");
+        const rev = data.revision || {};
+        const schema = rev.schema || {};
+        const text =
+          rev.text ||
+          schema.description ||
+          schema.text ||
+          (rev.predicate ? `${rev.predicate} → ${rev.object ?? ""}` : "") ||
+          data.index?.search_text ||
+          "";
+        const color = typeColor(data.index.record_type);
+        elDetailBody.innerHTML = `
+          <div class="type-pill" style="color:${color}">${escapeHtml(data.index.record_type)}</div>
+          <h2>${escapeHtml(data.index.name || data.index.record_type)}</h2>
+          <div class="meta">${escapeHtml(data.index.id)}${data.index.schema_type ? "<br>" + escapeHtml(data.index.schema_type) : ""}</div>
+          <div class="body">${escapeHtml(String(text).slice(0, 1200))}</div>
+          <div class="detail-actions">
+            <button type="button" id="btn-center">Center</button>
+          </div>
+          <h3>Connections (${data.neighbors.length})</h3>
+          <ul class="neighbors">
+            ${data.neighbors
+              .slice(0, 40)
+              .map(
+                (n) => `
+              <li data-id="${escapeHtml(n.id)}">
+                <span class="pred">${escapeHtml(n.direction === "out" ? "→" : "←")} ${escapeHtml(n.predicate)}</span>
+                <span class="dir">${escapeHtml(n.type)}</span>
+                <span class="n-label">${escapeHtml(n.label)}</span>
+              </li>`,
+              )
+              .join("")}
+          </ul>
+        `;
+        document.getElementById("btn-center")?.addEventListener("click", () => {
+          const node = state.graph.graphData().nodes.find((n) => n.id === id);
+          if (node) {
+            state.graph.centerAt(node.x, node.y, 700);
+            state.graph.zoom(2.4, 700);
+          }
+        });
+        elDetailBody.querySelectorAll(".neighbors li").forEach((li) => {
+          li.addEventListener("click", () => selectNode(li.getAttribute("data-id")));
+        });
+      } catch (e) {
+        elDetailBody.innerHTML = `<p class="meta">${escapeHtml(e.message || String(e))}</p>`;
+      }
+    }
+
+    function closeDetail() {
+      elDetail.classList.remove("open");
+    }
+
+    function escapeHtml(s) {
+      return String(s ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;");
+    }
+
+    async function load(includeArtifacts) {
+      elStats.textContent = "Loading…";
+      const params = new URLSearchParams();
+      if (includeArtifacts) params.set("artifacts", "1");
+      const res = await fetch("/memory/graph/data?" + params.toString());
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || "Failed to load graph");
+      state.raw = data;
+      // force-graph mutates link endpoints into objects — keep pristine copies
+      state.raw.links = data.links.map((l) => ({ ...l }));
+      state.raw.nodes = data.nodes.map((n) => ({ ...n }));
+      elStats.textContent = `${data.stats.nodes} nodes · ${data.stats.links} links\nindexed ${data.stats.recordsIndexed} records`;
+      renderGraph();
+    }
+
+    document.getElementById("filters").addEventListener("click", (e) => {
+      const btn = e.target.closest("button[data-type]");
+      if (!btn) return;
+      const t = btn.getAttribute("data-type");
+      if (state.types.has(t)) state.types.delete(t);
+      else state.types.add(t);
+      btn.classList.toggle("on", state.types.has(t));
+      // Artifacts require refetch if newly enabled (may be absent from default payload)
+      if (t === "Artifact" && state.types.has("Artifact")) {
+        load(true).catch((err) => (elStats.textContent = err.message));
+      } else {
+        renderGraph();
+      }
+    });
+
+    let searchTimer;
+    elQ.addEventListener("input", () => {
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(() => {
+        state.query = elQ.value;
+        renderGraph();
+      }, 160);
+    });
+
+    document.getElementById("btn-reload").addEventListener("click", () => {
+      load(state.types.has("Artifact")).catch((err) => (elStats.textContent = err.message));
+    });
+    document.getElementById("btn-reset").addEventListener("click", () => {
+      state.focusId = null;
+      state.query = "";
+      elQ.value = "";
+      closeDetail();
+      renderGraph();
+      state.graph?.zoomToFit(600, 50);
+    });
+    document.getElementById("btn-ingest").addEventListener("click", () => {
+      location.href = "/memory/ingest";
+    });
+    document.getElementById("detail-close").addEventListener("click", () => {
+      state.focusId = null;
+      closeDetail();
+      paint();
+    });
+
+    load(false)
+      .then(() => setTimeout(() => state.graph?.zoomToFit(700, 60), 400))
+      .catch((err) => {
+        elStats.textContent = err.message;
+        elEmpty.classList.add("show");
+      });
+  </script>
+</body>
+</html>

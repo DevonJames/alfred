@@ -30,6 +30,7 @@ app.get("/", (c) =>
     connect: "/connect/info",
     health: "/connect/health",
     memoryIngest: "/memory/ingest",
+    memoryGraph: "/memory/graph",
   }),
 );
 
@@ -39,6 +40,7 @@ app.route("/memory", memoryRouter);
 const server = serve({ fetch: app.fetch, port }, (info) => {
   console.log(`ALFRED desktop client listening on http://127.0.0.1:${info.port}`);
   console.log(`  Memory ingest: http://127.0.0.1:${info.port}/memory/ingest`);
+  console.log(`  Memory graph:  http://127.0.0.1:${info.port}/memory/graph`);
   console.log(`  Cloud: ${process.env.ALFRD_CLOUD_URL ?? "https://api.alfrd.net"}`);
   console.log(`  Relay: ${process.env.ALFRD_RELAY_URL ?? "wss://api.alfrd.net"}`);
   console.log(`  Name:  ${process.env.DESKTOP_CLIENT_NAME ?? "Alfred"}`);

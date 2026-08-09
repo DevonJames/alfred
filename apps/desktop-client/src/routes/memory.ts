@@ -12,8 +12,11 @@ import { Hono } from "hono";
 import type { IngestFileResult } from "../lib/memory-ingest.js";
 import { ingestTextFile } from "../lib/memory-ingest.js";
 import { kindFromFilename } from "../lib/text-extract.js";
+import { memoryGraphRouter } from "./memory-graph.js";
 
 export const memoryRouter = new Hono();
+
+memoryRouter.route("/graph", memoryGraphRouter);
 
 memoryRouter.get("/ingest", (c) => {
   const providerId = process.env.ALFRED_MEMORY_PROVIDER_ID ?? "memory.oip-local";
@@ -182,7 +185,7 @@ function ingestPageHtml(providerId: string): string {
       <input id="file" name="file" type="file" accept=".json,.txt,.md,.markdown,.rtf,application/json,text/plain,text/markdown,application/rtf" required />
       <button type="submit">Analyze &amp; ingest</button>
     </form>
-    <p class="meta">POST /memory/ingest · multipart field <code>file</code></p>
+    <p class="meta">POST /memory/ingest · multipart field <code>file</code> · <a href="/memory/graph" style="color:var(--accent)">Browse graph</a></p>
   </main>
 </body>
 </html>`;

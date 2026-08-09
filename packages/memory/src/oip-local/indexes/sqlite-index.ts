@@ -335,6 +335,30 @@ export class SqliteMemoryIndex {
       .prepare("SELECT * FROM records WHERE record_type = ? LIMIT ?")
       .all(recordType, limit) as RecordRow[];
   }
+
+  listAllRecords(limit = 5000): RecordRow[] {
+    const db = this.open();
+    return db
+      .prepare("SELECT * FROM records ORDER BY updated_at DESC LIMIT ?")
+      .all(limit) as RecordRow[];
+  }
+
+  listAllEdges(limit = 20_000): EdgeRow[] {
+    const db = this.open();
+    return db.prepare("SELECT * FROM edges LIMIT ?").all(limit) as EdgeRow[];
+  }
+
+  countRecords(): number {
+    const db = this.open();
+    const row = db.prepare("SELECT COUNT(*) AS n FROM records").get() as { n: number };
+    return Number(row?.n ?? 0);
+  }
+
+  countEdges(): number {
+    const db = this.open();
+    const row = db.prepare("SELECT COUNT(*) AS n FROM edges").get() as { n: number };
+    return Number(row?.n ?? 0);
+  }
 }
 
 export interface RecordRow {
