@@ -341,8 +341,9 @@
     </div>
   </div>
 
-  <script src="https://unpkg.com/force-graph@1.49.0/dist/force-graph.min.js"></script>
-  <script>
+  <script type="module">
+    import ForceGraph from "https://esm.sh/force-graph@1.49.0";
+
     const COLORS = {
       Entity: "#c4a35a",
       Episode: "#6b9e78",
@@ -357,6 +358,7 @@
       query: "",
       focusId: null,
       graph: null,
+      renderError: null,
     };
 
     const elGraph = document.getElementById("graph");
@@ -364,6 +366,8 @@
     const elDetail = document.getElementById("detail");
     const elDetailBody = document.getElementById("detail-body");
     const elEmpty = document.getElementById("empty");
+    const elEmptyTitle = elEmpty.querySelector("h2");
+    const elEmptyBody = elEmpty.querySelector("p");
     const elQ = document.getElementById("q");
 
     function typeColor(t) {
@@ -372,80 +376,148 @@
 
     function matchesQuery(node, q) {
       if (!q) return true;
-      const hay = (node.label + " " + node.searchText + " " + node.type).toLowerCase();
+      const hay = `${node.label || ""} ${node.searchText || ""} ${node.type || ""}`.toLowerCase();
       return q.split(/\s+/).filter(Boolean).every((t) => hay.includes(t));
     }
 
+    function linkEndId(end) {
+      if (end == null) return "";
+      return typeof end === "object" ? String(end.id || "") : String(end);
+    }
+
     function filteredGraph() {
-      if (!state.raw) return { nodes: [], links: [] };
+      if (!state.raw?.nodes?.length) return { nodes: [], links: [] };
       const q = state.query.trim().toLowerCase();
-      let nodes = state.raw.nodes.filter((n) => state.types.has(n.type));
+      // Be permissive: if type filters somehow empty, show everything we have.
+      const typeFilterOn = state.types.size > 0;
+      let nodes = state.raw.nodes.filter((n) => {
+        const t = String(n.type || n.record_type || "").trim();
+        if (!typeFilterOn) return true;
+        return state.types.has(t);
+      });
+
+      // If filters wiped the graph but we still have raw nodes, fall back to all raw nodes
+      // so a type mismatch can't produce a false "empty" screen.
+      if (!nodes.length && state.raw.nodes.length) {
+        nodes = [...state.raw.nodes];
+      }
 
       if (q) {
         const hitIds = new Set(nodes.filter((n) => matchesQuery(n, q)).map((n) => n.id));
-        // Expand one hop around hits so the neighborhood stays visible
-        for (const l of state.raw.links) {
-          if (hitIds.has(l.source) || hitIds.has(l.source?.id)) hitIds.add(typeof l.target === "object" ? l.target.id : l.target);
-          if (hitIds.has(l.target) || hitIds.has(l.target?.id)) hitIds.add(typeof l.source === "object" ? l.source.id : l.source);
+        for (const l of state.raw.links || []) {
+          const s = linkEndId(l.source);
+          const t = linkEndId(l.target);
+          if (hitIds.has(s)) hitIds.add(t);
+          if (hitIds.has(t)) hitIds.add(s);
         }
-        // Re-include only typed nodes in the expanded set
         const typed = new Set(nodes.map((n) => n.id));
         nodes = state.raw.nodes.filter((n) => typed.has(n.id) && hitIds.has(n.id));
       }
 
       const ids = new Set(nodes.map((n) => n.id));
-      const links = state.raw.links
-        .filter((l) => {
-          const s = typeof l.source === "object" ? l.source.id : l.source;
-          const t = typeof l.target === "object" ? l.target.id : l.target;
-          return ids.has(s) && ids.has(t);
-        })
+      const links = (state.raw.links || [])
         .map((l) => ({
-          source: typeof l.source === "object" ? l.source.id : l.source,
-          target: typeof l.target === "object" ? l.target.id : l.target,
+          source: linkEndId(l.source),
+          target: linkEndId(l.target),
           predicate: l.predicate,
-        }));
+        }))
+        .filter((l) => l.source && l.target && ids.has(l.source) && ids.has(l.target));
 
       return {
-        nodes: nodes.map((n) => ({ ...n })),
+        nodes: nodes.map((n) => ({
+          id: n.id,
+          label: n.label || n.type || n.record_type || n.id,
+          type: String(n.type || n.record_type || "Entity").trim(),
+          schemaType: n.schemaType ?? n.schema_type ?? null,
+          searchText: n.searchText || n.search_text || "",
+          degree: n.degree || 0,
+          updatedAt: n.updatedAt ?? n.updated_at ?? null,
+        })),
         links,
       };
     }
 
+    function setEmptyOverlay(show, title, body) {
+      elEmpty.classList.toggle("show", !!show);
+      if (title && elEmptyTitle) elEmptyTitle.textContent = title;
+      if (body && elEmptyBody) elEmptyBody.innerHTML = body;
+    }
+
+    function sizeGraph() {
+      if (!state.graph) return;
+      state.graph.width(window.innerWidth).height(window.innerHeight);
+    }
+
+    function ensureGraph() {
+      if (state.graph) return state.graph;
+      state.graph = ForceGraph()(elGraph)
+        .backgroundColor("rgba(0,0,0,0)")
+        .width(window.innerWidth)
+        .height(window.innerHeight)
+        .nodeId("id")
+        .nodeLabel(
+          (n) =>
+            `${n.label}\n${n.type}${n.schemaType ? " · " + String(n.schemaType).replace("https://schema.org/", "") : ""}`,
+        )
+        .nodeRelSize(5)
+        .nodeVal((n) => 2 + Math.min(12, n.degree || 0))
+        .nodeColor((n) => typeColor(n.type))
+        .linkColor(() => "rgba(147, 160, 148, 0.35)")
+        .linkWidth((l) => {
+          const s = linkEndId(l.source);
+          const t = linkEndId(l.target);
+          return state.focusId && (s === state.focusId || t === state.focusId) ? 2.2 : 1;
+        })
+        .linkDirectionalArrowLength(3.5)
+        .linkDirectionalArrowRelPos(1)
+        .linkLabel((l) => l.predicate)
+        .onNodeClick((n) => selectNode(n.id))
+        .onNodeDblClick((n) => {
+          state.graph.centerAt(n.x, n.y, 600);
+          state.graph.zoom(2.2, 600);
+        })
+        .onBackgroundClick(() => {
+          state.focusId = null;
+          closeDetail();
+          paint();
+        });
+      window.addEventListener("resize", sizeGraph);
+      return state.graph;
+    }
+
     function renderGraph() {
       const data = filteredGraph();
-      elEmpty.classList.toggle("show", data.nodes.length === 0);
+      const rawCount = state.raw?.nodes?.length || 0;
 
-      if (!state.graph) {
-        state.graph = ForceGraph()(elGraph)
-          .backgroundColor("rgba(0,0,0,0)")
-          .nodeId("id")
-          .nodeLabel((n) => `${n.label}\n${n.type}${n.schemaType ? " · " + n.schemaType.replace("https://schema.org/", "") : ""}`)
-          .nodeRelSize(5)
-          .nodeVal((n) => 2 + Math.min(12, n.degree || 0))
-          .nodeColor((n) => {
-            if (state.focusId && n.id === state.focusId) return "var(--focus)" || "#f0e6c8";
-            return typeColor(n.type);
-          })
-          .linkColor(() => "rgba(147, 160, 148, 0.35)")
-          .linkWidth((l) => (state.focusId && (l.source.id === state.focusId || l.target.id === state.focusId) ? 2.2 : 1))
-          .linkDirectionalArrowLength(3.5)
-          .linkDirectionalArrowRelPos(1)
-          .linkLabel((l) => l.predicate)
-          .onNodeClick((n) => selectNode(n.id))
-          .onNodeDblClick((n) => {
-            state.graph.centerAt(n.x, n.y, 600);
-            state.graph.zoom(2.2, 600);
-          })
-          .onBackgroundClick(() => {
-            state.focusId = null;
-            closeDetail();
-            paint();
-          });
+      if (!rawCount) {
+        setEmptyOverlay(
+          true,
+          "No memory graph yet",
+          "If you just ingested, click <strong>Rebuild index</strong>. Confirm the data root matches your ingest root.",
+        );
+        return;
       }
 
-      state.graph.graphData(data);
-      paint();
+      // Data exists — never cover the canvas with the empty state.
+      setEmptyOverlay(false);
+
+      try {
+        const g = ensureGraph();
+        g.graphData(data);
+        sizeGraph();
+        paint();
+        state.renderError = null;
+        if (!data.nodes.length) {
+          elStats.textContent += "\n(filters hid all nodes — reset filters)";
+        }
+      } catch (err) {
+        state.renderError = err instanceof Error ? err.message : String(err);
+        setEmptyOverlay(
+          true,
+          "Graph renderer failed",
+          `Data is loaded (${rawCount} nodes) but the canvas could not start.<br><code>${escapeHtml(state.renderError)}</code>`,
+        );
+      }
     }
 
     function paint() {
@@ -456,8 +528,8 @@
             if (n.id === state.focusId) return "#f0e6c8";
             const g = state.graph.graphData();
             const linked = g.links.some((l) => {
-              const s = l.source.id || l.source;
-              const t = l.target.id || l.target;
+              const s = linkEndId(l.source);
+              const t = linkEndId(l.target);
               return (s === state.focusId && t === n.id) || (t === state.focusId && s === n.id);
             });
             if (!linked) return "rgba(147,160,148,0.18)";
@@ -466,8 +538,8 @@
         })
         .linkColor((l) => {
           if (!state.focusId) return "rgba(147, 160, 148, 0.35)";
-          const s = l.source.id || l.source;
-          const t = l.target.id || l.target;
+          const s = linkEndId(l.source);
+          const t = linkEndId(l.target);
           if (s === state.focusId || t === state.focusId) return "rgba(196, 163, 90, 0.75)";
           return "rgba(147, 160, 148, 0.08)";
         });
@@ -562,8 +634,9 @@
         `\n${data.root}`;
       const emptyDiag = document.getElementById("empty-diag");
       if (emptyDiag) {
+        const sampleTypes = [...new Set((data.nodes || []).slice(0, 50).map((n) => n.type))].join(", ");
         emptyDiag.textContent =
-          `root: ${data.root}\npackagesOnDisk: ${s.packagesOnDisk}\nrecordsIndexed: ${s.recordsIndexed}\nnodes(after filters): ${s.nodes}`;
+          `root: ${data.root}\npackagesOnDisk: ${s.packagesOnDisk}\nrecordsIndexed: ${s.recordsIndexed}\nnodes: ${s.nodes}\nsampleTypes: ${sampleTypes || "(none)"}`;
       }
       renderGraph();
     }
@@ -615,11 +688,15 @@
       paint();
     });
 
-    load(false)
-      .then(() => setTimeout(() => state.graph?.zoomToFit(700, 60), 400))
+    load(false, false)
+      .then(() => setTimeout(() => state.graph?.zoomToFit(700, 60), 500))
       .catch((err) => {
         elStats.textContent = err.message;
-        elEmpty.classList.add("show");
+        setEmptyOverlay(
+          true,
+          "Failed to load graph data",
+          escapeHtml(err.message || String(err)),
+        );
       });
   </script>
 </body>
