@@ -23,6 +23,12 @@ importers:
 
   apps/desktop-client:
     dependencies:
+      '@alfred/contracts':
+        specifier: workspace:^
+        version: link:../../packages/contracts
+      '@alfred/memory':
+        specifier: workspace:^
+        version: link:../../packages/memory
       '@hono/node-server':
         specifier: ^1.13.7
         version: 1.19.17(hono@4.13.1)

@@ -13,6 +13,7 @@ import { Hono } from "hono";
 import { resolve } from "node:path";
 import { startCloudConnect, stopCloudConnect } from "./lib/cloud-connect.js";
 import { connectRouter } from "./routes/connect.js";
+import { memoryRouter } from "./routes/memory.js";
 
 // Load repo-root .env when started from apps/desktop-client.
 loadEnv({ path: resolve(process.cwd(), "../../.env") });
@@ -28,13 +29,16 @@ app.get("/", (c) =>
     status: "ok",
     connect: "/connect/info",
     health: "/connect/health",
+    memoryIngest: "/memory/ingest",
   }),
 );
 
 app.route("/connect", connectRouter);
+app.route("/memory", memoryRouter);
 
 const server = serve({ fetch: app.fetch, port }, (info) => {
   console.log(`ALFRED desktop client listening on http://127.0.0.1:${info.port}`);
+  console.log(`  Memory ingest: http://127.0.0.1:${info.port}/memory/ingest`);
   console.log(`  Cloud: ${process.env.ALFRD_CLOUD_URL ?? "https://api.alfrd.net"}`);
   console.log(`  Relay: ${process.env.ALFRD_RELAY_URL ?? "wss://api.alfrd.net"}`);
   console.log(`  Name:  ${process.env.DESKTOP_CLIENT_NAME ?? "Alfred"}`);
