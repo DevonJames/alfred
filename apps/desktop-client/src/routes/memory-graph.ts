@@ -2,6 +2,7 @@
  * Memory graph browser + JSON API
  *
  * GET /memory/graph          — interactive UI
+ * GET /memory/graph/app.js   — local graph renderer (no CDN)
  * GET /memory/graph/data     — nodes + links JSON
  * GET /memory/graph/node/:id — record detail + neighbors
  */
@@ -14,14 +15,19 @@ import { loadMemoryGraph, loadMemoryRecordDetail } from "../lib/memory-graph.js"
 
 export const memoryGraphRouter = new Hono();
 
-const uiPath = path.join(
-  path.dirname(fileURLToPath(import.meta.url)),
-  "../ui/memory-graph.html",
-);
+const uiDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "../ui");
 
 memoryGraphRouter.get("/", async (c) => {
-  const html = await readFile(uiPath, "utf8");
+  const html = await readFile(path.join(uiDir, "memory-graph.html"), "utf8");
   return c.html(html);
+});
+
+memoryGraphRouter.get("/app.js", async (c) => {
+  const js = await readFile(path.join(uiDir, "memory-graph.js"), "utf8");
+  return c.body(js, 200, {
+    "Content-Type": "application/javascript; charset=utf-8",
+    "Cache-Control": "no-store",
+  });
 });
 
 memoryGraphRouter.get("/data", async (c) => {

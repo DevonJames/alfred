@@ -10,7 +10,6 @@
   <style>
     :root {
       --bg0: #0e1210;
-      --bg1: #171c18;
       --panel: rgba(28, 36, 30, 0.92);
       --ink: #e7eee6;
       --muted: #93a094;
@@ -20,7 +19,6 @@
       --coral: #d4785a;
       --steel: #7eb8c9;
       --stone: #9a9588;
-      --focus: #f0e6c8;
     }
     * { box-sizing: border-box; }
     html, body {
@@ -39,13 +37,18 @@
         radial-gradient(ellipse 70% 50% at 90% 80%, rgba(196, 163, 90, 0.08), transparent 50%),
         linear-gradient(165deg, #121714 0%, var(--bg0) 45%, #0c100e 100%);
     }
-    #graph { width: 100%; height: 100%; }
-
-    .chrome {
-      position: fixed;
-      z-index: 5;
-      pointer-events: none;
+    #graph-canvas {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      display: block;
+      cursor: grab;
+      touch-action: none;
     }
+    #graph-canvas:active { cursor: grabbing; }
+
+    .chrome { position: fixed; z-index: 5; pointer-events: none; }
     .chrome > * { pointer-events: auto; }
 
     header.top {
@@ -122,10 +125,7 @@
       padding: 0.28rem 0.55rem;
       cursor: pointer;
     }
-    .filters button.on {
-      color: var(--ink);
-      border-color: currentColor;
-    }
+    .filters button.on { color: var(--ink); border-color: currentColor; }
     .filters button[data-type="Entity"].on { color: var(--brass); }
     .filters button[data-type="Episode"].on { color: var(--sage); }
     .filters button[data-type="Assertion"].on { color: var(--coral); }
@@ -161,6 +161,8 @@
       color: var(--muted);
       font-variant-numeric: tabular-nums;
       line-height: 1.45;
+      white-space: pre-wrap;
+      word-break: break-all;
     }
 
     .detail {
@@ -228,10 +230,7 @@
       font-size: 0.75rem;
       grid-column: 1 / -1;
     }
-    .neighbors .dir {
-      color: var(--stone);
-      font-size: 0.75rem;
-    }
+    .neighbors .dir { color: var(--stone); font-size: 0.75rem; }
     .close-x {
       position: absolute;
       top: 0.65rem;
@@ -266,8 +265,10 @@
       z-index: 3;
       text-align: center;
       padding: 2rem;
+      pointer-events: none;
     }
     .empty.show { display: grid; }
+    .empty > div { pointer-events: auto; }
     .empty h2 {
       font-family: Fraunces, Georgia, serif;
       margin: 0 0 0.5rem;
@@ -280,6 +281,8 @@
       font-family: ui-monospace, Menlo, monospace;
       word-break: break-all;
       max-width: 36rem;
+      white-space: pre-wrap;
+      text-align: left;
     }
 
     @media (max-width: 720px) {
@@ -298,7 +301,7 @@
   </style>
 </head>
 <body>
-  <div id="stage"><div id="graph"></div></div>
+  <div id="stage"><canvas id="graph-canvas"></canvas></div>
 
   <header class="top chrome">
     <div class="brand-block">
@@ -335,369 +338,12 @@
   <div class="empty" id="empty">
     <div>
       <h2>No memory graph yet</h2>
-      <p>If you just ingested, click <strong>Rebuild index</strong>. Confirm the data root matches your ingest root.</p>
+      <p id="empty-lead">If you just ingested, click <strong>Rebuild index</strong>. Confirm the data root matches your ingest root.</p>
       <p><a href="/memory/ingest">Open ingest →</a></p>
       <p class="diag" id="empty-diag"></p>
     </div>
   </div>
 
-  <script type="module">
-    import ForceGraph from "https://esm.sh/force-graph@1.49.0";
-
-    const COLORS = {
-      Entity: "#c4a35a",
-      Episode: "#6b9e78",
-      Assertion: "#d4785a",
-      Observation: "#7eb8c9",
-      Artifact: "#9a9588",
-    };
-
-    const state = {
-      raw: null,
-      types: new Set(["Entity", "Episode", "Assertion", "Observation"]),
-      query: "",
-      focusId: null,
-      graph: null,
-      renderError: null,
-    };
-
-    const elGraph = document.getElementById("graph");
-    const elStats = document.getElementById("stats");
-    const elDetail = document.getElementById("detail");
-    const elDetailBody = document.getElementById("detail-body");
-    const elEmpty = document.getElementById("empty");
-    const elEmptyTitle = elEmpty.querySelector("h2");
-    const elEmptyBody = elEmpty.querySelector("p");
-    const elQ = document.getElementById("q");
-
-    function typeColor(t) {
-      return COLORS[t] || "#93a094";
-    }
-
-    function matchesQuery(node, q) {
-      if (!q) return true;
-      const hay = `${node.label || ""} ${node.searchText || ""} ${node.type || ""}`.toLowerCase();
-      return q.split(/\s+/).filter(Boolean).every((t) => hay.includes(t));
-    }
-
-    function linkEndId(end) {
-      if (end == null) return "";
-      return typeof end === "object" ? String(end.id || "") : String(end);
-    }
-
-    function filteredGraph() {
-      if (!state.raw?.nodes?.length) return { nodes: [], links: [] };
-      const q = state.query.trim().toLowerCase();
-      // Be permissive: if type filters somehow empty, show everything we have.
-      const typeFilterOn = state.types.size > 0;
-      let nodes = state.raw.nodes.filter((n) => {
-        const t = String(n.type || n.record_type || "").trim();
-        if (!typeFilterOn) return true;
-        return state.types.has(t);
-      });
-
-      // If filters wiped the graph but we still have raw nodes, fall back to all raw nodes
-      // so a type mismatch can't produce a false "empty" screen.
-      if (!nodes.length && state.raw.nodes.length) {
-        nodes = [...state.raw.nodes];
-      }
-
-      if (q) {
-        const hitIds = new Set(nodes.filter((n) => matchesQuery(n, q)).map((n) => n.id));
-        for (const l of state.raw.links || []) {
-          const s = linkEndId(l.source);
-          const t = linkEndId(l.target);
-          if (hitIds.has(s)) hitIds.add(t);
-          if (hitIds.has(t)) hitIds.add(s);
-        }
-        const typed = new Set(nodes.map((n) => n.id));
-        nodes = state.raw.nodes.filter((n) => typed.has(n.id) && hitIds.has(n.id));
-      }
-
-      const ids = new Set(nodes.map((n) => n.id));
-      const links = (state.raw.links || [])
-        .map((l) => ({
-          source: linkEndId(l.source),
-          target: linkEndId(l.target),
-          predicate: l.predicate,
-        }))
-        .filter((l) => l.source && l.target && ids.has(l.source) && ids.has(l.target));
-
-      return {
-        nodes: nodes.map((n) => ({
-          id: n.id,
-          label: n.label || n.type || n.record_type || n.id,
-          type: String(n.type || n.record_type || "Entity").trim(),
-          schemaType: n.schemaType ?? n.schema_type ?? null,
-          searchText: n.searchText || n.search_text || "",
-          degree: n.degree || 0,
-          updatedAt: n.updatedAt ?? n.updated_at ?? null,
-        })),
-        links,
-      };
-    }
-
-    function setEmptyOverlay(show, title, body) {
-      elEmpty.classList.toggle("show", !!show);
-      if (title && elEmptyTitle) elEmptyTitle.textContent = title;
-      if (body && elEmptyBody) elEmptyBody.innerHTML = body;
-    }
-
-    function sizeGraph() {
-      if (!state.graph) return;
-      state.graph.width(window.innerWidth).height(window.innerHeight);
-    }
-
-    function ensureGraph() {
-      if (state.graph) return state.graph;
-      state.graph = ForceGraph()(elGraph)
-        .backgroundColor("rgba(0,0,0,0)")
-        .width(window.innerWidth)
-        .height(window.innerHeight)
-        .nodeId("id")
-        .nodeLabel(
-          (n) =>
-            `${n.label}\n${n.type}${n.schemaType ? " · " + String(n.schemaType).replace("https://schema.org/", "") : ""}`,
-        )
-        .nodeRelSize(5)
-        .nodeVal((n) => 2 + Math.min(12, n.degree || 0))
-        .nodeColor((n) => typeColor(n.type))
-        .linkColor(() => "rgba(147, 160, 148, 0.35)")
-        .linkWidth((l) => {
-          const s = linkEndId(l.source);
-          const t = linkEndId(l.target);
-          return state.focusId && (s === state.focusId || t === state.focusId) ? 2.2 : 1;
-        })
-        .linkDirectionalArrowLength(3.5)
-        .linkDirectionalArrowRelPos(1)
-        .linkLabel((l) => l.predicate)
-        .onNodeClick((n) => selectNode(n.id))
-        .onNodeDblClick((n) => {
-          state.graph.centerAt(n.x, n.y, 600);
-          state.graph.zoom(2.2, 600);
-        })
-        .onBackgroundClick(() => {
-          state.focusId = null;
-          closeDetail();
-          paint();
-        });
-      window.addEventListener("resize", sizeGraph);
-      return state.graph;
-    }
-
-    function renderGraph() {
-      const data = filteredGraph();
-      const rawCount = state.raw?.nodes?.length || 0;
-
-      if (!rawCount) {
-        setEmptyOverlay(
-          true,
-          "No memory graph yet",
-          "If you just ingested, click <strong>Rebuild index</strong>. Confirm the data root matches your ingest root.",
-        );
-        return;
-      }
-
-      // Data exists — never cover the canvas with the empty state.
-      setEmptyOverlay(false);
-
-      try {
-        const g = ensureGraph();
-        g.graphData(data);
-        sizeGraph();
-        paint();
-        state.renderError = null;
-        if (!data.nodes.length) {
-          elStats.textContent += "\n(filters hid all nodes — reset filters)";
-        }
-      } catch (err) {
-        state.renderError = err instanceof Error ? err.message : String(err);
-        setEmptyOverlay(
-          true,
-          "Graph renderer failed",
-          `Data is loaded (${rawCount} nodes) but the canvas could not start.<br><code>${escapeHtml(state.renderError)}</code>`,
-        );
-      }
-    }
-
-    function paint() {
-      if (!state.graph) return;
-      state.graph
-        .nodeColor((n) => {
-          if (state.focusId) {
-            if (n.id === state.focusId) return "#f0e6c8";
-            const g = state.graph.graphData();
-            const linked = g.links.some((l) => {
-              const s = linkEndId(l.source);
-              const t = linkEndId(l.target);
-              return (s === state.focusId && t === n.id) || (t === state.focusId && s === n.id);
-            });
-            if (!linked) return "rgba(147,160,148,0.18)";
-          }
-          return typeColor(n.type);
-        })
-        .linkColor((l) => {
-          if (!state.focusId) return "rgba(147, 160, 148, 0.35)";
-          const s = linkEndId(l.source);
-          const t = linkEndId(l.target);
-          if (s === state.focusId || t === state.focusId) return "rgba(196, 163, 90, 0.75)";
-          return "rgba(147, 160, 148, 0.08)";
-        });
-    }
-
-    async function selectNode(id) {
-      state.focusId = id;
-      paint();
-      elDetail.classList.add("open");
-      elDetailBody.innerHTML = "<p class='meta'>Loading…</p>";
-      try {
-        const res = await fetch("/memory/graph/node/" + encodeURIComponent(id));
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.message || "Not found");
-        const rev = data.revision || {};
-        const schema = rev.schema || {};
-        const text =
-          rev.text ||
-          schema.description ||
-          schema.text ||
-          (rev.predicate ? `${rev.predicate} → ${rev.object ?? ""}` : "") ||
-          data.index?.search_text ||
-          "";
-        const color = typeColor(data.index.record_type);
-        elDetailBody.innerHTML = `
-          <div class="type-pill" style="color:${color}">${escapeHtml(data.index.record_type)}</div>
-          <h2>${escapeHtml(data.index.name || data.index.record_type)}</h2>
-          <div class="meta">${escapeHtml(data.index.id)}${data.index.schema_type ? "<br>" + escapeHtml(data.index.schema_type) : ""}</div>
-          <div class="body">${escapeHtml(String(text).slice(0, 1200))}</div>
-          <div class="detail-actions">
-            <button type="button" id="btn-center">Center</button>
-          </div>
-          <h3>Connections (${data.neighbors.length})</h3>
-          <ul class="neighbors">
-            ${data.neighbors
-              .slice(0, 40)
-              .map(
-                (n) => `
-              <li data-id="${escapeHtml(n.id)}">
-                <span class="pred">${escapeHtml(n.direction === "out" ? "→" : "←")} ${escapeHtml(n.predicate)}</span>
-                <span class="dir">${escapeHtml(n.type)}</span>
-                <span class="n-label">${escapeHtml(n.label)}</span>
-              </li>`,
-              )
-              .join("")}
-          </ul>
-        `;
-        document.getElementById("btn-center")?.addEventListener("click", () => {
-          const node = state.graph.graphData().nodes.find((n) => n.id === id);
-          if (node) {
-            state.graph.centerAt(node.x, node.y, 700);
-            state.graph.zoom(2.4, 700);
-          }
-        });
-        elDetailBody.querySelectorAll(".neighbors li").forEach((li) => {
-          li.addEventListener("click", () => selectNode(li.getAttribute("data-id")));
-        });
-      } catch (e) {
-        elDetailBody.innerHTML = `<p class="meta">${escapeHtml(e.message || String(e))}</p>`;
-      }
-    }
-
-    function closeDetail() {
-      elDetail.classList.remove("open");
-    }
-
-    function escapeHtml(s) {
-      return String(s ?? "")
-        .replaceAll("&", "&amp;")
-        .replaceAll("<", "&lt;")
-        .replaceAll(">", "&gt;")
-        .replaceAll('"', "&quot;");
-    }
-
-    async function load(includeArtifacts, forceRebuild) {
-      elStats.textContent = forceRebuild ? "Rebuilding index…" : "Loading…";
-      const params = new URLSearchParams();
-      if (includeArtifacts) params.set("artifacts", "1");
-      if (forceRebuild) params.set("rebuild", "1");
-      const res = await fetch("/memory/graph/data?" + params.toString());
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.message || "Failed to load graph");
-      state.raw = data;
-      // force-graph mutates link endpoints into objects — keep pristine copies
-      state.raw.links = data.links.map((l) => ({ ...l }));
-      state.raw.nodes = data.nodes.map((n) => ({ ...n }));
-      const s = data.stats;
-      elStats.textContent =
-        `${s.nodes} nodes · ${s.links} links\n` +
-        `${s.packagesOnDisk} packages on disk · ${s.recordsIndexed} indexed` +
-        (s.rebuilt ? " · rebuilt" : "") +
-        `\n${data.root}`;
-      const emptyDiag = document.getElementById("empty-diag");
-      if (emptyDiag) {
-        const sampleTypes = [...new Set((data.nodes || []).slice(0, 50).map((n) => n.type))].join(", ");
-        emptyDiag.textContent =
-          `root: ${data.root}\npackagesOnDisk: ${s.packagesOnDisk}\nrecordsIndexed: ${s.recordsIndexed}\nnodes: ${s.nodes}\nsampleTypes: ${sampleTypes || "(none)"}`;
-      }
-      renderGraph();
-    }
-
-    document.getElementById("filters").addEventListener("click", (e) => {
-      const btn = e.target.closest("button[data-type]");
-      if (!btn) return;
-      const t = btn.getAttribute("data-type");
-      if (state.types.has(t)) state.types.delete(t);
-      else state.types.add(t);
-      btn.classList.toggle("on", state.types.has(t));
-      // Artifacts require refetch if newly enabled (may be absent from default payload)
-      if (t === "Artifact" && state.types.has("Artifact")) {
-        load(true, false).catch((err) => (elStats.textContent = err.message));
-      } else {
-        renderGraph();
-      }
-    });
-
-    let searchTimer;
-    elQ.addEventListener("input", () => {
-      clearTimeout(searchTimer);
-      searchTimer = setTimeout(() => {
-        state.query = elQ.value;
-        renderGraph();
-      }, 160);
-    });
-
-    document.getElementById("btn-reload").addEventListener("click", () => {
-      load(state.types.has("Artifact"), false).catch((err) => (elStats.textContent = err.message));
-    });
-    document.getElementById("btn-rebuild").addEventListener("click", () => {
-      load(state.types.has("Artifact"), true).catch((err) => (elStats.textContent = err.message));
-    });
-    document.getElementById("btn-reset").addEventListener("click", () => {
-      state.focusId = null;
-      state.query = "";
-      elQ.value = "";
-      closeDetail();
-      renderGraph();
-      state.graph?.zoomToFit(600, 50);
-    });
-    document.getElementById("btn-ingest").addEventListener("click", () => {
-      location.href = "/memory/ingest";
-    });
-    document.getElementById("detail-close").addEventListener("click", () => {
-      state.focusId = null;
-      closeDetail();
-      paint();
-    });
-
-    load(false, false)
-      .then(() => setTimeout(() => state.graph?.zoomToFit(700, 60), 500))
-      .catch((err) => {
-        elStats.textContent = err.message;
-        setEmptyOverlay(
-          true,
-          "Failed to load graph data",
-          escapeHtml(err.message || String(err)),
-        );
-      });
-  </script>
+  <script src="/memory/graph/app.js" defer></script>
 </body>
 </html>
