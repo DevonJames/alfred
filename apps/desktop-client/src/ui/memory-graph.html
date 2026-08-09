@@ -273,6 +273,14 @@
       margin: 0 0 0.5rem;
     }
     .empty a { color: var(--brass); }
+    .empty .diag {
+      margin-top: 1rem;
+      font-size: 0.8rem;
+      color: var(--muted);
+      font-family: ui-monospace, Menlo, monospace;
+      word-break: break-all;
+      max-width: 36rem;
+    }
 
     @media (max-width: 720px) {
       header.top { flex-direction: column; }
@@ -310,6 +318,7 @@
       </div>
       <div class="row-actions">
         <button type="button" id="btn-reload">Reload</button>
+        <button type="button" class="ghost" id="btn-rebuild">Rebuild index</button>
         <button type="button" class="ghost" id="btn-reset">Reset view</button>
         <button type="button" class="ghost" id="btn-ingest">Ingest</button>
       </div>
@@ -326,8 +335,9 @@
   <div class="empty" id="empty">
     <div>
       <h2>No memory graph yet</h2>
-      <p>Ingest a knowledge export first, then reload.</p>
+      <p>If you just ingested, click <strong>Rebuild index</strong>. Confirm the data root matches your ingest root.</p>
       <p><a href="/memory/ingest">Open ingest →</a></p>
+      <p class="diag" id="empty-diag"></p>
     </div>
   </div>
 
@@ -532,10 +542,11 @@
         .replaceAll('"', "&quot;");
     }
 
-    async function load(includeArtifacts) {
-      elStats.textContent = "Loading…";
+    async function load(includeArtifacts, forceRebuild) {
+      elStats.textContent = forceRebuild ? "Rebuilding index…" : "Loading…";
       const params = new URLSearchParams();
       if (includeArtifacts) params.set("artifacts", "1");
+      if (forceRebuild) params.set("rebuild", "1");
       const res = await fetch("/memory/graph/data?" + params.toString());
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || "Failed to load graph");
@@ -543,7 +554,17 @@
       // force-graph mutates link endpoints into objects — keep pristine copies
       state.raw.links = data.links.map((l) => ({ ...l }));
       state.raw.nodes = data.nodes.map((n) => ({ ...n }));
-      elStats.textContent = `${data.stats.nodes} nodes · ${data.stats.links} links\nindexed ${data.stats.recordsIndexed} records`;
+      const s = data.stats;
+      elStats.textContent =
+        `${s.nodes} nodes · ${s.links} links\n` +
+        `${s.packagesOnDisk} packages on disk · ${s.recordsIndexed} indexed` +
+        (s.rebuilt ? " · rebuilt" : "") +
+        `\n${data.root}`;
+      const emptyDiag = document.getElementById("empty-diag");
+      if (emptyDiag) {
+        emptyDiag.textContent =
+          `root: ${data.root}\npackagesOnDisk: ${s.packagesOnDisk}\nrecordsIndexed: ${s.recordsIndexed}\nnodes(after filters): ${s.nodes}`;
+      }
       renderGraph();
     }
 
@@ -556,7 +577,7 @@
       btn.classList.toggle("on", state.types.has(t));
       // Artifacts require refetch if newly enabled (may be absent from default payload)
       if (t === "Artifact" && state.types.has("Artifact")) {
-        load(true).catch((err) => (elStats.textContent = err.message));
+        load(true, false).catch((err) => (elStats.textContent = err.message));
       } else {
         renderGraph();
       }
@@ -572,7 +593,10 @@
     });
 
     document.getElementById("btn-reload").addEventListener("click", () => {
-      load(state.types.has("Artifact")).catch((err) => (elStats.textContent = err.message));
+      load(state.types.has("Artifact"), false).catch((err) => (elStats.textContent = err.message));
+    });
+    document.getElementById("btn-rebuild").addEventListener("click", () => {
+      load(state.types.has("Artifact"), true).catch((err) => (elStats.textContent = err.message));
     });
     document.getElementById("btn-reset").addEventListener("click", () => {
       state.focusId = null;

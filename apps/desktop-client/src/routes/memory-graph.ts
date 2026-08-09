@@ -27,9 +27,11 @@ memoryGraphRouter.get("/", async (c) => {
 memoryGraphRouter.get("/data", async (c) => {
   try {
     const artifacts = c.req.query("artifacts") === "1";
+    const forceRebuild = c.req.query("rebuild") === "1";
     const snapshot = await loadMemoryGraph({
       hideArtifacts: !artifacts,
       hideProvenanceEdges: true,
+      forceRebuild,
     });
     return c.json(snapshot);
   } catch (err) {

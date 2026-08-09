@@ -23,7 +23,14 @@ export interface GraphLink {
 export interface MemoryGraphSnapshot {
   root: string;
   generatedAt: string;
-  stats: { nodes: number; links: number; recordsIndexed: number; edgesIndexed: number };
+  stats: {
+    nodes: number;
+    links: number;
+    recordsIndexed: number;
+    edgesIndexed: number;
+    packagesOnDisk: number;
+    rebuilt: boolean;
+  };
   nodes: GraphNode[];
   links: GraphLink[];
 }
@@ -39,6 +46,8 @@ export async function loadMemoryGraph(opts?: {
   hideArtifacts?: boolean;
   /** Drop provenance/sourceArtifact edges (default true). */
   hideProvenanceEdges?: boolean;
+  /** Force a full index rebuild from filesystem packages. */
+  forceRebuild?: boolean;
 }): Promise<MemoryGraphSnapshot> {
   const hideArtifacts = opts?.hideArtifacts !== false;
   const hideProvenance = opts?.hideProvenanceEdges !== false;
@@ -46,10 +55,18 @@ export async function loadMemoryGraph(opts?: {
   await provider.packages.ensureRoot();
   const sqlite = provider.sqlite;
   sqlite.open();
-  // Rebuild only when packages exist but the index is empty (e.g. after erase + re-ingest).
+
   const packageCount = (await provider.packages.listLogicalIds()).length;
-  if (packageCount > 0 && sqlite.countRecords() === 0) {
+  const indexedBefore = sqlite.countRecords();
+  // Rebuild when forced, empty, or clearly out of sync with filesystem packages.
+  let rebuilt = false;
+  if (
+    opts?.forceRebuild ||
+    (packageCount > 0 && indexedBefore === 0) ||
+    (packageCount > 0 && indexedBefore < Math.floor(packageCount * 0.5))
+  ) {
     await provider.rebuildIndexes();
+    rebuilt = true;
   }
 
   const records = sqlite.listAllRecords();
@@ -98,6 +115,8 @@ export async function loadMemoryGraph(opts?: {
       links: links.length,
       recordsIndexed: sqlite.countRecords(),
       edgesIndexed: sqlite.countEdges(),
+      packagesOnDisk: packageCount,
+      rebuilt,
     },
     nodes,
     links,
