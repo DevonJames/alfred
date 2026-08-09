@@ -18,6 +18,7 @@
     "simulate": "pnpm --filter @alfred/simulator start",
     "voice": "pnpm --filter @alfred/voice-agent start",
     "client": "pnpm --filter @alfred/voice-client dev",
+    "desktop": "pnpm --filter @alfred/desktop-client start",
     "mint-token": "pnpm --filter @alfred/voice-agent run mint-token",
     "memory": "pnpm --filter @alfred/voice-agent memory",
     "clean": "pnpm -r exec rm -rf dist"

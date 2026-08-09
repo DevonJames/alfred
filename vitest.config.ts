@@ -24,5 +24,14 @@ export default defineConfig({
     environment: "node",
     restoreMocks: true,
     clearMocks: true,
+    // node:sqlite is a Node built-in; keep it out of Vite's dep optimizer
+    server: {
+      deps: {
+        external: ["node:sqlite"],
+      },
+    },
+  },
+  ssr: {
+    external: ["node:sqlite"],
   },
 });

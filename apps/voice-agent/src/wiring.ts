@@ -20,10 +20,13 @@ import {
 import { LiveKitMediaBridge } from "@alfred/livekit";
 import {
   defaultMemoryPath,
+  defaultOipMemoryRoot,
   ensureAndLoadPersona,
   LOCAL_MEMORY_PROVIDER_ID,
   LocalFileMemoryProvider,
   MemoryController,
+  OIP_LOCAL_MEMORY_PROVIDER_ID,
+  OipLocalMemoryProvider,
   type LoadedPersonaContext,
 } from "@alfred/memory";
 import { createInMemoryPersistence } from "@alfred/persistence";
@@ -103,7 +106,9 @@ export async function createCascadedVoiceRuntime(opts?: {
   const profileId = process.env.ALFRED_PROFILE_ID ?? "profile.default";
   const memoryProviderId = process.env.ALFRED_MEMORY_PROVIDER_ID ?? LOCAL_MEMORY_PROVIDER_ID;
   const memoryPath = defaultMemoryPath(profileId);
+  const oipMemoryRoot = defaultOipMemoryRoot(profileId);
   const localMemory = new LocalFileMemoryProvider(memoryPath, LOCAL_MEMORY_PROVIDER_ID);
+  const oipMemory = new OipLocalMemoryProvider(oipMemoryRoot, OIP_LOCAL_MEMORY_PROVIDER_ID);
 
   const now = clock.nowIso();
   const config: UserConfiguration = {
@@ -145,6 +150,7 @@ export async function createCascadedVoiceRuntime(opts?: {
 
   const memory = new MemoryController(config.profile.id, persistence.memorySettings);
   memory.register(localMemory);
+  memory.register(oipMemory);
   await memory.initialize(memoryProviderId);
 
   const persona = await ensureAndLoadPersona(profileId);
@@ -185,7 +191,10 @@ export async function createCascadedVoiceRuntime(opts?: {
     clock,
     memory,
     memoryProviderId: memory.getActiveProviderId() ?? memoryProviderId,
-    memoryPath: localMemory.path,
+    memoryPath:
+      (memory.getActiveProviderId() ?? memoryProviderId) === OIP_LOCAL_MEMORY_PROVIDER_ID
+        ? oipMemory.path
+        : localMemory.path,
     persona,
   };
 }
