@@ -1,31 +1,74 @@
 import type { BriefingData } from "./types.js";
 import { formatLaunchesMarkdown, formatLaunchesSpeech } from "./launches.js";
-import { formatMarketsMarkdown } from "./markets.js";
+import {
+  formatMarketsMarkdown,
+  formatMarketsSpeechFromQuotes,
+} from "./markets.js";
 import { formatNewsMarkdown, formatNewsSpeech } from "./news.js";
 import { formatRemindersMarkdown, formatRemindersSpeech } from "./reminders.js";
+import {
+  closingLine,
+  sanitizeForSpeech,
+  speakMonthDay,
+  speakWeekday,
+} from "./speech.js";
 import { formatWeatherMarkdown, formatWeatherSpeech } from "./weather.js";
 
-export function formatBriefingForSpeech(data: BriefingData): string {
+/**
+ * Spoken narration for TTS. Built separately from markdown/display text
+ * (alfred-home pattern: formatBriefingForSpeech vs formatBriefingForDisplay).
+ */
+export function formatBriefingForSpeech(
+  data: BriefingData,
+  opts?: { now?: Date; timezone?: string },
+): string {
+  const now = opts?.now ?? new Date();
+  const timezone = opts?.timezone ?? "America/Los_Angeles";
   const parts: string[] = [];
-  if (data.greeting) parts.push(`${data.greeting}.`);
+
+  const greeting = data.greeting.replace(/[.!?]+$/g, "").trim();
+  parts.push(`${greeting}, sir.`);
+
+  // Prefer structured date; fall back to dayKey
+  try {
+    const dayName = speakWeekday(now, timezone);
+    const monthDay = speakMonthDay(now, timezone);
+    parts.push(`Today is ${dayName}, ${monthDay}.`);
+  } catch {
+    if (data.date) parts.push(`Today is ${data.date}.`);
+  }
+
   if (data.weather) parts.push(formatWeatherSpeech(data.weather));
   else if (data.weatherText) parts.push(data.weatherText);
 
-  const rem = data.remindersText ?? formatRemindersSpeech(data.reminders);
+  const rem = formatRemindersSpeech(data.reminders) || data.remindersText;
   if (rem) parts.push(rem);
 
-  if (data.marketsText) parts.push(data.marketsText);
-  if (data.launches.length) parts.push(formatLaunchesSpeech(data.launches));
-  else if (data.launchesText) parts.push(data.launchesText);
+  const markets = formatMarketsSpeechFromQuotes({
+    crypto: data.markets.crypto,
+    cryptoId: data.markets.cryptoId,
+    index: data.markets.index,
+    indexSymbol:
+      data.markets.indexSymbol === "sp500" || data.markets.indexSymbol === "dow"
+        ? data.markets.indexSymbol
+        : null,
+    metals: data.markets.metals,
+    metalSymbol:
+      data.markets.metalSymbol === "gold" || data.markets.metalSymbol === "silver"
+        ? data.markets.metalSymbol
+        : null,
+  });
+  if (markets) parts.push(markets);
 
-  const news = data.newsText ?? formatNewsSpeech(data.news);
+  const launches = formatLaunchesSpeech(data.launches);
+  if (launches) parts.push(launches);
+
+  const news = formatNewsSpeech(data.news);
   if (news) parts.push(news);
 
-  return parts
-    .join(" ")
-    .replace(/\[icon:[^\]]+\]/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
+  parts.push(closingLine(now, timezone));
+
+  return sanitizeForSpeech(parts.join(" "));
 }
 
 export function formatBriefingAsMarkdown(data: BriefingData): string {

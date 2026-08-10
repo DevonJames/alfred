@@ -52,7 +52,13 @@ export async function fetchNewsHeadlines(sources: string[]): Promise<string[]> {
 
 export function formatNewsSpeech(headlines: string[]): string {
   if (!headlines.length) return "";
-  const top = headlines.slice(0, 3);
+  const top = headlines.slice(0, 3).map((h) =>
+    h
+      .replace(/[_*#`]/g, "")
+      .replace(/\s+/g, " ")
+      .replace(/[.!?]+$/g, "")
+      .trim(),
+  );
   return `Top headlines: ${top.join(". ")}.`;
 }
 

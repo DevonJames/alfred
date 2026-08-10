@@ -1,3 +1,5 @@
+import { speakPercentChange, speakUsdAmount } from "./speech.js";
+
 export interface MarketQuote {
   price: number;
   change24h: number;
@@ -48,30 +50,67 @@ export async function fetchMetals(metalSymbol: "gold" | "silver"): Promise<Marke
   return fetchStooq(symbol);
 }
 
-function pct(n: number): string {
+function pctDisplay(n: number): string {
   const abs = Math.abs(n).toFixed(1);
   return `${n >= 0 ? "+" : "-"}${abs}%`;
 }
 
-export function formatMarketsSpeech(parts: string[]): string {
-  if (!parts.length) return "";
-  return `Markets: ${parts.join("; ")}.`;
+/** Spoken market lines (no $, %, or ticker shorthand). */
+export function formatMarketsSpeechFromQuotes(opts: {
+  crypto: MarketQuote | null;
+  cryptoId: string;
+  index: MarketQuote | null;
+  indexSymbol: "sp500" | "dow" | null;
+  metals: MarketQuote | null;
+  metalSymbol: "gold" | "silver" | null;
+}): string {
+  const parts: string[] = [];
+  if (opts.crypto) {
+    parts.push(formatCryptoSpeech(opts.crypto, opts.cryptoId));
+  }
+  if (opts.index && opts.indexSymbol) {
+    parts.push(formatIndexSpeech(opts.index, opts.indexSymbol));
+  }
+  if (opts.metals && opts.metalSymbol) {
+    parts.push(formatMetalsSpeech(opts.metals, opts.metalSymbol));
+  }
+  return parts.join(" ");
 }
 
 export function formatCryptoSpeech(q: MarketQuote, cryptoId: string): string {
   const name = cryptoId.charAt(0).toUpperCase() + cryptoId.slice(1);
   const price = Math.round(q.price / 100) * 100;
-  return `${name} is about $${price.toLocaleString()} (${pct(q.change24h)})`;
+  const { direction, amount } = speakPercentChange(q.change24h);
+  return `${name} is ${direction} ${amount} percent, trading at ${speakUsdAmount(price)}.`;
 }
 
 export function formatIndexSpeech(q: MarketQuote, indexSymbol: "sp500" | "dow"): string {
-  const name = indexSymbol === "sp500" ? "S&P 500" : "Dow Jones";
-  return `${name} ${pct(q.change24h)}`;
+  const name = indexSymbol === "sp500" ? "S and P 500" : "Dow Jones";
+  const { direction, amount } = speakPercentChange(q.change24h);
+  return `${name} is ${direction} ${amount} percent.`;
 }
 
 export function formatMetalsSpeech(q: MarketQuote, metalSymbol: "gold" | "silver"): string {
   const name = metalSymbol === "gold" ? "Gold" : "Silver";
-  return `${name} ${pct(q.change24h)}`;
+  const { direction, amount } = speakPercentChange(q.change24h);
+  return `${name} is ${direction} ${amount} percent.`;
+}
+
+/** Display/markdown lines may keep compact symbols. */
+export function formatCryptoDisplay(q: MarketQuote, cryptoId: string): string {
+  const name = cryptoId.charAt(0).toUpperCase() + cryptoId.slice(1);
+  const price = Math.round(q.price / 100) * 100;
+  return `${name}: $${price.toLocaleString()} (${pctDisplay(q.change24h)})`;
+}
+
+export function formatIndexDisplay(q: MarketQuote, indexSymbol: "sp500" | "dow"): string {
+  const name = indexSymbol === "sp500" ? "S&P 500" : "Dow Jones";
+  return `${name}: ${pctDisplay(q.change24h)}`;
+}
+
+export function formatMetalsDisplay(q: MarketQuote, metalSymbol: "gold" | "silver"): string {
+  const name = metalSymbol === "gold" ? "Gold" : "Silver";
+  return `${name}: ${pctDisplay(q.change24h)}`;
 }
 
 export function formatMarketsMarkdown(lines: string[]): string {

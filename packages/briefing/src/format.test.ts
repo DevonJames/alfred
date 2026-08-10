@@ -7,10 +7,54 @@ function sample(): BriefingData {
     greeting: "Good morning",
     date: "Sunday, August 9, 2026",
     dayKey: "2026-08-09",
-    weather: null,
-    weatherText: "It's clear and 68 degrees Fahrenheit in Los Angeles.",
-    launches: [],
-    launchesText: "No upcoming launches found.",
+    weather: {
+      location: "Los Angeles, California",
+      latitude: 34,
+      longitude: -118,
+      timezone: "America/Los_Angeles",
+      current: {
+        temperature: 68,
+        feelsLike: 68,
+        humidity: 40,
+        windSpeed: 5,
+        windDirection: 180,
+        condition: "Clear sky",
+        conditionCode: 0,
+        isDay: true,
+      },
+      daily: [
+        {
+          date: "2026-08-09",
+          tempMax: 75,
+          tempMin: 60,
+          condition: "Clear sky",
+          conditionCode: 0,
+          precipProbability: 0,
+        },
+        {
+          date: "2026-08-10",
+          tempMax: 77,
+          tempMin: 61,
+          condition: "Partly cloudy",
+          conditionCode: 2,
+          precipProbability: 10,
+        },
+      ],
+      unit: "fahrenheit",
+    },
+    weatherText: null,
+    launches: [
+      {
+        name: "Starlink",
+        mission: "Starlink Group 10",
+        provider: "SpaceX",
+        rocket: "Falcon 9",
+        location: "Vandenberg",
+        net: "2026-08-12T19:00:00.000Z",
+        status: "Go",
+      },
+    ],
+    launchesText: null,
     markets: {
       crypto: { price: 100_000, change24h: 1.2 },
       cryptoId: "bitcoin",
@@ -18,11 +62,11 @@ function sample(): BriefingData {
       indexSymbol: null,
       metals: null,
       metalSymbol: null,
-      lines: ["Bitcoin is about $100,000 (+1.2%)"],
+      lines: ["Bitcoin: $100,000 (+1.2%)"],
     },
-    marketsText: "Markets: Bitcoin is about $100,000 (+1.2%).",
-    news: ["Example headline"],
-    newsText: "Top headlines: Example headline.",
+    marketsText: null,
+    news: ["Example headline about CA vs TX"],
+    newsText: null,
     reminders: [],
     remindersText: "You asked me to remind you: Call Sarah.",
     generated: "2026-08-09T12:00:00.000Z",
@@ -30,11 +74,20 @@ function sample(): BriefingData {
 }
 
 describe("formatBriefingForSpeech", () => {
-  it("builds TTS-safe narrative without icon tokens", () => {
-    const speech = formatBriefingForSpeech(sample());
-    expect(speech).toContain("Good morning");
+  it("builds spoken narrative without screen shorthand", () => {
+    const speech = formatBriefingForSpeech(sample(), {
+      now: new Date("2026-08-10T16:00:00.000Z"),
+      timezone: "America/Los_Angeles",
+    });
+    expect(speech).toContain("Good morning, sir");
     expect(speech).toContain("Call Sarah");
-    expect(speech).toContain("Bitcoin");
+    expect(speech).toMatch(/Bitcoin is up 1\.2 percent/);
+    expect(speech).toContain("thousand dollars");
+    expect(speech).toContain("SpaceX");
+    expect(speech).toMatch(/noon|midnight|\d+ (thirty )?(am|pm)/i);
+    expect(speech).not.toMatch(/\$/);
+    expect(speech).not.toMatch(/%/);
     expect(speech).not.toMatch(/\[icon:/);
+    expect(speech).toMatch(/Have a (productive day|good afternoon|pleasant evening)/);
   });
 });

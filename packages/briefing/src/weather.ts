@@ -176,21 +176,36 @@ export async function fetchWeather(
 }
 
 export function formatWeatherSpeech(weather: WeatherData): string {
-  const unit = weather.unit === "celsius" ? "degrees Celsius" : "degrees Fahrenheit";
-  const today = weather.daily[0];
+  const condition = weather.current.condition.replace(/[^\w\s-]/g, "").trim().toLowerCase();
+  const temp = Math.round(weather.current.temperature);
+  const parts: string[] = [`Currently ${temp} degrees and ${condition}.`];
+
+  const humidity = weather.current.humidity ?? 0;
+  const windSpeed = weather.current.windSpeed ?? 0;
+  if (humidity > 60 || windSpeed > 10) {
+    const humidPart =
+      humidity > 80 ? "It's very humid" : humidity > 60 ? "It's a bit humid" : "";
+    const windPart =
+      windSpeed > 20 ? "quite windy" : windSpeed > 10 ? "some wind" : "";
+    if (humidPart && windPart) parts.push(`${humidPart} and ${windPart} too.`);
+    else if (humidPart) parts.push(`${humidPart}.`);
+    else if (windPart) parts.push(`There's ${windPart} today.`);
+  }
+
   const tomorrow = weather.daily[1];
-  let s = `It's ${weather.current.condition.toLowerCase()} and ${weather.current.temperature} ${unit} in ${weather.location}`;
-  if (weather.current.feelsLike != null && weather.current.feelsLike !== weather.current.temperature) {
-    s += `, feeling like ${weather.current.feelsLike}`;
-  }
-  s += ".";
-  if (today) {
-    s += ` Today, high ${today.tempMax}, low ${today.tempMin}.`;
-  }
   if (tomorrow) {
-    s += ` Tomorrow looks ${tomorrow.condition.toLowerCase()}, high ${tomorrow.tempMax}.`;
+    const tc = tomorrow.condition.replace(/[^\w\s-]/g, "").trim().toLowerCase();
+    parts.push(
+      `Tomorrow, ${tc}, ranging from ${Math.round(tomorrow.tempMin)} to ${Math.round(tomorrow.tempMax)} degrees.`,
+    );
   }
-  return s;
+  const dayAfter = weather.daily[2];
+  if (dayAfter) {
+    const dc = dayAfter.condition.replace(/[^\w\s-]/g, "").trim().toLowerCase();
+    parts.push(`The day after tomorrow, ${dc}.`);
+  }
+
+  return parts.join(" ");
 }
 
 export function formatWeatherMarkdown(weather: WeatherData): string {

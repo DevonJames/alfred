@@ -21,3 +21,9 @@ export { BriefingStateStore, isSoftOfferEligible, type BriefingOfferState } from
 export type { BriefingData, BriefingPayload } from "./types.js";
 export { postProcessGreeting, type GreetingLlm } from "./greeting.js";
 export { seedDueReminder } from "./seed.js";
+export {
+  closingLine,
+  sanitizeForSpeech,
+  speakClockTime,
+  speakUsdAmount,
+} from "./speech.js";

@@ -1,3 +1,5 @@
+import { speakClockTime, speakWeekday } from "./speech.js";
+
 export interface LaunchInfo {
   name: string;
   mission: string;
@@ -44,22 +46,22 @@ export async function fetchLaunches(locationIds = "11"): Promise<LaunchInfo[]> {
 }
 
 export function formatLaunchesSpeech(launches: LaunchInfo[]): string {
-  if (!launches.length) return "No upcoming launches found.";
-  const top = launches.slice(0, 3);
-  const parts = top.map((l) => {
-    const when = l.net
-      ? new Date(l.net).toLocaleString("en-US", {
-          weekday: "short",
-          month: "short",
-          day: "numeric",
-          hour: "numeric",
-          minute: "2-digit",
-        })
-      : "time TBA";
-    return `${l.mission} on ${l.rocket} from ${l.location}, ${when}, status ${l.status}`;
-  });
-  if (parts.length === 1) return `Upcoming launch: ${parts[0]}.`;
-  return `Upcoming launches: ${parts.join("; ")}.`;
+  if (!launches.length) return "";
+  // Keep speech brief: first upcoming launch with natural time phrasing.
+  const l = launches[0]!;
+  const provider = l.provider && l.provider !== "Unknown" ? l.provider : "";
+  const name = l.mission || l.name;
+  if (l.net) {
+    const when = new Date(l.net);
+    if (!Number.isNaN(when.getTime())) {
+      const day = speakWeekday(when);
+      const time = speakClockTime(when);
+      const who = provider ? `a ${provider} launch` : "a launch";
+      return `There's ${who}, ${name}, scheduled for ${day} at ${time}.`;
+    }
+  }
+  const who = provider ? `a ${provider} launch` : "a launch";
+  return `There's ${who} coming up: ${name}.`;
 }
 
 export function formatLaunchesMarkdown(launches: LaunchInfo[]): string {

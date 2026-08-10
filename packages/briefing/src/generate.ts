@@ -13,10 +13,10 @@ import {
   fetchCrypto,
   fetchIndex,
   fetchMetals,
-  formatCryptoSpeech,
-  formatIndexSpeech,
-  formatMarketsSpeech,
-  formatMetalsSpeech,
+  formatCryptoDisplay,
+  formatIndexDisplay,
+  formatMarketsSpeechFromQuotes,
+  formatMetalsDisplay,
 } from "./markets.js";
 import { fetchNewsHeadlines, formatNewsSpeech } from "./news.js";
 import {
@@ -79,18 +79,28 @@ export async function generateBriefing(
   ]);
 
   const marketLines: string[] = [];
-  if (crypto) marketLines.push(formatCryptoSpeech(crypto, config.cryptoId));
+  if (crypto) marketLines.push(formatCryptoDisplay(crypto, config.cryptoId));
 
   let indexQuote = null;
   let metalsQuote = null;
   if (config.includeIndex) {
     indexQuote = await fetchIndex(config.indexSymbol);
-    if (indexQuote) marketLines.push(formatIndexSpeech(indexQuote, config.indexSymbol));
+    if (indexQuote) marketLines.push(formatIndexDisplay(indexQuote, config.indexSymbol));
   }
   if (config.includeMetals) {
     metalsQuote = await fetchMetals(config.metalSymbol);
-    if (metalsQuote) marketLines.push(formatMetalsSpeech(metalsQuote, config.metalSymbol));
+    if (metalsQuote) marketLines.push(formatMetalsDisplay(metalsQuote, config.metalSymbol));
   }
+
+  const marketsText =
+    formatMarketsSpeechFromQuotes({
+      crypto,
+      cryptoId: config.cryptoId,
+      index: indexQuote,
+      indexSymbol: config.includeIndex ? config.indexSymbol : null,
+      metals: metalsQuote,
+      metalSymbol: config.includeMetals ? config.metalSymbol : null,
+    }) || null;
 
   const data: BriefingData = {
     greeting,
@@ -109,7 +119,7 @@ export async function generateBriefing(
       metalSymbol: config.includeMetals ? config.metalSymbol : null,
       lines: marketLines,
     },
-    marketsText: formatMarketsSpeech(marketLines) || null,
+    marketsText,
     news: headlines,
     newsText: formatNewsSpeech(headlines) || null,
     reminders,
@@ -119,7 +129,7 @@ export async function generateBriefing(
 
   const payload: BriefingPayload = {
     briefing: data,
-    speech: formatBriefingForSpeech(data),
+    speech: formatBriefingForSpeech(data, { now, timezone: config.timezone }),
     markdown: formatBriefingAsMarkdown(data),
     generated: data.generated,
   };
