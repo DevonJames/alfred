@@ -118,17 +118,28 @@
     };
   }
 
-  function buildSimulation(nodes, links) {
+  function layoutMetrics() {
     const w = window.innerWidth;
     const h = window.innerHeight;
+    // Use the shorter viewport axis so the cloud stays round on wide screens.
+    const R = Math.min(w, h) * 0.38;
+    return { w, h, cx: w / 2, cy: h / 2, R };
+  }
+
+  function buildSimulation(nodes, links) {
+    const { cx, cy, R } = layoutMetrics();
     const byId = new Map();
+    const count = Math.max(nodes.length, 1);
+    // Fibonacci/golden-angle disc: fills a circle evenly instead of a ring or blob.
+    const golden = Math.PI * (3 - Math.sqrt(5));
     const simNodes = nodes.map((n, i) => {
-      const angle = (i / Math.max(nodes.length, 1)) * Math.PI * 2;
-      const r = Math.min(w, h) * 0.28;
+      const t = (i + 0.5) / count;
+      const radius = R * Math.sqrt(t) * 0.92;
+      const angle = i * golden;
       const node = {
         ...n,
-        x: w / 2 + Math.cos(angle) * r * (0.7 + Math.random() * 0.6),
-        y: h / 2 + Math.sin(angle) * r * (0.7 + Math.random() * 0.6),
+        x: cx + Math.cos(angle) * radius,
+        y: cy + Math.sin(angle) * radius,
         vx: 0,
         vy: 0,
       };
@@ -150,6 +161,7 @@
     const { nodes, links } = sim;
     const n = nodes.length;
     if (!n) return;
+    const { cx, cy, R } = layoutMetrics();
 
     // Charge (repulsion) — sampled for large graphs
     const sample = n > 250 ? 2 : 1;
@@ -160,7 +172,7 @@
         let dx = a.x - b.x;
         let dy = a.y - b.y;
         let dist2 = dx * dx + dy * dy || 0.01;
-        const force = 1200 / dist2;
+        const force = 900 / dist2;
         const fx = dx * force;
         const fy = dy * force;
         a.vx += fx;
@@ -170,13 +182,13 @@
       }
     }
 
-    // Springs
+    // Springs — a bit shorter so clusters stay inside the sphere
     for (const l of links) {
       const dx = l.target.x - l.source.x;
       const dy = l.target.y - l.source.y;
       const dist = Math.sqrt(dx * dx + dy * dy) || 0.01;
-      const ideal = 70;
-      const k = 0.02 * (dist - ideal);
+      const ideal = 55;
+      const k = 0.025 * (dist - ideal);
       const fx = (dx / dist) * k;
       const fy = (dy / dist) * k;
       l.source.vx += fx;
@@ -185,19 +197,43 @@
       l.target.vy -= fy;
     }
 
-    // Center gravity
-    const cx = window.innerWidth / 2;
-    const cy = window.innerHeight / 2;
+    // Spherical bowl: soft pull toward a disc of radius R (not a point, not a box).
     for (const node of nodes) {
       if (state.dragging === node) continue;
-      node.vx += (cx - node.x) * 0.005;
-      node.vy += (cy - node.y) * 0.005;
-      node.vx *= 0.85;
-      node.vy *= 0.85;
+      const dx = node.x - cx;
+      const dy = node.y - cy;
+      const dist = Math.sqrt(dx * dx + dy * dy) || 0.01;
+      const ux = dx / dist;
+      const uy = dy / dist;
+
+      // Mild outward pressure near the center so it doesn't collapse into a knot
+      if (dist < R * 0.25) {
+        node.vx += ux * 0.15;
+        node.vy += uy * 0.15;
+      }
+
+      // Soft radial spring toward R * 0.72 (fills the circle)
+      const target = R * 0.72;
+      node.vx += ux * (target - dist) * 0.012;
+      node.vy += uy * (target - dist) * 0.012;
+
+      // Hard-ish containment past the rim
+      if (dist > R) {
+        const pull = (dist - R) * 0.08;
+        node.vx -= ux * pull;
+        node.vy -= uy * pull;
+      }
+
+      // Light centering so widescreen doesn't stretch into an ellipse
+      node.vx += (cx - node.x) * 0.002;
+      node.vy += (cy - node.y) * 0.002;
+
+      node.vx *= 0.86;
+      node.vy *= 0.86;
       node.x += node.vx * sim.alpha;
       node.y += node.vy * sim.alpha;
     }
-    sim.alpha *= 0.985;
+    sim.alpha *= 0.988;
   }
 
   function screenToWorld(sx, sy) {
