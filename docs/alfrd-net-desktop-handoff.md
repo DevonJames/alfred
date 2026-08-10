@@ -106,7 +106,7 @@ curl -s -H "X-Cloud-Token: Bearer $CLOUD_JWT" \
   "https://api.alfrd.net/proxy/$DESKTOP_CLIENT_ID/connect/health"
 ```
 
-Expect `{ "status": "ok", "service": "alfred-desktop-client", … }`.
+Expect `{ "status": "ok", "service": "alfred-desktop-client", … }` from `GET /status` (the site root `/` is the HTML UI hub).
 
 ## Explicit follow-ons (not in desktop connectivity pass)
 

@@ -73,7 +73,12 @@ function tokenApiPlugin(): Plugin {
   };
 }
 
+// Desktop hosts the built SPA at /voice/ (see apps/desktop-client). Standalone
+// `pnpm client` keeps base "/" so http://localhost:5173/ still works.
+const base = process.env.VOICE_CLIENT_BASE ?? "/";
+
 export default defineConfig({
+  base,
   plugins: [tokenApiPlugin()],
   server: {
     port: 5173,

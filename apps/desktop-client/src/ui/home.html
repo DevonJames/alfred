@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Alfred // desktop</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Syne:wght@700;800&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg: #0b0f14;
+        --fg: #e8eef5;
+        --muted: #8b9bb0;
+        --line: #1c2733;
+        --accent: #7ee0c3;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family: "IBM Plex Mono", ui-monospace, monospace;
+        background:
+          radial-gradient(1200px 600px at 20% -10%, #163049 0%, transparent 55%),
+          radial-gradient(900px 500px at 100% 20%, #1a2a22 0%, transparent 50%),
+          var(--bg);
+        color: var(--fg);
+        display: grid;
+        place-items: center;
+        padding: 2rem;
+      }
+      main {
+        width: min(36rem, 100%);
+      }
+      .brand {
+        font-family: Syne, sans-serif;
+        font-weight: 800;
+        font-size: clamp(2.5rem, 8vw, 3.5rem);
+        letter-spacing: 0.04em;
+        line-height: 1;
+        margin: 0 0 0.35rem;
+      }
+      .sub {
+        color: var(--muted);
+        font-size: 0.8rem;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        margin: 0 0 2rem;
+      }
+      nav {
+        display: grid;
+        gap: 0.75rem;
+      }
+      a {
+        display: block;
+        text-decoration: none;
+        color: var(--fg);
+        border: 1px solid var(--line);
+        padding: 1rem 1.1rem;
+        background: rgba(12, 18, 26, 0.65);
+        transition:
+          border-color 0.15s ease,
+          transform 0.15s ease;
+      }
+      a:hover {
+        border-color: var(--accent);
+        transform: translateY(-1px);
+      }
+      a strong {
+        display: block;
+        font-family: Syne, sans-serif;
+        font-size: 1.1rem;
+        margin-bottom: 0.25rem;
+      }
+      a span {
+        color: var(--muted);
+        font-size: 0.78rem;
+      }
+      footer {
+        margin-top: 1.75rem;
+        color: var(--muted);
+        font-size: 0.72rem;
+      }
+      footer a {
+        display: inline;
+        padding: 0;
+        border: 0;
+        background: none;
+        color: var(--accent);
+      }
+      footer a:hover {
+        transform: none;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1 class="brand">ALFRED</h1>
+      <p class="sub">Desktop // local host</p>
+      <nav>
+        <a href="/voice/">
+          <strong>Voice uplink</strong>
+          <span>Conversational agent · waveform · live captions</span>
+        </a>
+        <a href="/memory/graph">
+          <strong>Memory graph</strong>
+          <span>Browse entities, episodes, and assertions</span>
+        </a>
+        <a href="/memory/ingest">
+          <strong>Memory ingest</strong>
+          <span>Import knowledge exports into local memory</span>
+        </a>
+      </nav>
+      <footer>
+        Status JSON · <a href="/status">/status</a>
+        · cloud · <a href="/connect/info">/connect/info</a>
+      </footer>
+    </main>
+  </body>
+</html>

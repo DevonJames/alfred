@@ -4,41 +4,59 @@
  * Usage:
  *   1. Set ALFRD_CLOUD_URL / ALFRD_RELAY_URL in repo-root .env (defaults to api.alfrd.net)
  *   2. pnpm desktop
- *   3. Note Desktop Client ID + Claim Secret from logs (or GET /connect/info)
- *   4. Claim from alfrd.net account; mobile client discovers LAN → WAN → relay
+ *   3. Open http://127.0.0.1:3000/ for the local UI hub (voice uplink, memory, …)
+ *   4. Note Desktop Client ID + Claim Secret from logs (or GET /connect/info)
+ *   5. Claim from alfrd.net account; mobile client discovers LAN → WAN → relay
  */
 import { serve } from "@hono/node-server";
 import { config as loadEnv } from "dotenv";
 import { Hono } from "hono";
-import { resolve } from "node:path";
+import { readFile } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { startCloudConnect, stopCloudConnect } from "./lib/cloud-connect.js";
 import { connectRouter } from "./routes/connect.js";
 import { memoryRouter } from "./routes/memory.js";
+import { tokenRouter } from "./routes/token.js";
+import { voiceRouter } from "./routes/voice.js";
 
 // Load repo-root .env when started from apps/desktop-client.
 loadEnv({ path: resolve(process.cwd(), "../../.env") });
 loadEnv();
 
 const port = Number(process.env.PORT ?? 3000);
+const uiDir = resolve(dirname(fileURLToPath(import.meta.url)), "ui");
 
 const app = new Hono();
 
-app.get("/", (c) =>
-  c.json({
-    service: "alfred-desktop-client",
-    status: "ok",
-    connect: "/connect/info",
-    health: "/connect/health",
-    memoryIngest: "/memory/ingest",
-    memoryGraph: "/memory/graph",
-  }),
-);
+const statusPayload = {
+  service: "alfred-desktop-client",
+  status: "ok",
+  ui: "/",
+  voice: "/voice/",
+  connect: "/connect/info",
+  health: "/connect/health",
+  memoryIngest: "/memory/ingest",
+  memoryGraph: "/memory/graph",
+  token: "/api/token",
+} as const;
+
+app.get("/", async (c) => {
+  const html = await readFile(resolve(uiDir, "home.html"), "utf8");
+  return c.html(html);
+});
+
+app.get("/status", (c) => c.json(statusPayload));
 
 app.route("/connect", connectRouter);
 app.route("/memory", memoryRouter);
+app.route("/api", tokenRouter);
+app.route("/voice", voiceRouter);
 
 const server = serve({ fetch: app.fetch, port }, (info) => {
   console.log(`ALFRED desktop client listening on http://127.0.0.1:${info.port}`);
+  console.log(`  UI hub:        http://127.0.0.1:${info.port}/`);
+  console.log(`  Voice uplink:  http://127.0.0.1:${info.port}/voice/`);
   console.log(`  Memory ingest: http://127.0.0.1:${info.port}/memory/ingest`);
   console.log(`  Memory graph:  http://127.0.0.1:${info.port}/memory/graph`);
   console.log(`  Cloud: ${process.env.ALFRD_CLOUD_URL ?? "https://api.alfrd.net"}`);

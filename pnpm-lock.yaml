@@ -26,6 +26,9 @@ importers:
       '@alfred/contracts':
         specifier: workspace:^
         version: link:../../packages/contracts
+      '@alfred/livekit':
+        specifier: workspace:^
+        version: link:../../packages/livekit
       '@alfred/memory':
         specifier: workspace:^
         version: link:../../packages/memory

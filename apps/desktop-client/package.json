@@ -7,10 +7,12 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "tsc -p tsconfig.json --noEmit",
-    "start": "tsx src/main.ts"
+    "build:voice-ui": "pnpm --filter @alfred/voice-client run build:desktop",
+    "start": "pnpm run build:voice-ui && tsx src/main.ts"
   },
   "dependencies": {
     "@alfred/contracts": "workspace:^",
+    "@alfred/livekit": "workspace:^",
     "@alfred/memory": "workspace:^",
     "@hono/node-server": "^1.13.7",
     "dotenv": "^16.4.7",
