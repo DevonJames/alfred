@@ -18,17 +18,19 @@ There are **two separate links**. Do not collapse them into one screen without p
 | Step | Name | Who talks to whom | Status in this repo |
 |------|------|-------------------|---------------------|
 | **A** | **Cloud claim** | iOS ↔ `api.alfrd.net` (links alfrd.net account → Desktop Client ID) | **Implemented** on desktop + control plane |
-| **B** | **Device PIN pair** | iOS ↔ discovered desktop base URL `/pair/*` (issues long-lived device bearer) | **Not shipped yet** on Alfred desktop; client contract below matches alfred-home so iOS can implement now |
+| **B** | **Device PIN pair** | iOS ↔ discovered desktop base URL `/pair/*` (issues long-lived device bearer) | **Implemented** on Alfred desktop |
 
 After both succeed, every call to the desktop looks like:
 
 ```http
-GET {alfred_server_url}/api/token
+POST {alfred_server_url}/api/session/token
 Authorization: Bearer <alfred_device_token>
 X-Cloud-Token: Bearer <alfred_cloud_token>   # REQUIRED only when alfred_server_url is a relay URL
 ```
 
-Today many desktop routes (including `GET /api/token`) are still unauthenticated. Still implement device-token storage and header injection now so the app keeps working when desktop auth lands.
+`GET /api/token` remains unauthenticated for the local Mac `/voice/` UI. **iOS must use `/api/session/token`** (device bearer required). Memory and conversation APIs also require the device bearer.
+
+**Talk audio:** after minting a LiveKit token, the phone joins the room. The Mac must also run `pnpm voice` so `alfred-agent` is in the room (desktop alone does not run STT→LLM→TTS).
 
 ---
 
@@ -492,15 +494,9 @@ Expect `"service":"alfred-desktop-client"`.
 
 ## 6.1 Desktop status
 
-**Alfred desktop in this repo does not yet mount `/pair/*`.**  
-Handoff lists “Device PIN pairing / local auth” as an explicit follow-on.
+**Alfred desktop mounts `/pair/*`.** PIN is logged on the Mac (`[Pair] PIN for …`) and shown on `/connect/claim` while a request is pending.
 
-iOS should still implement the client below. Until desktop ships pairing:
-
-- Gate the PIN UI behind a capability probe: `POST {base}/pair/request` → if `404`, show “Desktop update required for device pairing” and allow limited unauthenticated use of current open endpoints **only in dev builds**, OR block Talk/Memory until pairing exists.
-- Prefer probing once after discovery rather than assuming pairing always exists.
-
-When desktop adds pairing, it should match the alfred-home contract below so this iOS code works unchanged.
+Always complete Step B before calling `/api/session/*`, `/api/conversation/*`, or `/api/memory/*`.
 
 ## 6.2 Pairing UX (user-visible)
 
@@ -739,21 +735,28 @@ Common bug: putting cloud JWT in `Authorization` for relay API calls and then be
 
 # 10. Desktop endpoints useful during pairing QA
 
-These exist on Alfred desktop today (unauthenticated unless noted):
+| Method | Path | Auth | Purpose |
+|--------|------|------|---------|
+| `GET` | `/connect/health` | none | Discovery probe |
+| `GET` | `/connect/info` | none | Desktop Client ID + claim secret |
+| `GET` | `/connect/claim` | none | QR + secret + live pairing PIN |
+| `POST` | `/pair/request` | none | Start PIN pair |
+| `POST` | `/pair/confirm` | none | Finish PIN pair → device token |
+| `GET` | `/status` | none | Route index |
+| `GET`/`POST` | `/api/session/token` | device bearer | LiveKit join token (iOS) |
+| `GET` | `/api/session/status` | device bearer | LiveKit config + agent hint |
+| `POST` | `/api/conversation/turn` | device bearer | Text Talk fallback |
+| `POST` | `/api/memory` | device bearer | Remember text / multipart artifact |
+| `POST` | `/api/memory/search` | device bearer | Hybrid search |
+| `POST` | `/api/memory/ask` | device bearer | Ask + optional synthesis |
+| `GET` | `/api/token` | none | Local `/voice/` UI only |
 
-| Method | Path | Purpose |
-|--------|------|---------|
-| `GET` | `/connect/health` | Discovery probe |
-| `GET` | `/connect/info` | Desktop Client ID + claim secret |
-| `GET` | `/status` | Service stub / route index |
-| `GET` | `/api/token` | LiveKit join token (post-pair smoke test) |
-
-After claim+discovery works, a good smoke test from the phone is:
+After claim + discovery + pair, smoke test from the phone:
 
 ```ts
-const res = await desktopFetch('/api/token');
+const res = await desktopFetch('/api/session/token', { method: 'POST' });
 const { url, room, token, identity } = await res.json();
-// connect LiveKit RN SDK
+// connect LiveKit RN SDK — and ensure `pnpm voice` is running on the Mac
 ```
 
 ---
@@ -782,7 +785,7 @@ const { url, room, token, identity } = await res.json();
 - [ ] Discovery falls back to relay on cellular with `X-Cloud-Token`
 - [ ] `alfred_server_url` persisted and reused on next launch
 - [ ] Rediscover works after Mac sleep/wake
-- [ ] Device PIN flow implemented against `/pair/*` (graceful if 404)
+- [ ] Device PIN flow implemented against `/pair/*`
 - [ ] `desktopFetch` attaches device bearer + relay cloud header correctly
 - [ ] Logout clears SecureStore keys
 - [ ] Unlink desktop calls `DELETE /servers/:id` and clears local server keys
@@ -819,4 +822,4 @@ NSMicrophoneUsageDescription   = "Alfred uses the microphone so you can talk to 
 | This file | **Implement iOS pairing/connectivity now** |
 | [alfred-ios-prd.md](./alfred-ios-prd.md) | Full product scope after pairing (voice, memory, permissions) |
 
-**Bottom line for the vibecode agent:** implement Step A (cloud auth → claim → LAN/WAN/relay discovery → `desktopFetch`) completely against the live control plane and this repo’s desktop client today; implement Step B (PIN pair client) to the contract in §6 and feature-detect `/pair/request` until the desktop mounts those routes.
+**Bottom line for the vibecode agent:** implement Step A (cloud auth → claim → LAN/WAN/relay discovery → `desktopFetch`) and Step B (PIN pair) completely against this desktop client; use `/api/session/token` for Talk and `/api/memory/*` for memory; keep `pnpm voice` running on the Mac for voice audio.

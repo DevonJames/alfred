@@ -55,10 +55,26 @@ Identity persists at `data/desktop-client/identity.json` (gitignored).
 |--------|------|------|---------|
 | `GET` | `/connect/health` | none | Discovery probe (LAN/WAN/relay) |
 | `GET` | `/connect/info` | none | Desktop Client ID + claim secret + relay status + claim URI |
-| `GET` | `/connect/claim` | none | Local claim UI (QR + manual secret) |
+| `GET` | `/connect/claim` | none | Local claim UI (QR + manual secret + pending PIN) |
 | `GET` | `/connect/claim.png` | none | QR PNG (`alfred://claim?…`) |
 | `GET` | `/connect/claim.svg` | none | QR SVG |
 | `GET` | `/connect/claim.json` | none | Structured claim payload |
+| `POST` | `/pair/request` | none | Start device PIN pairing |
+| `POST` | `/pair/confirm` | none | Confirm PIN → device bearer |
+| `GET` | `/pair/devices` | none | List devices (PIN for pending only) |
+| `DELETE` | `/pair/:device_id` | none | Unpair / revoke |
+| `GET`/`POST` | `/api/session/token` | device bearer | LiveKit join token (iOS Talk) |
+| `GET` | `/api/session/status` | device bearer | Session / LiveKit status |
+| `POST` | `/api/session/end` | device bearer | End session ack |
+| `POST` | `/api/conversation/turn` | device bearer | Text conversation turn |
+| `GET` | `/api/conversation/events` | device bearer | Poll text-session events |
+| `POST` | `/api/memory` | device bearer | Add memory / artifact |
+| `POST` | `/api/memory/search` | device bearer | Hybrid search |
+| `POST` | `/api/memory/ask` | device bearer | Ask memory |
+| `POST` | `/api/memory/correct` | device bearer | Correct memory |
+| `DELETE` | `/api/memory/:id` | device bearer | Forget |
+| `GET` | `/api/memory/due` | device bearer | Due reminders |
+| `GET` | `/api/token` | none | Legacy local `/voice/` token |
 
 Example:
 
@@ -113,8 +129,12 @@ Manual 8-character entry remains supported. Full iOS parse/claim steps: [ios-des
 | `alfred_cloud_token` | JWT from `api.alfrd.net` |
 | `alfred_cloud_server_id` | Claimed desktop client UUID (`serverId`) |
 | `alfred_server_url` | Discovered best base URL |
-| `alfred_device_token` | Local device bearer (after PIN pairing — not in this desktop pass) |
-| `alfred_device_id` | Device id (after PIN pairing — not in this desktop pass) |
+| `alfred_device_token` | Local device bearer (after PIN pairing) |
+| `alfred_device_id` | Device id (after PIN pairing) |
+
+After discovery, complete PIN pairing (`/pair/request` → enter PIN from Mac claim page / logs → `/pair/confirm`), then call authenticated APIs with `Authorization: Bearer <deviceToken>`.
+
+For Talk audio, also run `pnpm voice` on the Mac (separate process from `pnpm desktop`).
 
 ## Relay verification
 
@@ -127,11 +147,11 @@ curl -s -H "X-Cloud-Token: Bearer $CLOUD_JWT" \
 
 Expect `{ "status": "ok", "service": "alfred-desktop-client", … }` from `GET /status` (the site root `/` is the HTML UI hub).
 
-## Explicit follow-ons (not in desktop connectivity pass)
+## Explicit follow-ons
 
-- Device PIN pairing / local auth on the desktop client
-- Memory HTTP APIs (`POST /api/memory`, etc.) — once added, they ride the same relay
 - Electron (or other) Mac shell around this Node host
+- Embed voice-agent in desktop process (today: run `pnpm voice` separately)
+- Switch voice default memory provider to `memory.oip-local`
 - iOS Expo implementation (separate coding agent)
 
 ## Conflict note vs alfred-home

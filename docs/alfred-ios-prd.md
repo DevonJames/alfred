@@ -108,7 +108,7 @@ Private knowledge must not publish to public OIP by default. Any public-knowledg
 - Maintains outbound WebSocket relay tunnel
 - Identity at `data/desktop-client/identity.json`
 - Local endpoints today: `GET /connect/health`, `GET /connect/info`
-- **Not yet shipped on desktop (required for this PRD):** device PIN pairing, Memory HTTP APIs, LiveKit token mint HTTP, conversation session HTTP, artifact upload
+- **Desktop mobile host (Talk + Memory MVP):** `/pair/*`, `/api/session/*`, `/api/conversation/*`, `/api/memory/*` are mounted. Voice audio still requires a separate `pnpm voice` process.
 
 ### Conversation Core (this repo)
 
@@ -559,15 +559,15 @@ iOS cannot ship full conversation + memory against today’s desktop-only `/conn
 
 | ID | Host work | Blocks |
 |----|-----------|--------|
-| H0 | Claim QR page (`/connect/claim`) + `alfred://claim` URI | Faster phone claim (manual secret still required as fallback) — **shipped** |
-| H1 | Device PIN pairing + device bearer middleware | All authenticated APIs |
-| H2 | `POST /api/session/token` (+ status/end) wired to LiveKit mint | Voice |
-| H3 | Mount Memory HTTP API on desktop host over `OipLocalMemoryProvider` | Memory tabs |
-| H4 | Multipart artifact upload → `putArtifactBytes` before ack | Photo/file remember |
-| H5 | Reminder due/status endpoints over rebuildable reminder index | Brief tab |
-| H6 | Conversation text turn + event stream | Text chat parity |
-| H7 | Switch voice default active provider to `memory.oip-local` (or profile setting) | Unified memory |
-| H8 | Session event bridge (failover, delegation, ledger delivery marks) to clients | Advanced Talk UI |
+| H0 | Claim QR page (`/connect/claim`) + `alfred://claim` URI | **Shipped** |
+| H1 | Device PIN pairing + device bearer middleware | **Shipped** |
+| H2 | `POST /api/session/token` (+ status/end) wired to LiveKit mint | **Shipped** (voice audio still needs `pnpm voice`) |
+| H3 | Mount Memory HTTP API on desktop host over `OipLocalMemoryProvider` | **Shipped** (MVP) |
+| H4 | Multipart artifact upload → `putArtifactBytes` before ack | **Shipped** |
+| H5 | Reminder due/status endpoints over rebuildable reminder index | Partial (`/due` + `/reminder/surfaced`) |
+| H6 | Conversation text turn + event stream | **Shipped** (poll `/events`, not SSE) |
+| H7 | Switch voice default active provider to `memory.oip-local` (or profile setting) | Open |
+| H8 | Session event bridge (failover, delegation, ledger delivery marks) to clients | Open |
 
 Relay compatibility test: every new route must pass `curl` through `/proxy/{id}/...` with `X-Cloud-Token`.
 

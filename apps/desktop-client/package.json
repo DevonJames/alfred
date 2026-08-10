@@ -11,10 +11,15 @@
     "start": "pnpm run build:voice-ui && tsx src/main.ts"
   },
   "dependencies": {
+    "@alfred/agents": "workspace:^",
     "@alfred/briefing": "workspace:^",
     "@alfred/contracts": "workspace:^",
+    "@alfred/core": "workspace:^",
     "@alfred/livekit": "workspace:^",
     "@alfred/memory": "workspace:^",
+    "@alfred/persistence": "workspace:^",
+    "@alfred/provider-openai": "workspace:^",
+    "@alfred/providers": "workspace:^",
     "@hono/node-server": "^1.13.7",
     "dotenv": "^16.4.7",
     "hono": "^4.6.14",

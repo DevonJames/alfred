@@ -23,18 +23,33 @@ importers:
 
   apps/desktop-client:
     dependencies:
+      '@alfred/agents':
+        specifier: workspace:^
+        version: link:../../packages/agents
       '@alfred/briefing':
         specifier: workspace:^
         version: link:../../packages/briefing
       '@alfred/contracts':
         specifier: workspace:^
         version: link:../../packages/contracts
+      '@alfred/core':
+        specifier: workspace:^
+        version: link:../../packages/core
       '@alfred/livekit':
         specifier: workspace:^
         version: link:../../packages/livekit
       '@alfred/memory':
         specifier: workspace:^
         version: link:../../packages/memory
+      '@alfred/persistence':
+        specifier: workspace:^
+        version: link:../../packages/persistence
+      '@alfred/provider-openai':
+        specifier: workspace:^
+        version: link:../../packages/provider-openai
+      '@alfred/providers':
+        specifier: workspace:^
+        version: link:../../packages/providers
       '@hono/node-server':
         specifier: ^1.13.7
         version: 1.19.17(hono@4.13.1)

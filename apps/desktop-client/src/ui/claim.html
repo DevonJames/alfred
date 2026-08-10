@@ -172,12 +172,23 @@
         <div class="value">{{CLOUD_URL}}</div>
       </div>
 
+      <div class="field" id="pinField" hidden>
+        <div class="label">Device pairing PIN</div>
+        <div class="value secret">
+          <span id="pairingPin">————</span>
+        </div>
+        <p class="hint" id="pinHint" style="margin-top: 0.5rem; margin-bottom: 0">
+          Enter this PIN in the iOS app to finish pairing.
+        </p>
+      </div>
+
       <p class="status {{RELAY_CLASS}}">{{RELAY_STATUS}}</p>
 
       <footer>
         <a href="/">← Desktop hub</a>
         · <a href="/connect/claim.json">claim.json</a>
         · <a href="/connect/info">info</a>
+        · <a href="/pair/devices">devices</a>
       </footer>
     </main>
     <script>
@@ -197,6 +208,36 @@
           }
         });
       });
+
+      async function refreshPendingPin() {
+        const pinField = document.getElementById("pinField");
+        const pinEl = document.getElementById("pairingPin");
+        const hint = document.getElementById("pinHint");
+        if (!pinField || !pinEl || !hint) return;
+        try {
+          const res = await fetch("/pair/devices");
+          if (!res.ok) return;
+          const data = await res.json();
+          const pending = (data.devices || []).find(
+            (d) => !d.is_paired && d.pairing_pin && !d.pairing_expired,
+          );
+          if (pending) {
+            pinField.hidden = false;
+            pinEl.textContent = pending.pairing_pin;
+            hint.textContent =
+              "PIN for “" +
+              pending.name +
+              "” — enter it in the iOS app (expires soon).";
+          } else {
+            pinField.hidden = true;
+          }
+        } catch {
+          // ignore poll errors
+        }
+      }
+
+      refreshPendingPin();
+      setInterval(refreshPendingPin, 2000);
     </script>
   </body>
 </html>
