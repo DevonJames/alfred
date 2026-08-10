@@ -10,6 +10,7 @@ import {
   closingLine,
   sanitizeForSpeech,
   speakMonthDay,
+  speakWallClock,
   speakWeekday,
 } from "./speech.js";
 import { formatWeatherMarkdown, formatWeatherSpeech } from "./weather.js";
@@ -36,9 +37,10 @@ export function formatBriefingForSpeech(
   try {
     const dayName = speakWeekday(now, timezone);
     const monthDay = speakMonthDay(now, timezone);
-    parts.push(`Today is ${dayName}, ${monthDay}.`);
+    const wall = speakWallClock(now, timezone);
+    parts.push(`It is ${dayName}, ${monthDay} at ${wall}.`);
   } catch {
-    if (data.date) parts.push(`Today is ${data.date}.`);
+    if (data.date) parts.push(`It is ${data.date}.`);
   }
 
   if (data.weather) parts.push(formatWeatherSpeech(data.weather));

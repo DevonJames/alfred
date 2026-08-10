@@ -4,6 +4,7 @@ import {
   speakClockTime,
   speakPercentChange,
   speakUsdAmount,
+  speakWallClock,
 } from "./speech.js";
 
 describe("speakUsdAmount", () => {
@@ -21,6 +22,14 @@ describe("speakClockTime", () => {
     );
     expect(speakClockTime(new Date("2026-08-10T22:30:00.000Z"), "America/Los_Angeles")).toBe(
       "3 thirty pm",
+    );
+  });
+});
+
+describe("speakWallClock", () => {
+  it("formats h:mm am/pm", () => {
+    expect(speakWallClock(new Date("2026-08-10T05:17:00.000Z"), "America/Los_Angeles")).toBe(
+      "10:17 pm",
     );
   });
 });

@@ -80,6 +80,8 @@ describe("formatBriefingForSpeech", () => {
       timezone: "America/Los_Angeles",
     });
     expect(speech).toContain("Good morning, sir");
+    // 2026-08-10T16:00:00Z = 9:00 am Pacific
+    expect(speech).toContain("It is Monday, August 10 at 9:00 am.");
     expect(speech).toContain("Call Sarah");
     expect(speech).toMatch(/Bitcoin is up 1\.2 percent/);
     expect(speech).toContain("thousand dollars");

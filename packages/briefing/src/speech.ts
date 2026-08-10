@@ -20,8 +20,10 @@ const DAY_FULL: Record<string, string> = {
   Saturday: "Saturday",
 };
 
-/** Speak a clock time: noon, midnight, "3 PM", "3 thirty PM", "3 15 PM". */
-export function speakClockTime(date: Date, timezone?: string): string {
+function localHourMinuteAmPm(
+  date: Date,
+  timezone?: string,
+): { hour: number; minute: number; ampm: string } {
   const opts: Intl.DateTimeFormatOptions = {
     hour: "numeric",
     minute: "2-digit",
@@ -32,13 +34,23 @@ export function speakClockTime(date: Date, timezone?: string): string {
   const hour = Number(parts.find((p) => p.type === "hour")?.value ?? "0");
   const minute = Number(parts.find((p) => p.type === "minute")?.value ?? "0");
   const dayPeriod = (parts.find((p) => p.type === "dayPeriod")?.value ?? "AM").toUpperCase();
+  return { hour, minute, ampm: dayPeriod.toLowerCase() };
+}
 
-  if (hour === 12 && minute === 0 && dayPeriod === "PM") return "noon";
-  if (hour === 12 && minute === 0 && dayPeriod === "AM") return "midnight";
-  const ampm = dayPeriod.toLowerCase();
+/** Speak a clock time: noon, midnight, "3 PM", "3 thirty PM", "3 15 PM". */
+export function speakClockTime(date: Date, timezone?: string): string {
+  const { hour, minute, ampm } = localHourMinuteAmPm(date, timezone);
+  if (hour === 12 && minute === 0 && ampm === "pm") return "noon";
+  if (hour === 12 && minute === 0 && ampm === "am") return "midnight";
   if (minute === 0) return `${hour} ${ampm}`;
   if (minute === 30) return `${hour} thirty ${ampm}`;
   return `${hour} ${minute} ${ampm}`;
+}
+
+/** Wall-clock for the briefing datetime line: "10:17 pm". */
+export function speakWallClock(date: Date, timezone?: string): string {
+  const { hour, minute, ampm } = localHourMinuteAmPm(date, timezone);
+  return `${hour}:${String(minute).padStart(2, "0")} ${ampm}`;
 }
 
 export function speakWeekday(date: Date, timezone?: string): string {
