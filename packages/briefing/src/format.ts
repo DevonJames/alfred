@@ -46,9 +46,6 @@ export function formatBriefingForSpeech(
   if (data.weather) parts.push(formatWeatherSpeech(data.weather));
   else if (data.weatherText) parts.push(data.weatherText);
 
-  const rem = formatRemindersSpeech(data.reminders) || data.remindersText;
-  if (rem) parts.push(rem);
-
   const markets = formatMarketsSpeechFromQuotes({
     crypto: data.markets.crypto,
     cryptoId: data.markets.cryptoId,
@@ -71,6 +68,10 @@ export function formatBriefingForSpeech(
   const news = formatNewsSpeech(data.news);
   if (news) parts.push(news);
 
+  // Reminders last before sign-off so personal follow-ups land after the rundown.
+  const rem = formatRemindersSpeech(data.reminders) || data.remindersText;
+  if (rem) parts.push(rem);
+
   parts.push(closingLine(now, timezone));
 
   return sanitizeForSpeech(parts.join(" "));
@@ -79,10 +80,10 @@ export function formatBriefingForSpeech(
 export function formatBriefingAsMarkdown(data: BriefingData): string {
   const sections: string[] = [`# Daily Briefing — ${data.date}`, "", data.greeting];
   if (data.weather) sections.push("", formatWeatherMarkdown(data.weather));
-  if (data.reminders.length) sections.push("", formatRemindersMarkdown(data.reminders));
   if (data.markets.lines.length) sections.push("", formatMarketsMarkdown(data.markets.lines));
   if (data.launches.length) sections.push("", formatLaunchesMarkdown(data.launches));
   if (data.news.length) sections.push("", formatNewsMarkdown(data.news));
+  if (data.reminders.length) sections.push("", formatRemindersMarkdown(data.reminders));
   sections.push("", `_Generated ${data.generated}_`);
   return sections.join("\n");
 }
