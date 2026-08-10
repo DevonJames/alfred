@@ -11,6 +11,7 @@ export default defineConfig({
       "@alfred/persistence": path.join(root, "packages/persistence/src/index.ts"),
       "@alfred/providers": path.join(root, "packages/providers/src/index.ts"),
       "@alfred/memory": path.join(root, "packages/memory/src/index.ts"),
+      "@alfred/briefing": path.join(root, "packages/briefing/src/index.ts"),
       "@alfred/agents": path.join(root, "packages/agents/src/index.ts"),
       "@alfred/provider-deepgram": path.join(root, "packages/provider-deepgram/src/index.ts"),
       "@alfred/provider-openai": path.join(root, "packages/provider-openai/src/index.ts"),

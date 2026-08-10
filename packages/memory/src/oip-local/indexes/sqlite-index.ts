@@ -244,14 +244,15 @@ export class SqliteMemoryIndex {
       );
 
       if (current.remindAt != null || current.reminderStatus) {
+        const remindAt = current.remindAt ?? null;
         insertReminder.run(
           current.id,
-          current.remindAt ?? null,
-          current.remindAt ?? null,
+          remindAt,
+          remindAtSortKey(remindAt),
           current.reminderStatus ?? "pending",
           current.reminderReason ?? null,
           current.reminderTimezone ?? null,
-          null,
+          current.reminderSnoozedUntil ?? null,
         );
       }
 
@@ -359,6 +360,47 @@ export class SqliteMemoryIndex {
     const row = db.prepare("SELECT COUNT(*) AS n FROM edges").get() as { n: number };
     return Number(row?.n ?? 0);
   }
+
+  /**
+   * Due-or-overdue reminders for Daily Brief (PRD §55).
+   * `windowEnd` should be a comparable ISO/date sort key (e.g. end of local briefing day).
+   */
+  listDue(opts: {
+    windowEnd: string;
+    statuses?: string[];
+    limit?: number;
+  }): ReminderRow[] {
+    const db = this.open();
+    const statuses = opts.statuses ?? ["pending", "surfaced"];
+    const limit = opts.limit ?? 50;
+    const placeholders = statuses.map(() => "?").join(", ");
+    const rows = db
+      .prepare(
+        `SELECT r.*, rec.name AS record_name, rec.record_type, rec.logical_id
+         FROM reminders r
+         LEFT JOIN records rec ON rec.id = r.record_id
+         WHERE r.reminder_status IN (${placeholders})
+           AND r.remind_at_sort_key IS NOT NULL
+           AND r.remind_at_sort_key <= ?
+           AND (r.reminder_snoozed_until IS NULL OR r.reminder_snoozed_until <= ?)
+         ORDER BY r.remind_at_sort_key ASC
+         LIMIT ?`,
+      )
+      .all(...statuses, opts.windowEnd, opts.windowEnd, limit) as ReminderRow[];
+    return rows;
+  }
+}
+
+/** Date-only remindAt sorts as end-of-day UTC so the whole local calendar day is due. */
+export function remindAtSortKey(remindAt: string | null | undefined): string | null {
+  if (remindAt == null || remindAt === "") return null;
+  const trimmed = remindAt.trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    return `${trimmed}T23:59:59.999Z`;
+  }
+  const ms = Date.parse(trimmed);
+  if (Number.isNaN(ms)) return trimmed;
+  return new Date(ms).toISOString();
 }
 
 export interface RecordRow {
@@ -381,6 +423,19 @@ export interface EdgeRow {
   predicate: string;
   target_id: string;
   source_revision: string | null;
+}
+
+export interface ReminderRow {
+  record_id: string;
+  remind_at: string | null;
+  remind_at_sort_key: string | null;
+  reminder_status: string | null;
+  reminder_reason: string | null;
+  reminder_timezone: string | null;
+  reminder_snoozed_until: string | null;
+  record_name?: string | null;
+  record_type?: string | null;
+  logical_id?: string | null;
 }
 
 function buildSearchText(r: MemoryRevision): string {

@@ -219,6 +219,67 @@ describe("memory.oip-local", () => {
     });
     expect(computeRevisionHash(created)).toBe(created.revision);
   });
+
+  it("listDue returns pending date-only and overdue; excludes completed and snoozed", async () => {
+    const p = await tempProvider();
+    const today = "2026-08-09";
+    await p.createRecord("Assertion", {
+      name: "Call Sarah about the cabin",
+      text: "Call Sarah about the cabin",
+      remindAt: today,
+      reminderStatus: "pending",
+      reminderReason: "user_requested",
+      reminderTimezone: "America/Los_Angeles",
+      schema: { "@type": "Thing", name: "Call Sarah about the cabin" },
+    });
+    await p.createRecord("Assertion", {
+      name: "Overdue passport check",
+      text: "Check passport",
+      remindAt: "2026-08-01",
+      reminderStatus: "pending",
+      reminderReason: "expiration",
+      schema: { "@type": "Thing", name: "Overdue passport check" },
+    });
+    await p.createRecord("Assertion", {
+      name: "Done task",
+      text: "Already done",
+      remindAt: today,
+      reminderStatus: "completed",
+      schema: { "@type": "Thing", name: "Done task" },
+    });
+    await p.createRecord("Assertion", {
+      name: "Snoozed task",
+      text: "Later",
+      remindAt: "2026-08-01",
+      reminderStatus: "pending",
+      reminderSnoozedUntil: "2026-12-31T00:00:00.000Z",
+      schema: { "@type": "Thing", name: "Snoozed task" },
+    });
+    await p.createRecord("Assertion", {
+      name: "Future reminder",
+      text: "Next week",
+      remindAt: "2026-08-20",
+      reminderStatus: "pending",
+      schema: { "@type": "Thing", name: "Future reminder" },
+    });
+
+    const due = await p.listDue({
+      date: today,
+      timezone: "America/Los_Angeles",
+    });
+    const names = due.map((d) => d.recordName ?? d.revision.name);
+    expect(names).toContain("Call Sarah about the cabin");
+    expect(names).toContain("Overdue passport check");
+    expect(names).not.toContain("Done task");
+    expect(names).not.toContain("Snoozed task");
+    expect(names).not.toContain("Future reminder");
+
+    const first = due.find((d) => d.recordName === "Call Sarah about the cabin")!;
+    await p.markReminderSurfaced(first.recordId);
+    const again = await p.packages.readCurrent(first.logicalId);
+    expect(again?.reminderStatus).toBe("surfaced");
+    expect(again?.reminderLastSurfacedAt).toBeTruthy();
+  });
 });
 
 function displayName(rev: { schema?: Record<string, unknown>; name?: string } | null): string {

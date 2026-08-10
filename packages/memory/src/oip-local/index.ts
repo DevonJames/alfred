@@ -28,7 +28,11 @@ export {
 } from "./ids.js";
 export { FtsIndex } from "./indexes/fts-index.js";
 export { GraphIndex } from "./indexes/graph-index.js";
-export { SqliteMemoryIndex } from "./indexes/sqlite-index.js";
+export {
+  SqliteMemoryIndex,
+  remindAtSortKey,
+  type ReminderRow,
+} from "./indexes/sqlite-index.js";
 export { NoopVectorIndex, type VectorIndex } from "./indexes/vector-index.js";
 export {
   computeRevisionHash,
@@ -40,8 +44,11 @@ export { PackageStore, type CreatePackageInput } from "./package-store.js";
 export { defaultOipMemoryRoot } from "./paths.js";
 export {
   createOipLocalProvider,
+  endOfLocalDateIso,
+  localDateKey,
   OIP_LOCAL_MEMORY_PROVIDER_ID,
   OipLocalMemoryProvider,
+  type DueReminder,
 } from "./provider.js";
 export { retrieveMemories, toNormalized } from "./retrieval.js";
 export {

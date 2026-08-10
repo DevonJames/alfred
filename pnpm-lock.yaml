@@ -23,6 +23,9 @@ importers:
 
   apps/desktop-client:
     dependencies:
+      '@alfred/briefing':
+        specifier: workspace:^
+        version: link:../../packages/briefing
       '@alfred/contracts':
         specifier: workspace:^
         version: link:../../packages/contracts
@@ -91,6 +94,9 @@ importers:
       '@alfred/agents':
         specifier: workspace:*
         version: link:../../packages/agents
+      '@alfred/briefing':
+        specifier: workspace:*
+        version: link:../../packages/briefing
       '@alfred/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
@@ -163,6 +169,19 @@ importers:
       typescript:
         specifier: ^5.7.2
         version: 5.9.3
+
+  packages/briefing:
+    dependencies:
+      '@alfred/memory':
+        specifier: workspace:*
+        version: link:../memory
+    devDependencies:
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.8
+        version: 2.1.9(@types/node@22.20.1)
 
   packages/contracts:
     dependencies:

@@ -13,13 +13,25 @@ import type { TaggedHash } from "./hashing.js";
 import { parseMemoryRef } from "./ids.js";
 import { verifyStore, type IntegrityReport } from "./integrity.js";
 import { GraphIndex } from "./indexes/graph-index.js";
-import { SqliteMemoryIndex } from "./indexes/sqlite-index.js";
+import { SqliteMemoryIndex, type ReminderRow } from "./indexes/sqlite-index.js";
 import { NoopVectorIndex, type VectorIndex } from "./indexes/vector-index.js";
 import { PackageStore } from "./package-store.js";
 import { defaultOipMemoryRoot } from "./paths.js";
 import { retrieveMemories, toNormalized } from "./retrieval.js";
 import { SCHEMA_ORG, schemaOrgPerson } from "./schema-org.js";
 import type { MemoryRevision } from "./schemas.js";
+
+export interface DueReminder {
+  recordId: string;
+  logicalId: string;
+  revision: MemoryRevision;
+  remindAt: string | null;
+  reminderStatus: string | null;
+  reminderReason: string | null;
+  reminderTimezone: string | null;
+  reminderSnoozedUntil: string | null;
+  recordName: string | null;
+}
 
 export const OIP_LOCAL_MEMORY_PROVIDER_ID = "memory.oip-local";
 
@@ -286,6 +298,61 @@ export class OipLocalMemoryProvider implements MemoryProvider {
     return new GraphIndex(this.sqlite);
   }
 
+  /**
+   * Due-or-overdue reminders for Daily Brief.
+   * `windowEnd` defaults to end of the given local calendar date (or today in timezone).
+   */
+  async listDue(opts: {
+    date?: string;
+    timezone?: string;
+    windowEnd?: string;
+    now?: Date;
+    limit?: number;
+  } = {}): Promise<DueReminder[]> {
+    await this.ensureReady();
+    const timezone = opts.timezone ?? "America/Los_Angeles";
+    const windowEnd =
+      opts.windowEnd ?? endOfLocalDateIso(opts.date ?? localDateKey(opts.now ?? new Date(), timezone), timezone);
+    const rows = this.sqlite.listDue({
+      windowEnd,
+      limit: opts.limit,
+    });
+    const out: DueReminder[] = [];
+    for (const row of rows) {
+      const hydrated = await this.hydrateReminderRow(row);
+      if (hydrated) out.push(hydrated);
+    }
+    return out;
+  }
+
+  async markReminderSurfaced(recordId: string): Promise<MemoryRevision> {
+    await this.ensureReady();
+    const now = new Date().toISOString();
+    return this.updateRecord(recordId, {
+      reminderStatus: "surfaced",
+      reminderLastSurfacedAt: now,
+    });
+  }
+
+  private async hydrateReminderRow(row: ReminderRow): Promise<DueReminder | null> {
+    const logicalId =
+      row.logical_id ??
+      row.record_id.replace(/^did:memory:/, "").split("#")[0]!;
+    const revision = await this.packages.readCurrent(logicalId);
+    if (!revision) return null;
+    return {
+      recordId: revision.id,
+      logicalId,
+      revision,
+      remindAt: row.remind_at,
+      reminderStatus: row.reminder_status,
+      reminderReason: row.reminder_reason,
+      reminderTimezone: row.reminder_timezone,
+      reminderSnoozedUntil: row.reminder_snoozed_until,
+      recordName: row.record_name ?? revision.name ?? null,
+    };
+  }
+
   async putArtifactBytes(
     bytes: Buffer,
     opts: {
@@ -329,3 +396,43 @@ export function createOipLocalProvider(profileId = "profile.default"): OipLocalM
 }
 
 export type { TaggedHash };
+
+/** YYYY-MM-DD in the given IANA timezone. */
+export function localDateKey(now: Date, timezone: string): string {
+  const fmt = new Intl.DateTimeFormat("en-CA", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+  return fmt.format(now);
+}
+
+/** End of a local calendar date as a comparable UTC ISO string. */
+export function endOfLocalDateIso(dateKey: string, timezone: string): string {
+  // Interpret dateKey 23:59:59.999 in timezone → UTC ISO via iterative offset estimate.
+  const probe = new Date(`${dateKey}T12:00:00.000Z`);
+  const localParts = new Intl.DateTimeFormat("en-US", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(probe);
+  const get = (type: string) => localParts.find((p) => p.type === type)?.value ?? "00";
+  const localAsUtc = Date.UTC(
+    Number(get("year")),
+    Number(get("month")) - 1,
+    Number(get("day")),
+    Number(get("hour")),
+    Number(get("minute")),
+    Number(get("second")),
+  );
+  const offsetMs = localAsUtc - probe.getTime();
+  // Want local 23:59:59.999 on dateKey
+  const targetLocalUtcGuess = Date.parse(`${dateKey}T23:59:59.999Z`) - offsetMs;
+  return new Date(targetLocalUtcGuess).toISOString();
+}

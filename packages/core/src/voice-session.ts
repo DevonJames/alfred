@@ -28,6 +28,17 @@ import {
 } from "./echo-filter.js";
 import { SelfVoiceGate } from "./self-voice.js";
 
+/** Structural port for Daily Briefing (implemented by @alfred/briefing). */
+export type BriefingVoiceDecision =
+  | { action: "play"; speech: string }
+  | { action: "decline"; speech: string }
+  | { action: "chat"; appendOffer: boolean; systemHint?: string };
+
+export interface BriefingVoicePort {
+  handleUserTurn(text: string): Promise<BriefingVoiceDecision>;
+  readonly offerCloser: string;
+}
+
 export interface VoiceSessionDeps {
   sessionId: string;
   profileId: string;
@@ -42,6 +53,8 @@ export interface VoiceSessionDeps {
   media?: MediaPort;
   /** Always-on SOUL / IDENTITY / USER bootstrap (OpenClaw-style). */
   personaContext?: PersonaContext;
+  /** Optional Stage-1 daily briefing offer + play. */
+  briefing?: BriefingVoicePort;
   backchannelClassifier?: BackchannelClassifier;
   interruptionArbiter?: InterruptionArbiter;
   /** Injected streaming STT for tests; otherwise opened from registry. */
@@ -692,6 +705,64 @@ export class VoiceSessionController {
       metadata: {},
     });
 
+    // Daily briefing: play / decline may short-circuit the normal LLM path.
+    let briefingDecision: BriefingVoiceDecision | undefined;
+    if (this.deps.briefing) {
+      try {
+        briefingDecision = await this.deps.briefing.handleUserTurn(text);
+      } catch (err) {
+        console.error("[voice] briefing handleUserTurn failed:", err);
+      }
+    }
+
+    if (briefingDecision?.action === "play" || briefingDecision?.action === "decline") {
+      try {
+        this.provisionalAbort?.abort({ reason: "briefing_short_circuit" });
+        const responseId = this.deps.responseLedger.beginResponse(this.deps.sessionId, turnId);
+        this.provisionalResponseId = responseId;
+        const assistantText = briefingDecision.speech;
+        if (this.pendingUserText || this.bargeInListening) {
+          console.log("[voice] skip briefing speak; barge-in pending");
+          return;
+        }
+        await this.deps.responseLedger.commit(responseId, assistantText);
+        this.activeResponseId = responseId;
+        console.log(`[voice] speaking briefing: "${assistantText.slice(0, 160)}"`);
+        await this.speakWithMultiContext(responseId, assistantText, "primary");
+        await this.deps.memory.commitTurn({
+          profileId: this.deps.profileId,
+          sessionId: this.deps.sessionId,
+          turnId: createId("turn"),
+          role: "assistant",
+          text: assistantText,
+          metadata: { responseId, briefing: briefingDecision.action },
+        });
+        console.log("[voice] briefing turn playback complete");
+      } catch (err) {
+        console.error("[voice] briefing speak failed:", err);
+        await this.deps.events.emit({
+          sessionId: this.deps.sessionId,
+          type: "error",
+          turnId,
+          payload: {
+            source: "briefing",
+            message: err instanceof Error ? err.message : String(err),
+          },
+        });
+      } finally {
+        this.turnInFlight = false;
+        const pending = this.pendingUserText;
+        this.pendingUserText = undefined;
+        if (pending) {
+          this.bargeInListening = false;
+          this.bargeInDraft = undefined;
+          await this.publishUserTranscriptUi(pending, "final");
+          this.commitEndOfTurn(pending);
+        }
+      }
+      return;
+    }
+
     const memory = await this.deps.memory.retrieve({
       text,
       profileId: this.deps.profileId,
@@ -703,13 +774,18 @@ export class VoiceSessionController {
       return kind === "fact" || kind === "note";
     });
 
+    const appendOffer = briefingDecision?.action === "chat" && briefingDecision.appendOffer;
+    const offerHint =
+      briefingDecision?.action === "chat" ? briefingDecision.systemHint : undefined;
+
     try {
       let responseId = this.provisionalResponseId;
       let assistantText = responseId ? this.deps.responseLedger.getProposedText(responseId) : "";
 
+      // Soft-offer turns always regenerate so the system hint applies (skip provisional).
       // Always regenerate when durable memory is available — provisional EagerEOT
       // often raced before facts were relevant, or reused a no-memory draft.
-      if (!responseId || !assistantText.trim() || hasDurableMemory) {
+      if (!responseId || !assistantText.trim() || hasDurableMemory || appendOffer) {
         this.provisionalAbort?.abort({ reason: "superseded_generation" });
         responseId = this.deps.responseLedger.beginResponse(this.deps.sessionId, turnId);
         this.provisionalResponseId = responseId;
@@ -718,8 +794,11 @@ export class VoiceSessionController {
             `[voice] regenerating with ${memory.items.length} memory item(s) (durable facts/notes)`,
           );
         }
+        const systemInstructions = offerHint
+          ? `${this.deps.config.systemInstructions}\n\n${offerHint}`
+          : this.deps.config.systemInstructions;
         const prompt = this.promptAssembler.assemble({
-          systemInstructions: this.deps.config.systemInstructions,
+          systemInstructions,
           currentUserTurn: text,
           recentConversation: [],
           personaContext: this.deps.personaContext,
@@ -730,6 +809,13 @@ export class VoiceSessionController {
           availableCapabilities: ["delegate_task"],
         });
         assistantText = await this.generateCommitted(prompt.messages, responseId);
+      }
+
+      if (appendOffer && this.deps.briefing) {
+        const closer = this.deps.briefing.offerCloser;
+        if (!assistantText.includes(closer)) {
+          assistantText = `${assistantText.trim()} ${closer}`.trim();
+        }
       }
 
       // Barge-in arrived while we were generating — skip speaking this reply.

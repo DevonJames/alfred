@@ -5,6 +5,7 @@ import {
   createHermesStub,
   createOpenClawStub,
 } from "@alfred/agents";
+import { createBriefingController, type GreetingLlm } from "@alfred/briefing";
 import type { UserConfiguration } from "@alfred/contracts";
 import {
   EventLedger,
@@ -168,6 +169,25 @@ export async function createCascadedVoiceRuntime(opts?: {
   const responseLedger = new ResponseLedger(persistence.responseLedgers, events, clock);
   const media = new LiveKitMediaBridge();
 
+  const greetingLlm: GreetingLlm = async (messages) => {
+    const llm = registry.getLlm(OPENAI_TERRA_PROVIDER_ID);
+    let text = "";
+    for await (const chunk of llm.generateStream({
+      messages,
+      modelPreset: "conversational",
+      reasoningEffort: "none",
+    })) {
+      if (chunk.type === "token" && chunk.text) text += chunk.text;
+    }
+    return text;
+  };
+
+  // Always pass OIP memory for due reminders (independent of active chat memory provider).
+  const briefing = createBriefingController({
+    memory: oipMemory,
+    llm: greetingLlm,
+  });
+
   const voice = new VoiceSessionController({
     sessionId,
     profileId: config.profile.id,
@@ -181,6 +201,7 @@ export async function createCascadedVoiceRuntime(opts?: {
     agents,
     media,
     personaContext: persona,
+    briefing,
   });
 
   return {

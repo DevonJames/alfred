@@ -15,11 +15,13 @@
  *   pnpm memory -- oip-import <file>
  *   pnpm memory -- erase --yes [--all]
  *   pnpm memory -- ingest-knowledge <file.json|.md> [--dry-run]
+ *   pnpm memory -- seed-reminder [text...]
  */
 import { config as loadEnv } from "dotenv";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path, { resolve } from "node:path";
+import { seedDueReminder } from "@alfred/briefing";
 import type { CanonicalMemoryRecord } from "@alfred/contracts";
 import {
   cleanupUserMd,
@@ -441,9 +443,27 @@ async function main(): Promise<void> {
     return;
   }
 
+  if (cmd === "seed-reminder") {
+    const text =
+      args
+        .slice(1)
+        .filter((a) => !a.startsWith("--"))
+        .join(" ")
+        .trim() || "Call Sarah about the cabin";
+    const timezone = process.env.BRIEFING_TIMEZONE ?? "America/Los_Angeles";
+    const dayStart = process.env.BRIEFING_DAY_START ?? "04:30";
+    const mem = oip();
+    const seeded = await seedDueReminder(mem, { text, timezone, dayStart });
+    console.log(`Seeded due reminder for briefing day ${seeded.remindAt}`);
+    console.log(`  id: ${seeded.recordId}`);
+    console.log(`  text: ${text}`);
+    console.log(`  store: ${oipRoot}`);
+    return;
+  }
+
   console.error(`Unknown command: ${cmd}`);
   console.error(
-    "Usage: pnpm memory -- inspect|persona|export|import|ingest-export|ingest-knowledge|dedupe-user|cleanup-user|erase|oip-inspect|oip-verify|oip-rebuild|oip-export|oip-import",
+    "Usage: pnpm memory -- inspect|persona|export|import|ingest-export|ingest-knowledge|dedupe-user|cleanup-user|erase|oip-inspect|oip-verify|oip-rebuild|oip-export|oip-import|seed-reminder",
   );
   process.exitCode = 1;
 }

@@ -11,6 +11,7 @@
     "start": "pnpm run build:voice-ui && tsx src/main.ts"
   },
   "dependencies": {
+    "@alfred/briefing": "workspace:^",
     "@alfred/contracts": "workspace:^",
     "@alfred/livekit": "workspace:^",
     "@alfred/memory": "workspace:^",

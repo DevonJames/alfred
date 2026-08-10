@@ -15,6 +15,7 @@ import { readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { startCloudConnect, stopCloudConnect } from "./lib/cloud-connect.js";
+import { briefingRouter } from "./routes/briefing.js";
 import { connectRouter } from "./routes/connect.js";
 import { memoryRouter } from "./routes/memory.js";
 import { tokenRouter } from "./routes/token.js";
@@ -38,6 +39,8 @@ const statusPayload = {
   health: "/connect/health",
   memoryIngest: "/memory/ingest",
   memoryGraph: "/memory/graph",
+  briefing: "/api/briefing",
+  memoryDue: "/api/memory/due",
   token: "/api/token",
 } as const;
 
@@ -51,6 +54,7 @@ app.get("/status", (c) => c.json(statusPayload));
 app.route("/connect", connectRouter);
 app.route("/memory", memoryRouter);
 app.route("/api", tokenRouter);
+app.route("/api", briefingRouter);
 app.route("/voice", voiceRouter);
 
 const server = serve({ fetch: app.fetch, port }, (info) => {
@@ -59,6 +63,8 @@ const server = serve({ fetch: app.fetch, port }, (info) => {
   console.log(`  Voice uplink:  http://127.0.0.1:${info.port}/voice/`);
   console.log(`  Memory ingest: http://127.0.0.1:${info.port}/memory/ingest`);
   console.log(`  Memory graph:  http://127.0.0.1:${info.port}/memory/graph`);
+  console.log(`  Briefing:      http://127.0.0.1:${info.port}/api/briefing`);
+  console.log(`  Memory due:    http://127.0.0.1:${info.port}/api/memory/due`);
   console.log(`  Cloud: ${process.env.ALFRD_CLOUD_URL ?? "https://api.alfrd.net"}`);
   console.log(`  Relay: ${process.env.ALFRD_RELAY_URL ?? "wss://api.alfrd.net"}`);
   console.log(`  Name:  ${process.env.DESKTOP_CLIENT_NAME ?? "Alfred"}`);

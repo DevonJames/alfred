@@ -79,6 +79,9 @@ export const MemoryRevisionSchema = z
     reminderStatus: z.string().optional(),
     reminderReason: z.string().optional(),
     reminderTimezone: z.string().optional(),
+    reminderLastSurfacedAt: z.string().nullable().optional(),
+    reminderSnoozedUntil: z.string().nullable().optional(),
+    reminderCompletedAt: z.string().nullable().optional(),
   })
   .passthrough();
 
