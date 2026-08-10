@@ -23,6 +23,19 @@ function decodeEntities(s: string): string {
     .replace(/&apos;/g, "'");
 }
 
+function isFeedOrSourceTitle(title: string, source: string): boolean {
+  const t = title.trim().toLowerCase();
+  const s = source.trim().toLowerCase();
+  if (!t || t.length < 12) return true; // too short to be a real headline
+  if (t === s) return true;
+  if (t === `${s} news` || t.startsWith(`${s} -`) || t.startsWith(`${s}:`)) return true;
+  // Common channel titles
+  if (/^(bbc news|ap news|cnn|npr|reuters|techcrunch|the verge|ars technica)$/i.test(t)) {
+    return true;
+  }
+  return false;
+}
+
 export async function fetchNewsHeadlines(sources: string[]): Promise<string[]> {
   const headlines: string[] = [];
   for (const source of sources.slice(0, 3)) {
@@ -34,13 +47,14 @@ export async function fetchNewsHeadlines(sources: string[]): Promise<string[]> {
       const text = await res.text();
       const titleMatches =
         text.match(/<title>(?:<!\[CDATA\[)?([^\]<]+)(?:\]\]>)?<\/title>/g) ?? [];
-      for (const match of titleMatches.slice(1, 5)) {
+      for (const match of titleMatches.slice(1, 8)) {
         let title = match
           .replace(/<\/?title>/g, "")
           .replace(/<!\[CDATA\[/g, "")
           .replace(/\]\]>/g, "");
         title = decodeEntities(title).trim();
-        if (title && !headlines.includes(title)) headlines.push(title);
+        if (!title || isFeedOrSourceTitle(title, source)) continue;
+        if (!headlines.includes(title)) headlines.push(title);
         if (headlines.length >= 8) return headlines;
       }
     } catch {

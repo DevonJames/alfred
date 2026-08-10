@@ -26,10 +26,13 @@ export function formatBriefingForSpeech(
   const timezone = opts?.timezone ?? "America/Los_Angeles";
   const parts: string[] = [];
 
-  const greeting = data.greeting.replace(/[.!?]+$/g, "").trim();
+  // Greeting must be a short salutation only (e.g. "Good evening") — not a mini-briefing.
+  const greeting = data.greeting
+    .replace(/[.!?]+$/g, "")
+    .replace(/,?\s*sir$/i, "")
+    .trim();
   parts.push(`${greeting}, sir.`);
 
-  // Prefer structured date; fall back to dayKey
   try {
     const dayName = speakWeekday(now, timezone);
     const monthDay = speakMonthDay(now, timezone);
