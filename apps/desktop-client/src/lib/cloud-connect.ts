@@ -331,6 +331,9 @@ export async function startCloudConnect(serverPort = 3000) {
 
   console.log(`[CloudConnect] Desktop Client ID: ${serverId}`);
   console.log(`[CloudConnect] Claim secret: ${claimSecret}`);
+  console.log(
+    `[CloudConnect] Claim QR page: http://127.0.0.1:${serverPort}/connect/claim`,
+  );
 
   // Register with control plane and get/refresh desktop token
   const token = await registerWithControlPlane(serverId, claimSecret, serverPort, displayName);

@@ -42,6 +42,7 @@ After ~3s, logs print:
 ```text
 [CloudConnect] Desktop Client ID: <uuid>
 [CloudConnect] Claim secret: <8-char>
+[CloudConnect] Claim QR page: http://127.0.0.1:3000/connect/claim
 [CloudConnect] Registered with control plane
 [CloudConnect] Relay tunnel established (desktopClientId: …)
 ```
@@ -53,13 +54,18 @@ Identity persists at `data/desktop-client/identity.json` (gitignored).
 | Method | Path | Auth | Purpose |
 |--------|------|------|---------|
 | `GET` | `/connect/health` | none | Discovery probe (LAN/WAN/relay) |
-| `GET` | `/connect/info` | none | Desktop Client ID + claim secret + relay status |
+| `GET` | `/connect/info` | none | Desktop Client ID + claim secret + relay status + claim URI |
+| `GET` | `/connect/claim` | none | Local claim UI (QR + manual secret) |
+| `GET` | `/connect/claim.png` | none | QR PNG (`alfred://claim?…`) |
+| `GET` | `/connect/claim.svg` | none | QR SVG |
+| `GET` | `/connect/claim.json` | none | Structured claim payload |
 
 Example:
 
 ```bash
 curl -s http://127.0.0.1:3000/connect/health | jq .
 curl -s http://127.0.0.1:3000/connect/info | jq .
+open http://127.0.0.1:3000/connect/claim
 ```
 
 `/connect/info` returns both product fields and control-plane aliases:
@@ -72,16 +78,29 @@ curl -s http://127.0.0.1:3000/connect/info | jq .
   "relayConnected": true,
   "cloudUrl": "https://api.alfrd.net",
   "serverId": "…",
-  "serverName": "Alfred"
+  "serverName": "Alfred",
+  "claimUri": "alfred://claim?v=1&serverId=…&claimSecret=…&cloudUrl=…&name=…",
+  "claimQrPath": "/connect/claim.png",
+  "claimPagePath": "/connect/claim"
 }
 ```
 
 Claim UIs that still say “Server ID” can use `serverId`.
 
+QR claim encodes the same `serverId` + `claimSecret` as a deep link:
+
+```text
+alfred://claim?v=1&serverId=<uuid>&claimSecret=<8CHAR>&cloudUrl=https%3A%2F%2Fapi.alfrd.net&name=Alfred
+```
+
+Manual 8-character entry remains supported. Full iOS parse/claim steps: [ios-desktop-pairing.md](./ios-desktop-pairing.md).
+
 ## Claim + discovery flow (mobile)
 
 1. User creates/logs into an alfrd.net account (`/auth/register`, `/auth/login`).
 2. User claims this desktop client: `POST /servers/claim` with `{ serverId, claimSecret }` (JWT).
+   - Preferred: scan QR from `http://127.0.0.1:3000/connect/claim` (or `alfred://claim` deep link).
+   - Fallback: type Desktop Client ID + 8-char claim secret from logs / `/connect/info`.
 3. Mobile loads candidates: `GET /servers` or `GET /servers/:id/candidates`.
 4. Mobile tries candidates by priority: LAN (10) → WAN (20) → relay (100) via `GET {url}/connect/health`.
 5. Store the winning URL (SecureStore `alfred_server_url`) for subsequent API calls.

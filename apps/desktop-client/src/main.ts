@@ -5,7 +5,8 @@
  *   1. Set ALFRD_CLOUD_URL / ALFRD_RELAY_URL in repo-root .env (defaults to api.alfrd.net)
  *   2. pnpm desktop
  *   3. Open http://127.0.0.1:3000/ for the local UI hub (voice uplink, memory, …)
- *   4. Note Desktop Client ID + Claim Secret from logs (or GET /connect/info)
+ *   4. Open http://127.0.0.1:3000/connect/claim for QR + claim secret
+ *      (or read Desktop Client ID + secret from logs / GET /connect/info)
  *   5. Claim from alfrd.net account; mobile client discovers LAN → WAN → relay
  */
 import { serve } from "@hono/node-server";
@@ -36,6 +37,8 @@ const statusPayload = {
   ui: "/",
   voice: "/voice/",
   connect: "/connect/info",
+  claim: "/connect/claim",
+  claimQr: "/connect/claim.png",
   health: "/connect/health",
   memoryIngest: "/memory/ingest",
   memoryGraph: "/memory/graph",
@@ -60,6 +63,7 @@ app.route("/voice", voiceRouter);
 const server = serve({ fetch: app.fetch, port }, (info) => {
   console.log(`ALFRED desktop client listening on http://127.0.0.1:${info.port}`);
   console.log(`  UI hub:        http://127.0.0.1:${info.port}/`);
+  console.log(`  Claim QR:      http://127.0.0.1:${info.port}/connect/claim`);
   console.log(`  Voice uplink:  http://127.0.0.1:${info.port}/voice/`);
   console.log(`  Memory ingest: http://127.0.0.1:${info.port}/memory/ingest`);
   console.log(`  Memory graph:  http://127.0.0.1:${info.port}/memory/graph`);

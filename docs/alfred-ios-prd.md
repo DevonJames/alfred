@@ -559,6 +559,7 @@ iOS cannot ship full conversation + memory against today’s desktop-only `/conn
 
 | ID | Host work | Blocks |
 |----|-----------|--------|
+| H0 | Claim QR page (`/connect/claim`) + `alfred://claim` URI | Faster phone claim (manual secret still required as fallback) — **shipped** |
 | H1 | Device PIN pairing + device bearer middleware | All authenticated APIs |
 | H2 | `POST /api/session/token` (+ status/end) wired to LiveKit mint | Voice |
 | H3 | Mount Memory HTTP API on desktop host over `OipLocalMemoryProvider` | Memory tabs |
