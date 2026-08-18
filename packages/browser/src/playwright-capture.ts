@@ -1,7 +1,13 @@
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import type { BrowserContext, Page } from "playwright-core";
-import { canonicalizeXUrl, type XCapture, type XCaptureAdapter, type XCapturedPost } from "@alfred/memory";
+import {
+  canonicalizeXUrl,
+  statusIdFromUrl,
+  type XCapture,
+  type XCaptureAdapter,
+  type XCapturedPost,
+} from "@alfred/memory";
 import { loadBrowserConfig, type BrowserConfig } from "./config.js";
 import { runComputerUseFallback } from "./cua.js";
 
@@ -18,7 +24,7 @@ interface TweetExtract {
   outbound: string[];
 }
 
-interface PageExtract {
+export interface PageExtract {
   loginWall: boolean;
   paywall: boolean;
   paywallHeadline?: string;
@@ -84,8 +90,7 @@ const EXTRACT_PAGE_JS = `(() => {
     bodyText,
   );
   const h1 = document.querySelector("h1")?.textContent?.trim() ?? "";
-  const articleEl =
-    document.querySelector("article") ?? document.querySelector('[data-testid="article"]');
+  const articleEl = document.querySelector('[data-testid="article"]');
   const articleBody = articleEl
     ? [...articleEl.querySelectorAll("p")]
         .map((p) => p.innerText.trim())
@@ -132,7 +137,7 @@ const EXTRACT_PAGE_JS = `(() => {
     loginWall,
     paywall,
     paywallHeadline: paywall ? h1 || tweets[0]?.text.slice(0, 80) : undefined,
-    articleTitle: h1 || undefined,
+    articleTitle: articleEl ? h1 || undefined : undefined,
     articleBody: articleBody || undefined,
     tweets,
     pageText: bodyText.slice(0, 20000),
@@ -210,14 +215,30 @@ async function expandThread(page: Page): Promise<void> {
   await page.waitForTimeout(800);
 }
 
-function toCapture(url: string, extracted: PageExtract, extras: Partial<XCapture>): XCapture {
+/** Prefer the tweet whose status id matches the URL we were asked to ingest. */
+export function selectPrimaryTweet<T extends { href?: string }>(
+  tweets: T[],
+  url: string,
+): T | undefined {
+  const want = statusIdFromUrl(url);
+  if (want) {
+    const match = tweets.find((t) => statusIdFromUrl(t.href ?? "") === want);
+    if (match) return match;
+  }
+  return tweets[0];
+}
+
+export function toCapture(url: string, extracted: PageExtract, extras: Partial<XCapture> = {}): XCapture {
   const tweets = extracted.tweets;
-  const primary = tweets[0];
+  const primary = selectPrimaryTweet(tweets, url);
   const authorHandle = primary?.handle;
-  const kept = tweets.filter((t) => replyAddsValue(t, authorHandle));
-  const authorPosts = kept.filter(
-    (t) => !authorHandle || t.handle.toLowerCase() === authorHandle.toLowerCase(),
+  const authorPosts = tweets.filter(
+    (t) => authorHandle && t.handle.toLowerCase() === authorHandle.toLowerCase(),
   );
+  const kept = [
+    ...(primary ? [primary] : []),
+    ...tweets.filter((t) => t !== primary && replyAddsValue(t, authorHandle)),
+  ];
   const kind: XCapture["kind"] = extracted.articleBody
     ? "article"
     : primary?.quotedText
@@ -245,11 +266,15 @@ function toCapture(url: string, extracted: PageExtract, extras: Partial<XCapture
     primary?.text.split("\n")[0]?.slice(0, 120) ||
     extras.headline ||
     url;
-  const text = extracted.articleBody || posts.map((p) => p.text).join("\n\n") || extracted.pageText;
+  const bodyFromAuthor = (primary ? [primary, ...authorPosts.filter((t) => t !== primary)] : []).map(
+    (t) => t.text,
+  );
+  const text =
+    extracted.articleBody || bodyFromAuthor.filter(Boolean).join("\n\n") || extracted.pageText;
   const outbound = [...new Set(tweets.flatMap((t) => t.outbound))].slice(0, 3);
   return {
     url,
-    canonicalUrl: canonicalizeXUrl(primary?.href || url),
+    canonicalUrl: canonicalizeXUrl(url),
     kind,
     author: primary?.author || extras.author || "",
     authorHandle,
@@ -276,7 +301,16 @@ export async function captureXPage(
   const page = await context.newPage();
   try {
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45_000 });
-    await page.waitForTimeout(2000);
+    const statusId = statusIdFromUrl(url);
+    if (statusId) {
+      await page
+        .locator(`a[href*="/status/${statusId}"]`)
+        .first()
+        .waitFor({ timeout: 12_000 })
+        .catch(() => undefined);
+    } else {
+      await page.waitForTimeout(2000);
+    }
     await expandThread(page);
     let extracted = await extractPage(page);
 
