@@ -15,22 +15,20 @@ export function defaultXLedgerPath(profileId: string): string {
   return path.join(defaultXIngestDir(profileId), "x-ledger.jsonl");
 }
 
-export function defaultXIngestDigestPath(profileId: string, dayKey: string, dir?: string): string {
+export function defaultBriefingDataDir(profileId: string, dir?: string): string {
   const base =
-    dir ??
-    (process.env.BRIEFING_CACHE_DIR?.trim()
-      ? path.resolve(process.env.BRIEFING_CACHE_DIR)
-      : path.join(resolveRepoRoot(), "data", "briefing", profileId));
-  return path.join(base, `x-ingest-${dayKey}.json`);
+    dir?.trim() ||
+    process.env.BRIEFING_CACHE_DIR?.trim() ||
+    path.join(resolveRepoRoot(), "data", "briefing", profileId);
+  return path.resolve(base);
+}
+
+export function defaultXIngestDigestPath(profileId: string, dayKey: string, dir?: string): string {
+  return path.join(defaultBriefingDataDir(profileId, dir), `x-ingest-${dayKey}.json`);
 }
 
 export function defaultBriefingCacheFile(profileId: string, dayKey: string, dir?: string): string {
-  const base =
-    dir ??
-    (process.env.BRIEFING_CACHE_DIR?.trim()
-      ? path.resolve(process.env.BRIEFING_CACHE_DIR)
-      : path.join(resolveRepoRoot(), "data", "briefing", profileId));
-  return path.join(base, `cache-${dayKey}.json`);
+  return path.join(defaultBriefingDataDir(profileId, dir), `cache-${dayKey}.json`);
 }
 
 /** Briefing-day key (rolls at BRIEFING_DAY_START, default 04:30 local). */

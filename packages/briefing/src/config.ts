@@ -1,3 +1,5 @@
+import { defaultBriefingDataDir } from "@alfred/memory";
+
 export interface BriefingConfig {
   profileId: string;
   timezone: string;
@@ -72,10 +74,7 @@ export function loadBriefingConfig(overrides: Partial<BriefingConfig> = {}): Bri
     stateDir:
       overrides.stateDir ??
       process.env.BRIEFING_STATE_DIR ??
-      `./data/briefing/${profileId}`,
-    cacheDir:
-      overrides.cacheDir ??
-      process.env.BRIEFING_CACHE_DIR ??
-      `./data/briefing/${profileId}`,
+      defaultBriefingDataDir(profileId),
+    cacheDir: overrides.cacheDir ?? defaultBriefingDataDir(profileId),
   };
 }

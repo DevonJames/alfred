@@ -33,6 +33,7 @@ export { looksLikeXIngest, parseLearnedAtWindow, parseXIngestIntent } from "./in
 export { captureContentHash, writeXCaptureToOip } from "./oip-write.js";
 export {
   defaultBriefingCacheFile,
+  defaultBriefingDataDir,
   defaultXIngestDigestPath,
   defaultXIngestDir,
   defaultXLedgerPath,

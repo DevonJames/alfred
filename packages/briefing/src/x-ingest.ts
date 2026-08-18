@@ -15,12 +15,16 @@ export function formatXIngestSpeech(digest: XIngestDigest | null | undefined): s
     const body = (item.summary ?? item.headline).replace(/\s+/g, " ").trim();
     parts.push(`From ${source}${from}: ${item.headline}${author}. ${body}`);
   } else if (ok.length > 1) {
-    const subjects = ok.map((i) => {
-      const note = i.noteName ? ` (${i.noteName})` : "";
-      return `${i.headline}${note}`;
-    });
     const labels = [...new Set(ok.map((i) => (i.kind === "video" ? "YouTube" : "X")))];
-    parts.push(`I saved ${ok.length} items from ${labels.join(" and ")}: ${subjects.join("; ")}.`);
+    const noteHint = ok.find((i) => i.noteName)?.noteName
+      ? ` from your ${ok.find((i) => i.noteName)!.noteName} note`
+      : "";
+    const listed = ok.slice(0, 4).map((i) => i.headline);
+    const extra = ok.length - listed.length;
+    const tail = extra > 0 ? `; and ${extra} more` : "";
+    parts.push(
+      `I saved ${ok.length} items from ${labels.join(" and ")}${noteHint}: ${listed.join("; ")}${tail}.`,
+    );
   }
 
   for (const f of failed) {

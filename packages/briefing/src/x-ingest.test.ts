@@ -50,6 +50,25 @@ describe("formatXIngestSpeech", () => {
     expect(many).toMatch(/Secret memo could not be ingested because of a paywall/);
   });
 
+  it("caps a long ingest list instead of reading every headline", () => {
+    const items = Array.from({ length: 12 }, (_, i) => ({
+      url: `u${i}`,
+      canonicalUrl: `u${i}`,
+      noteName: "uspto job prep",
+      headline: `Headline ${i}`,
+      status: "ingested" as const,
+    }));
+    const speech = formatXIngestSpeech({
+      dayKey: "2026-08-18",
+      updatedAt: "2026-08-18T12:00:00.000Z",
+      items,
+    });
+    expect(speech).toMatch(/I saved 12 items from X from your uspto job prep note/);
+    expect(speech).toMatch(/Headline 0/);
+    expect(speech).toMatch(/and 8 more/);
+    expect(speech).not.toMatch(/Headline 11/);
+  });
+
   it("names YouTube videos in failure speech", () => {
     const speech = formatXIngestSpeech({
       dayKey: "2026-08-17",
