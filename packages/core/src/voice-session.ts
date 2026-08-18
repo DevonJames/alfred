@@ -1,6 +1,7 @@
 import {
   createId,
   DELEGATE_TASK_TOOL,
+  UPDATE_REMINDER_TOOL,
   type AudioFrame,
   type LatencyMarkName,
   type MultiContextTTSSession,
@@ -17,8 +18,15 @@ import type { BackchannelClassifier, InterruptionArbiter } from "./interruption.
 import { HeuristicBackchannelClassifier, RuleBasedInterruptionArbiter } from "./interruption.js";
 import type { MediaPort } from "./media-port.js";
 import { NullMediaPort } from "./media-port.js";
-import type { AgentRouterPort, MemoryControllerPort, ProviderRegistryPort } from "./ports.js";
+import type {
+  AgentRouterPort,
+  DueReminderSummary,
+  MemoryControllerPort,
+  ProviderRegistryPort,
+  ReminderPort,
+} from "./ports.js";
 import { PromptAssembler } from "./prompt-assembler.js";
+import { resolveReminderMatch } from "./reminder-match.js";
 import type { ResponseLedger } from "./response-ledger.js";
 import type { ConversationStateMachine } from "./state-machine.js";
 import {
@@ -58,6 +66,8 @@ export interface VoiceSessionDeps {
   personaContext?: PersonaContext;
   /** Optional Stage-1 daily briefing offer + play. */
   briefing?: BriefingVoicePort;
+  /** Optional due-reminder complete/dismiss/snooze from conversation. */
+  reminders?: ReminderPort;
   backchannelClassifier?: BackchannelClassifier;
   interruptionArbiter?: InterruptionArbiter;
   /** Injected streaming STT for tests; otherwise opened from registry. */
@@ -560,6 +570,7 @@ export class VoiceSessionController {
       lateAddenda: [],
       agentResults: [],
       availableCapabilities: ["delegate_task"],
+      dueReminders: [],
       existingResponseState: {
         spokenText: "",
         unspokenText: "",
@@ -869,6 +880,8 @@ export class VoiceSessionController {
         const systemInstructions = offerHint
           ? `${this.deps.config.systemInstructions}\n\n${offerHint}`
           : this.deps.config.systemInstructions;
+        const dueReminders = await this.loadDueReminders();
+        const availableCapabilities = this.voiceCapabilities();
         const prompt = this.promptAssembler.assemble({
           systemInstructions,
           currentUserTurn: text,
@@ -878,9 +891,10 @@ export class VoiceSessionController {
           mode: "initial",
           lateAddenda: [],
           agentResults: [],
-          availableCapabilities: ["delegate_task"],
+          availableCapabilities,
+          dueReminders,
         });
-        assistantText = await this.generateCommitted(prompt.messages, responseId);
+        assistantText = await this.generateCommitted(prompt.messages, responseId, dueReminders);
       }
 
       if (appendOffer && this.deps.briefing) {
@@ -943,9 +957,26 @@ export class VoiceSessionController {
     }
   }
 
+  private voiceCapabilities(): string[] {
+    const caps = ["delegate_task"];
+    if (this.deps.reminders) caps.push("update_reminder");
+    return caps;
+  }
+
+  private async loadDueReminders(): Promise<DueReminderSummary[]> {
+    if (!this.deps.reminders) return [];
+    try {
+      return await this.deps.reminders.listDue();
+    } catch (err) {
+      console.warn("[voice] listDue reminders failed:", err);
+      return [];
+    }
+  }
+
   private async generateCommitted(
     messages: { role: "system" | "user" | "assistant" | "tool"; content: string }[],
     responseId: string,
+    dueReminders: DueReminderSummary[] = [],
   ): Promise<string> {
     const llmId =
       this.deps.config.pipeline.llmPriority?.orderedProviderIds[0] ?? "llm.openai.terra";
@@ -953,11 +984,14 @@ export class VoiceSessionController {
     let text = "";
     let first = true;
     let toolCall: { toolName?: string; toolArgs?: Record<string, unknown> } | undefined;
+    const tools = this.deps.reminders
+      ? [DELEGATE_TASK_TOOL, UPDATE_REMINDER_TOOL]
+      : [DELEGATE_TASK_TOOL];
     for await (const chunk of llm.generateStream({
       messages,
       modelPreset: "conversational",
       reasoningEffort: "none",
-      tools: [DELEGATE_TASK_TOOL],
+      tools,
     })) {
       if (chunk.type === "token" && chunk.text) {
         if (first) {
@@ -990,7 +1024,67 @@ export class VoiceSessionController {
         return result.output || result.error || text;
       }
     }
+    if (toolCall?.toolName === "update_reminder" && this.deps.reminders) {
+      const ack = await this.applyReminderUpdate(toolCall.toolArgs ?? {}, dueReminders);
+      const spoken = text.trim();
+      return spoken || ack;
+    }
     return text;
+  }
+
+  private async applyReminderUpdate(
+    args: Record<string, unknown>,
+    dueReminders: DueReminderSummary[],
+  ): Promise<string> {
+    const reminders = this.deps.reminders;
+    if (!reminders) return "I couldn't update that reminder right now.";
+
+    const actionRaw = String(args.action ?? "")
+      .trim()
+      .toLowerCase();
+    if (actionRaw !== "completed" && actionRaw !== "dismissed" && actionRaw !== "snoozed") {
+      return "I need to know whether to complete, dismiss, or snooze that reminder.";
+    }
+
+    const due =
+      dueReminders.length > 0 ? dueReminders : await this.loadDueReminders();
+    const resolved = resolveReminderMatch(due, {
+      recordId: typeof args.recordId === "string" ? args.recordId : null,
+      match: typeof args.match === "string" ? args.match : null,
+    });
+
+    if (resolved.kind === "none") {
+      return "I don't see a matching due reminder to update.";
+    }
+    if (resolved.kind === "ambiguous") {
+      const names = resolved.candidates
+        .slice(0, 4)
+        .map((c) => c.summary)
+        .join("; ");
+      return `Which reminder should I update — ${names}?`;
+    }
+
+    const target = resolved.reminder;
+    const snoozedUntil =
+      typeof args.snoozedUntil === "string" ? args.snoozedUntil.trim() : undefined;
+    if (actionRaw === "snoozed" && !snoozedUntil) {
+      return "When should I remind you again?";
+    }
+
+    try {
+      await reminders.setStatus(target.recordId, actionRaw, snoozedUntil);
+      await reminders.invalidateBriefingDay();
+      if (actionRaw === "completed") {
+        return `Got it — I've cleared the reminder about ${target.summary}.`;
+      }
+      if (actionRaw === "dismissed") {
+        return `Okay — I won't keep reminding you about ${target.summary}.`;
+      }
+      return `Okay — I'll snooze the reminder about ${target.summary} until ${snoozedUntil}.`;
+    } catch (err) {
+      console.error("[voice] update_reminder failed:", err);
+      return "I couldn't update that reminder just now.";
+    }
   }
 
   private async speakWithMultiContext(

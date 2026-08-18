@@ -159,6 +159,8 @@ pnpm memory -- ingest-x https://youtu.be/dQw4w9WgXcQ
 
 Voice: “ingest my X notes” starts the batch in the background; “go pull this X link …” or “go pull this YouTube link …” fetches one URL and speaks the result. With `pnpm desktop` running, the same batch also runs on a schedule (`ALFRED_X_INGEST_SCHEDULE`, default `06:00` local). Optional env: `ALFRED_BROWSER_USER_DATA_DIR`, `ALFRED_BROWSER_CHANNEL` (`chrome` / `brave` / `chromium`), `ALFRED_X_CUA` (`fallback` / `always` / `off`), `ALFRED_YTDLP_PATH`. The Mac generally needs to be awake (and usually unlocked) for Notes scripting.
 
+**Reminders in conversation:** with `pnpm voice` running, Alfred can complete, dismiss, or snooze due daily-brief reminders in natural language (e.g. “I signed the offer letter, thanks”). That updates the OIP reminder status and invalidates today’s briefing cache so the next brief won’t repeat it. HTTP `/api/memory/due` and `/api/memory/:id/reminder/status` remain available for debugging.
+
 **Live recall check:** with `pnpm voice` running, say “My name is Devon.” After the reply, stop the agent, start `pnpm voice` again, and ask “What’s my name?” — it should recall from the JSONL file. Confirm startup logs show `Memory: memory.local path=...` and `Persona: .../SOUL=yes`.
 
 ## Documentation

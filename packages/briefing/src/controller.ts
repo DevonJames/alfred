@@ -6,6 +6,7 @@ import type { GreetingLlm } from "./greeting.js";
 import { detectBriefingIntent, type BriefingIntentKind } from "./intent.js";
 import { BriefingStateStore, isSoftOfferEligible } from "./state.js";
 import type { BriefingPayload } from "./types.js";
+import { BriefingCache } from "./cache.js";
 
 export const BRIEFING_OFFER_CLOSER = "Would you like the daily briefing now?";
 export const BRIEFING_DECLINE_ACK = "Alright.";
@@ -102,6 +103,12 @@ export class BriefingController {
       markSurfaced: opts.markSurfaced,
       now: opts.now,
     });
+  }
+
+  /** Drop today's cached briefing so the next play regenerates without stale reminders. */
+  async invalidateTodayCache(now = new Date()): Promise<void> {
+    const dayKey = getBriefingDayKey(now, this.config.timezone, this.config.dayStart);
+    await new BriefingCache(this.config.cacheDir).invalidate(dayKey);
   }
 
   /**

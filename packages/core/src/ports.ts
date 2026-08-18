@@ -24,6 +24,31 @@ export interface AgentRouterPort {
   delegate(request: AgentDelegationRequest): Promise<AgentDelegationResult>;
 }
 
+export type ReminderStatusAction =
+  | "completed"
+  | "dismissed"
+  | "snoozed"
+  | "pending"
+  | "surfaced";
+
+export interface DueReminderSummary {
+  recordId: string;
+  summary: string;
+  remindAt: string | null;
+  status: string | null;
+}
+
+/** Conversational update of OIP due reminders (briefing list). */
+export interface ReminderPort {
+  listDue(opts?: { now?: Date }): Promise<DueReminderSummary[]>;
+  setStatus(
+    recordId: string,
+    status: ReminderStatusAction,
+    snoozedUntil?: string,
+  ): Promise<void>;
+  invalidateBriefingDay(now?: Date): Promise<void>;
+}
+
 export interface ProviderRegistryPort {
   getLlm(id: string): LLMProvider;
   getStt(id: string): STTProvider;

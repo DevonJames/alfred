@@ -26,8 +26,35 @@ export class PromptAssembler {
       systemParts.push(
         `Available high-level capabilities: ${input.availableCapabilities.join(", ")}.`,
       );
+      const caps = new Set(input.availableCapabilities);
+      const guidance: string[] = [];
+      if (caps.has("delegate_task")) {
+        guidance.push(
+          "For external harness actions (email, coding, X ingest, browser, etc.), use delegate_task rather than inventing harness-specific tools.",
+        );
+      }
+      if (caps.has("update_reminder")) {
+        guidance.push(
+          "When the user indicates a due reminder is done, already handled, should stop, or should be snoozed, call update_reminder (including casual phrasing). Do not invent a different tool for reminders.",
+        );
+      }
+      if (guidance.length) {
+        systemParts.push(guidance.join(" "));
+      }
+    }
+
+    if ((input.dueReminders?.length ?? 0) > 0) {
+      notes.push("due_reminders_attached");
+      const block = input.dueReminders!
+        .map((r, i) => {
+          const when = r.remindAt ? ` remindAt=${r.remindAt}` : "";
+          const status = r.status ? ` status=${r.status}` : "";
+          return `[${i + 1}] id=${r.recordId}${when}${status} — ${r.summary}`;
+        })
+        .join("\n");
       systemParts.push(
-        "To perform external actions, use delegate_task rather than inventing harness-specific tools.",
+        "Due reminders for the daily briefing (call update_reminder when the user indicates done/stop/snooze; do not claim you cleared one without calling the tool):\n" +
+          block,
       );
     }
 

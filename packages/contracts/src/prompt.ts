@@ -52,6 +52,17 @@ export const PromptAssemblyInputSchema = z.object({
     .optional(),
   agentResults: z.array(AgentDelegationResultSchema).default([]),
   availableCapabilities: z.array(z.string()).default(["delegate_task"]),
+  /** Due briefing reminders the model may complete/dismiss/snooze via update_reminder. */
+  dueReminders: z
+    .array(
+      z.object({
+        recordId: z.string(),
+        summary: z.string(),
+        remindAt: z.string().nullable().optional(),
+        status: z.string().nullable().optional(),
+      }),
+    )
+    .optional(),
   mode: PromptModeSchema.default("initial"),
 });
 export type PromptAssemblyInput = z.infer<typeof PromptAssemblyInputSchema>;

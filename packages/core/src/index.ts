@@ -7,6 +7,7 @@ export * from "./observability.js";
 export * from "./pipeline.js";
 export * from "./ports.js";
 export * from "./prompt-assembler.js";
+export * from "./reminder-match.js";
 export * from "./response-ledger.js";
 export * from "./secrets.js";
 export * from "./session.js";

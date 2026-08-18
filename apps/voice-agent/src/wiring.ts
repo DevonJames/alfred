@@ -51,6 +51,7 @@ import {
   RECOMMENDED_LLM_PRIORITY,
 } from "@alfred/provider-openai";
 import { ProviderRegistry } from "@alfred/providers";
+import { createOipReminderPort } from "./reminder-port.js";
 
 const failoverSettings = {
   connectionTimeoutMs: 5_000,
@@ -199,6 +200,7 @@ export async function createCascadedVoiceRuntime(opts?: {
     memory: oipMemory,
     llm: greetingLlm,
   });
+  const reminders = createOipReminderPort(oipMemory, briefing);
 
   const voice = new VoiceSessionController({
     sessionId,
@@ -214,6 +216,7 @@ export async function createCascadedVoiceRuntime(opts?: {
     media,
     personaContext: persona,
     briefing,
+    reminders,
   });
 
   return {
