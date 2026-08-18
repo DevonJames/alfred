@@ -7,6 +7,8 @@ export const SCHEMA_ORG = {
   Organization: "https://schema.org/Organization",
   Event: "https://schema.org/Event",
   CreativeWork: "https://schema.org/CreativeWork",
+  SocialMediaPosting: "https://schema.org/SocialMediaPosting",
+  Article: "https://schema.org/Article",
   Thing: "https://schema.org/Thing",
 } as const;
 

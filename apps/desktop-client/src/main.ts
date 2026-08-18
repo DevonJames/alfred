@@ -17,6 +17,7 @@ import { readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { startCloudConnect, stopCloudConnect } from "./lib/cloud-connect.js";
+import { startXIngestScheduler } from "./lib/x-ingest-schedule.js";
 import { apiMemoryRouter } from "./routes/api-memory.js";
 import { briefingRouter } from "./routes/briefing.js";
 import { connectRouter } from "./routes/connect.js";
@@ -115,8 +116,11 @@ setTimeout(() => {
   });
 }, 3_000);
 
+const stopXIngest = startXIngestScheduler();
+
 function shutdown(signal: string) {
   console.log(`\nShutting down (${signal})…`);
+  stopXIngest();
   stopCloudConnect();
   server.close(() => {
     process.exit(0);

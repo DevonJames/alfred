@@ -29,6 +29,9 @@ importers:
       '@alfred/briefing':
         specifier: workspace:^
         version: link:../../packages/briefing
+      '@alfred/browser':
+        specifier: workspace:^
+        version: link:../../packages/browser
       '@alfred/contracts':
         specifier: workspace:^
         version: link:../../packages/contracts
@@ -118,6 +121,9 @@ importers:
       '@alfred/briefing':
         specifier: workspace:*
         version: link:../../packages/briefing
+      '@alfred/browser':
+        specifier: workspace:*
+        version: link:../../packages/browser
       '@alfred/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
@@ -186,6 +192,9 @@ importers:
       '@alfred/core':
         specifier: workspace:*
         version: link:../core
+      '@alfred/memory':
+        specifier: workspace:*
+        version: link:../memory
     devDependencies:
       typescript:
         specifier: ^5.7.2
@@ -203,6 +212,22 @@ importers:
       vitest:
         specifier: ^2.1.8
         version: 2.1.9(@types/node@22.20.1)
+
+  packages/browser:
+    dependencies:
+      '@alfred/memory':
+        specifier: workspace:*
+        version: link:../memory
+      openai:
+        specifier: ^4.77.0
+        version: 4.104.0(ws@8.21.2)(zod@3.25.76)
+      playwright-core:
+        specifier: ^1.49.0
+        version: 1.62.1
+    devDependencies:
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
 
   packages/contracts:
     dependencies:
@@ -1410,6 +1435,11 @@ packages:
     resolution: {integrity: sha512-8OEwKp5juEvb/MjpIc4hjqfgCNysrS94RIOMXYvpYCdm/jglrKEiAYmiumbmGhCvs+IcInsphYDFwqrjr7398w==}
     hasBin: true
 
+  playwright-core@1.62.1:
+    resolution: {integrity: sha512-wPYSwEBJY9GHraISXqyqtx0na0LpO3XEX7jNDhntbex7tzUS7kLnZsOlFruFJB4Hi/rhDMjXGqHewDZ68nYZVw==}
+    engines: {node: '>=20'}
+    hasBin: true
+
   pngjs@5.0.0:
     resolution: {integrity: sha512-40QW5YalBNfQo5yRYmiw7Yz6TKKVr3h6970B2YE+3fQpsWcrbj1PzJgxeJ19DRQjhMbKPIuMY8rFaXc8moolVw==}
     engines: {node: '>=10.13.0'}
@@ -2553,6 +2583,8 @@ snapshots:
       safe-stable-stringify: 2.5.0
       sonic-boom: 4.2.1
       thread-stream: 3.2.0
+
+  playwright-core@1.62.1: {}
 
   pngjs@5.0.0: {}
 

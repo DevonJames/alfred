@@ -10,4 +10,5 @@ export * from "./local-provider.js";
 export * from "./oip-local/index.js";
 export * from "./persona.js";
 export * from "./persona-templates.js";
+export * from "./x-ingest/index.js";
 

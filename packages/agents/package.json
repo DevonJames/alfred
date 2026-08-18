@@ -19,7 +19,8 @@
   },
   "dependencies": {
     "@alfred/contracts": "workspace:*",
-    "@alfred/core": "workspace:*"
+    "@alfred/core": "workspace:*",
+    "@alfred/memory": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.7.2"

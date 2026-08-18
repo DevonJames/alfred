@@ -3,6 +3,23 @@ import type { LaunchInfo } from "./launches.js";
 import type { MarketQuote } from "./markets.js";
 import type { WeatherData } from "./weather.js";
 
+export interface XIngestBriefingItem {
+  url: string;
+  canonicalUrl: string;
+  noteName?: string;
+  headline: string;
+  author?: string;
+  kind?: string;
+  status: "ingested" | "failed";
+  error?: string;
+  summary?: string;
+}
+
+export interface XIngestBriefing {
+  items: XIngestBriefingItem[];
+  speech: string | null;
+}
+
 export interface BriefingData {
   greeting: string;
   date: string;
@@ -23,6 +40,8 @@ export interface BriefingData {
   marketsText: string | null;
   news: string[];
   newsText: string | null;
+  xIngest: XIngestBriefing | null;
+  xIngestText: string | null;
   reminders: DueReminder[];
   remindersText: string | null;
   generated: string;

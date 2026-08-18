@@ -1,11 +1,13 @@
 import {
   createId,
+  DELEGATE_TASK_TOOL,
   type AudioFrame,
   type LatencyMarkName,
   type MultiContextTTSSession,
   type PersonaContext,
   type SttTurnEvent,
   type StreamingSTTSession,
+  type TaskCategory,
   type UserConfiguration,
   type VadSignal,
 } from "@alfred/contracts";
@@ -27,6 +29,7 @@ import {
   looksIncompleteInterrupt,
 } from "./echo-filter.js";
 import { SelfVoiceGate } from "./self-voice.js";
+import { looksLikeXIngestTask } from "./x-ingest-intent.js";
 
 /** Structural port for Daily Briefing (implemented by @alfred/briefing). */
 export type BriefingVoiceDecision =
@@ -763,6 +766,75 @@ export class VoiceSessionController {
       return;
     }
 
+    if (looksLikeXIngestTask(text)) {
+      try {
+        this.provisionalAbort?.abort({ reason: "x_ingest_short_circuit" });
+        const responseId = this.deps.responseLedger.beginResponse(this.deps.sessionId, turnId);
+        this.provisionalResponseId = responseId;
+        const isUrl = /https?:\/\/(?:www\.)?(?:x\.com|twitter\.com)\//i.test(text);
+        let assistantText: string;
+        if (!isUrl) {
+          assistantText =
+            "I'll ingest your X notes into memory now. New items will show up in today's briefing.";
+          void this.deps.agents
+            .delegate({
+              correlationId: createId("corr"),
+              taskDescription: text,
+              taskCategory: "research",
+              conversationContext: text,
+              permissions: ["agent.delegate"],
+              requestedOutputFormat: "text",
+              confirmationRequired: false,
+              timeoutMs: 600_000,
+            })
+            .catch((err) => console.error("[voice] background X ingest failed:", err));
+        } else {
+          const result = await this.deps.agents.delegate({
+            correlationId: createId("corr"),
+            taskDescription: text,
+            taskCategory: "research",
+            conversationContext: text,
+            permissions: ["agent.delegate"],
+            requestedOutputFormat: "text",
+            confirmationRequired: false,
+            timeoutMs: 600_000,
+          });
+          assistantText =
+            result.status === "failed"
+              ? result.error || result.output || "I couldn't ingest that X link."
+              : result.output || "Saved that X link to memory.";
+        }
+        if (this.pendingUserText || this.bargeInListening) {
+          console.log("[voice] skip X ingest speak; barge-in pending");
+          return;
+        }
+        await this.deps.responseLedger.commit(responseId, assistantText);
+        this.activeResponseId = responseId;
+        await this.speakWithMultiContext(responseId, assistantText, "primary");
+        await this.deps.memory.commitTurn({
+          profileId: this.deps.profileId,
+          sessionId: this.deps.sessionId,
+          turnId: createId("turn"),
+          role: "assistant",
+          text: assistantText,
+          metadata: { responseId, xIngest: true },
+        });
+      } catch (err) {
+        console.error("[voice] X ingest failed:", err);
+      } finally {
+        this.turnInFlight = false;
+        const pending = this.pendingUserText;
+        this.pendingUserText = undefined;
+        if (pending) {
+          this.bargeInListening = false;
+          this.bargeInDraft = undefined;
+          await this.publishUserTranscriptUi(pending, "final");
+          this.commitEndOfTurn(pending);
+        }
+      }
+      return;
+    }
+
     const memory = await this.deps.memory.retrieve({
       text,
       profileId: this.deps.profileId,
@@ -880,10 +952,12 @@ export class VoiceSessionController {
     const llm = this.deps.providers.getLlm(llmId);
     let text = "";
     let first = true;
+    let toolCall: { toolName?: string; toolArgs?: Record<string, unknown> } | undefined;
     for await (const chunk of llm.generateStream({
       messages,
       modelPreset: "conversational",
       reasoningEffort: "none",
+      tools: [DELEGATE_TASK_TOOL],
     })) {
       if (chunk.type === "token" && chunk.text) {
         if (first) {
@@ -892,6 +966,28 @@ export class VoiceSessionController {
         }
         text += chunk.text;
         await this.deps.responseLedger.appendProposed(responseId, chunk.text);
+      }
+      if (chunk.type === "tool_call") {
+        toolCall = { toolName: chunk.toolName, toolArgs: chunk.toolArgs };
+      }
+    }
+    if (toolCall?.toolName === "delegate_task") {
+      const category = String(toolCall.toolArgs?.category ?? "research") as TaskCategory;
+      const description = String(
+        toolCall.toolArgs?.taskDescription ?? toolCall.toolArgs?.description ?? "",
+      );
+      if (description) {
+        const result = await this.deps.agents.delegate({
+          correlationId: createId("corr"),
+          taskDescription: description,
+          taskCategory: category,
+          conversationContext: messages.map((m) => `${m.role}: ${m.content}`).join("\n"),
+          permissions: ["agent.delegate"],
+          requestedOutputFormat: "text",
+          confirmationRequired: false,
+          timeoutMs: 600_000,
+        });
+        return result.output || result.error || text;
       }
     }
     return text;

@@ -15,6 +15,12 @@
  *   pnpm memory -- oip-import <file>
  *   pnpm memory -- erase --yes [--all]
  *   pnpm memory -- ingest-knowledge <file.json|.md> [--dry-run]
+ *   pnpm memory -- ingest-x-source add --folder "Folder" --note "Note"
+ *   pnpm memory -- ingest-x-source list
+ *   pnpm memory -- ingest-x-source remove --note "Note"
+ *   pnpm memory -- ingest-x-login
+ *   pnpm memory -- ingest-x [--note Name] [--dry-run]
+ *   pnpm memory -- ingest-x <url>
  *   pnpm memory -- seed-reminder [text...]
  */
 import { config as loadEnv } from "dotenv";
@@ -24,6 +30,7 @@ import path, { resolve } from "node:path";
 import { seedDueReminder } from "@alfred/briefing";
 import type { CanonicalMemoryRecord } from "@alfred/contracts";
 import {
+  addXSource,
   cleanupUserMd,
   dedupeUserMd,
   defaultMemoryPath,
@@ -34,14 +41,30 @@ import {
   eraseOipMemory,
   getItemKind,
   ingestKnowledgeDocument,
+  ingestXNotes,
+  ingestXUrl,
+  loadXSources,
   LocalFileMemoryProvider,
   mergeUserMd,
   OipLocalMemoryProvider,
   PERSONA_FILES,
   planIngestExport,
+  readAppleNote,
+  removeXSource,
   resolveRepoRoot,
   USER_MD_MAX_CHARS,
 } from "@alfred/memory";
+
+function flagValue(args: string[], name: string): string | undefined {
+  const idx = args.indexOf(name);
+  if (idx >= 0 && args[idx + 1] && !args[idx + 1]!.startsWith("--")) return args[idx + 1];
+  return undefined;
+}
+
+async function captureAdapter() {
+  const { createPlaywrightCaptureAdapter } = await import("@alfred/browser");
+  return createPlaywrightCaptureAdapter();
+}
 
 function resolveInputPath(src: string): string {
   if (path.isAbsolute(src)) return src;
@@ -443,6 +466,89 @@ async function main(): Promise<void> {
     return;
   }
 
+  if (cmd === "ingest-x-source") {
+    const sub = args[1];
+    if (sub === "list") {
+      const sources = await loadXSources(profileId);
+      if (!sources.length) {
+        console.log("No X ingest notes registered.");
+        return;
+      }
+      for (const s of sources) {
+        console.log(`  ${s.id}: folder="${s.folder}" note="${s.note}" archive="${s.archiveNote}"`);
+      }
+      return;
+    }
+    if (sub === "remove") {
+      const note = flagValue(args, "--note") ?? args[2];
+      if (!note) {
+        console.error('Usage: pnpm memory -- ingest-x-source remove --note "Note title"');
+        process.exitCode = 1;
+        return;
+      }
+      const removed = await removeXSource(profileId, note);
+      if (!removed) {
+        console.error(`No source named "${note}"`);
+        process.exitCode = 1;
+        return;
+      }
+      console.log(`Removed ${removed.folder} / ${removed.note}`);
+      return;
+    }
+    if (sub === "add") {
+      const folder = flagValue(args, "--folder");
+      const note = flagValue(args, "--note");
+      if (!folder || !note) {
+        console.error(
+          'Usage: pnpm memory -- ingest-x-source add --folder "Folder" --note "Note title"',
+        );
+        process.exitCode = 1;
+        return;
+      }
+      try {
+        await readAppleNote(folder, note);
+      } catch (err) {
+        console.error(err instanceof Error ? err.message : String(err));
+        process.exitCode = 1;
+        return;
+      }
+      const added = await addXSource(profileId, { folder, note });
+      console.log(`Registered ${added.folder} / ${added.note} (id=${added.id})`);
+      console.log(`Archive note: ${added.archiveNote}`);
+      return;
+    }
+    console.error(
+      'Usage: pnpm memory -- ingest-x-source add|list|remove --folder "…" --note "…"',
+    );
+    process.exitCode = 1;
+    return;
+  }
+
+  if (cmd === "ingest-x-login") {
+    const { openXLoginBrowser } = await import("@alfred/browser");
+    await openXLoginBrowser();
+    return;
+  }
+
+  if (cmd === "ingest-x") {
+    const dryRun = args.includes("--dry-run");
+    const note = flagValue(args, "--note");
+    const positional = args.slice(1).find((a) => !a.startsWith("--") && a !== note);
+    const capture = await captureAdapter();
+    if (positional && /^https?:\/\//i.test(positional)) {
+      const item = await ingestXUrl({ url: positional, profileId, capture });
+      console.log(`${item.status}: ${item.headline ?? item.url}`);
+      if (item.error) console.log(`  error: ${item.error}`);
+      return;
+    }
+    const result = await ingestXNotes({ profileId, note, capture, dryRun });
+    console.log(`Sources: ${result.sources.map((s) => s.note).join(", ") || "(none)"}`);
+    for (const p of result.processed) {
+      console.log(`  [${p.status}] ${p.headline ?? p.url}${p.error ? ` (${p.error})` : ""}`);
+    }
+    return;
+  }
+
   if (cmd === "seed-reminder") {
     const text =
       args
@@ -463,7 +569,7 @@ async function main(): Promise<void> {
 
   console.error(`Unknown command: ${cmd}`);
   console.error(
-    "Usage: pnpm memory -- inspect|persona|export|import|ingest-export|ingest-knowledge|dedupe-user|cleanup-user|erase|oip-inspect|oip-verify|oip-rebuild|oip-export|oip-import|seed-reminder",
+    "Usage: pnpm memory -- inspect|persona|export|import|ingest-export|ingest-knowledge|ingest-x-source|ingest-x-login|ingest-x|dedupe-user|cleanup-user|erase|oip-inspect|oip-verify|oip-rebuild|oip-export|oip-import|seed-reminder",
   );
   process.exitCode = 1;
 }

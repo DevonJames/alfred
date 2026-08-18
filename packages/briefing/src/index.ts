@@ -14,11 +14,13 @@ export {
   localDateTimeParts,
   timeOfDayGreeting,
 } from "./day.js";
+export { BriefingCache } from "./cache.js";
 export { generateBriefing } from "./generate.js";
 export { formatBriefingAsMarkdown, formatBriefingForSpeech } from "./format.js";
 export { detectBriefingIntent, type BriefingIntentKind } from "./intent.js";
 export { BriefingStateStore, isSoftOfferEligible, type BriefingOfferState } from "./state.js";
-export type { BriefingData, BriefingPayload } from "./types.js";
+export type { BriefingData, BriefingPayload, XIngestBriefing, XIngestBriefingItem } from "./types.js";
+export { formatXIngestMarkdown, formatXIngestSpeech, toXIngestBriefing } from "./x-ingest.js";
 export { postProcessGreeting, type GreetingLlm } from "./greeting.js";
 export { seedDueReminder } from "./seed.js";
 export {

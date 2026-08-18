@@ -337,6 +337,47 @@ export class SqliteMemoryIndex {
       .all(recordType, limit) as RecordRow[];
   }
 
+  findBySearchSubstring(substr: string, limit = 40): RecordRow[] {
+    const db = this.open();
+    const q = substr.trim();
+    if (!q) return [];
+    return db
+      .prepare(
+        `SELECT * FROM records
+         WHERE LOWER(search_text) LIKE ? OR LOWER(name) LIKE ?
+         LIMIT ?`,
+      )
+      .all(`%${q.toLowerCase()}%`, `%${q.toLowerCase()}%`, limit) as RecordRow[];
+  }
+
+  listByLearnedAtRange(startIso: string, endIso: string, limit = 80): RecordRow[] {
+    const db = this.open();
+    return db
+      .prepare(
+        `SELECT rec.* FROM records rec
+         JOIN temporal t ON t.record_id = rec.id
+         WHERE t.learned_at IS NOT NULL
+           AND t.learned_at >= ?
+           AND t.learned_at <= ?
+         LIMIT ?`,
+      )
+      .all(startIso, endIso, limit) as RecordRow[];
+  }
+
+  listByValidFromRange(startIso: string, endIso: string, limit = 80): RecordRow[] {
+    const db = this.open();
+    return db
+      .prepare(
+        `SELECT rec.* FROM records rec
+         JOIN temporal t ON t.record_id = rec.id
+         WHERE t.valid_from IS NOT NULL
+           AND t.valid_from >= ?
+           AND t.valid_from <= ?
+         LIMIT ?`,
+      )
+      .all(startIso, endIso, limit) as RecordRow[];
+  }
+
   listAllRecords(limit = 5000): RecordRow[] {
     const db = this.open();
     return db
@@ -443,12 +484,24 @@ function buildSearchText(r: MemoryRevision): string {
   if (r.name) parts.push(r.name);
   if (r.text) parts.push(r.text);
   if (typeof r.schema?.name === "string") parts.push(String(r.schema.name));
+  if (typeof r.schema?.url === "string") parts.push(String(r.schema.url));
   if (Array.isArray(r.schema?.alternateName)) {
     parts.push(...r.schema.alternateName.map(String));
   }
   if (r.predicate) parts.push(r.predicate);
   if (r.object != null && typeof r.object !== "object") parts.push(String(r.object));
   if (r.type) parts.push(r.type);
+  if (r.schemaType) parts.push(r.schemaType);
+  const prov = r.provenance ?? {};
+  if (typeof prov.sourceType === "string") {
+    parts.push(prov.sourceType.replace(/_/g, " "));
+    if (prov.sourceType === "x_com") parts.push("x.com", "twitter", "X");
+  }
+  if (typeof prov.noteName === "string") parts.push(prov.noteName, "note");
+  if (typeof prov.noteFolder === "string") parts.push(prov.noteFolder);
+  if (Array.isArray(prov.noteNames)) parts.push(...prov.noteNames.map(String));
+  if (typeof prov.author === "string") parts.push(prov.author);
+  if (typeof prov.source === "string") parts.push(prov.source);
   return parts.join(" ");
 }
 

@@ -74,6 +74,12 @@ export class OpenAiResponsesLLMProvider implements LLMProvider {
 
     try {
       // Responses API streaming — shape may evolve; keep translation local.
+      const tools = request.tools?.map((t) => ({
+        type: "function",
+        name: t.name,
+        description: t.description,
+        parameters: t.parameters ?? { type: "object", properties: {} },
+      }));
       const stream = await (
         this.client as unknown as {
           responses: {
@@ -91,6 +97,7 @@ export class OpenAiResponsesLLMProvider implements LLMProvider {
         stream: true,
         reasoning: { effort },
         previous_response_id: request.previousResponseId,
+        ...(tools?.length ? { tools } : {}),
       });
 
       for await (const event of stream) {
@@ -130,6 +137,25 @@ export function mapResponsesEvent(event: Record<string, unknown>): LlmStreamChun
   ) {
     const text = (event.delta as string | undefined) ?? (event as { text?: string }).text ?? "";
     if (text) return { type: "token", text };
+  }
+  if (type === "response.output_item.done" || type === "response.function_call_arguments.done") {
+    const item = (event.item ?? event) as Record<string, unknown>;
+    const itemType = String(item.type ?? "");
+    const name = String(item.name ?? "");
+    const argsRaw = item.arguments ?? item.parsed_arguments;
+    if (itemType === "function_call" || name) {
+      let toolArgs: Record<string, unknown> = {};
+      if (typeof argsRaw === "string") {
+        try {
+          toolArgs = JSON.parse(argsRaw) as Record<string, unknown>;
+        } catch {
+          toolArgs = { raw: argsRaw };
+        }
+      } else if (argsRaw && typeof argsRaw === "object") {
+        toolArgs = argsRaw as Record<string, unknown>;
+      }
+      if (name) return { type: "tool_call", toolName: name, toolArgs };
+    }
   }
   if (type === "response.completed" || type === "response.done") {
     return { type: "done" };

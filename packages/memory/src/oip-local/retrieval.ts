@@ -1,4 +1,5 @@
 import type { MemoryQuery, NormalizedMemoryItem } from "@alfred/contracts";
+import { parseLearnedAtWindow } from "../x-ingest/intent.js";
 import { displayLabel } from "./schema-org.js";
 import type { PackageStore } from "./package-store.js";
 import type { MemoryRevision } from "./schemas.js";
@@ -84,6 +85,33 @@ export async function retrieveMemories(
     }
   }
 
+  if (isXSourceQuery(query.text)) {
+    for (const row of deps.sqlite.findBySearchSubstring("x.com", 40)) {
+      bump(row.id, (scores.get(row.id) ?? 0) + 0.25);
+    }
+    for (const row of deps.sqlite.findBySearchSubstring("twitter", 40)) {
+      bump(row.id, (scores.get(row.id) ?? 0) + 0.2);
+    }
+  }
+
+  const noteHint = extractNoteHint(query.text);
+  if (noteHint) {
+    for (const row of deps.sqlite.findBySearchSubstring(noteHint, 40)) {
+      bump(row.id, (scores.get(row.id) ?? 0) + 0.3);
+    }
+  }
+
+  const window = parseLearnedAtWindow(query.text);
+  if (window) {
+    const rows =
+      window.field === "published"
+        ? deps.sqlite.listByValidFromRange(window.start.toISOString(), window.end.toISOString())
+        : deps.sqlite.listByLearnedAtRange(window.start.toISOString(), window.end.toISOString());
+    for (const row of rows) {
+      bump(row.id, (scores.get(row.id) ?? 0) + 0.35);
+    }
+  }
+
   // Structured fallback: all entities matching wine-ish tokens
   if (/\bwine\b/i.test(query.text)) {
     for (const row of deps.sqlite.listByType("Entity", 50)) {
@@ -134,12 +162,29 @@ export function toNormalized(
 
 function formatContent(rev: MemoryRevision): string {
   const label = displayLabel(rev);
+  const meta: string[] = [];
+  const srcType = rev.provenance?.sourceType;
+  if (srcType === "x_com") meta.push("source=X.com");
+  const noteName = rev.provenance?.noteName;
+  if (typeof noteName === "string" && noteName) meta.push(`note=${noteName}`);
+  if (rev.validFrom) meta.push(`published=${rev.validFrom}`);
+  if (rev.learnedAt) meta.push(`learned=${rev.learnedAt}`);
+  const suffix = meta.length ? ` [${meta.join("; ")}]` : "";
   if (rev.type === "Assertion" && rev.subject && rev.predicate) {
-    return `${rev.predicate}: ${label || String(rev.object ?? "")} (${rev.subject})`;
+    return `${rev.predicate}: ${label || String(rev.object ?? "")} (${rev.subject})${suffix}`;
   }
-  if (rev.type === "Observation" && rev.text) return rev.text;
-  if (label) return `${rev.type}: ${label}`;
-  return `${rev.type} ${rev.id}`;
+  if (rev.type === "Observation" && rev.text) return `${rev.text}${suffix}`;
+  if (label) return `${rev.type}: ${label}${suffix}`;
+  return `${rev.type} ${rev.id}${suffix}`;
+}
+
+function isXSourceQuery(text: string): boolean {
+  return /\bon x\b|\bx\.com\b|\btwitter\b|\bx article\b|\bx post\b|\bx thread\b/i.test(text);
+}
+
+function extractNoteHint(text: string): string | undefined {
+  const m = text.match(/\b(?:my|the)\s+([a-z][a-z0-9 _-]{1,40})\s+note\b/i);
+  return m?.[1]?.trim();
 }
 
 function extractProperNames(text: string): string[] {

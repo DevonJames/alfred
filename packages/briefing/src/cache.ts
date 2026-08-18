@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { BriefingPayload } from "./types.js";
 
@@ -21,5 +21,13 @@ export class BriefingCache {
   async set(dayKey: string, payload: BriefingPayload): Promise<void> {
     await mkdir(this.dir, { recursive: true });
     await writeFile(this.fileFor(dayKey), `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+  }
+
+  async invalidate(dayKey: string): Promise<void> {
+    try {
+      await unlink(this.fileFor(dayKey));
+    } catch {
+      /* missing is fine */
+    }
   }
 }

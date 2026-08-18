@@ -30,7 +30,7 @@ X-Cloud-Token: Bearer <alfred_cloud_token>   # REQUIRED only when alfred_server_
 
 `GET /api/token` remains unauthenticated for the local Mac `/voice/` UI. **iOS must use `/api/session/token`** (device bearer required). Memory and conversation APIs also require the device bearer.
 
-**Talk audio:** after minting a LiveKit token, the phone joins the room. The Mac must also run `pnpm voice` so `alfred-agent` is in the room (desktop alone does not run STT→LLM→TTS).
+**Talk audio:** after minting a LiveKit token, the phone joins the room with the LiveKit iOS/RN SDK. The Mac must also run `pnpm voice` so `alfred-agent` is in the room (desktop alone does not run STT→LLM→TTS). Full voice implementation guide: [ios-livekit-voice.md](./ios-livekit-voice.md).
 
 ---
 
@@ -749,6 +749,9 @@ Common bug: putting cloud JWT in `Authorization` for relay API calls and then be
 | `POST` | `/api/memory` | device bearer | Remember text / multipart artifact |
 | `POST` | `/api/memory/search` | device bearer | Hybrid search |
 | `POST` | `/api/memory/ask` | device bearer | Ask + optional synthesis |
+| `GET` | `/api/memory/due` | device bearer | Due reminders (`id` / `recordId` / `dueAt` / `remindAt`) |
+| `POST` | `/api/memory/:id/reminder/status` | device bearer | `completed` / `dismissed` / `snoozed` / … |
+| `POST` | `/api/memory/:id/reminder/surfaced` | device bearer | Mark surfaced |
 | `GET` | `/api/token` | none | Local `/voice/` UI only |
 
 After claim + discovery + pair, smoke test from the phone:

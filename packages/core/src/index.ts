@@ -25,3 +25,4 @@ export {
 } from "./echo-filter.js";
 export * from "./self-voice.js";
 export * from "./voice-session.js";
+export { looksLikeXIngestTask } from "./x-ingest-intent.js";

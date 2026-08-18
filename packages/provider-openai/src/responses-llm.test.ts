@@ -17,6 +17,23 @@ describe("OpenAI Responses adapter helpers", () => {
     });
   });
 
+  it("maps function call items to tool_call chunks", () => {
+    expect(
+      mapResponsesEvent({
+        type: "response.output_item.done",
+        item: {
+          type: "function_call",
+          name: "delegate_task",
+          arguments: '{"category":"research","taskDescription":"ingest my X notes"}',
+        },
+      }),
+    ).toEqual({
+      type: "tool_call",
+      toolName: "delegate_task",
+      toolArgs: { category: "research", taskDescription: "ingest my X notes" },
+    });
+  });
+
   it("maps text delta events to tokens", () => {
     expect(mapResponsesEvent({ type: "response.output_text.delta", delta: "Hi" })).toEqual({
       type: "token",

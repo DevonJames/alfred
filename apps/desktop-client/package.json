@@ -13,6 +13,7 @@
   "dependencies": {
     "@alfred/agents": "workspace:^",
     "@alfred/briefing": "workspace:^",
+    "@alfred/browser": "workspace:^",
     "@alfred/contracts": "workspace:^",
     "@alfred/core": "workspace:^",
     "@alfred/livekit": "workspace:^",

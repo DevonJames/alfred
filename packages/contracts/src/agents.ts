@@ -68,6 +68,34 @@ export interface AgentHarness {
   execute(request: AgentDelegationRequest): Promise<AgentDelegationResult>;
 }
 
+export const DELEGATE_TASK_TOOL = {
+  name: "delegate_task",
+  description:
+    "Delegate an external action such as ingesting X.com links from Apple Notes or fetching a single X URL into memory.",
+  parameters: {
+    type: "object",
+    properties: {
+      category: {
+        type: "string",
+        enum: [
+          "email",
+          "calendar",
+          "coding",
+          "repository",
+          "filesystem",
+          "shell",
+          "browser",
+          "research",
+          "computer_use",
+          "general",
+        ],
+      },
+      taskDescription: { type: "string" },
+    },
+    required: ["category", "taskDescription"],
+  },
+} as const;
+
 export const AgentRoutingRuleSchema = z.object({
   category: TaskCategorySchema,
   orderedHarnessIds: z.array(z.string().min(1)).min(1),

@@ -1,4 +1,4 @@
-import type { OipLocalMemoryProvider } from "@alfred/memory";
+import { loadXIngestDigest, type OipLocalMemoryProvider } from "@alfred/memory";
 import type { BriefingConfig } from "./config.js";
 import {
   briefingDayWindowEndIso,
@@ -26,6 +26,7 @@ import {
 } from "./reminders.js";
 import type { BriefingData, BriefingPayload } from "./types.js";
 import { fetchWeather, formatWeatherSpeech } from "./weather.js";
+import { toXIngestBriefing } from "./x-ingest.js";
 
 export interface GenerateBriefingOptions {
   config: BriefingConfig;
@@ -102,6 +103,9 @@ export async function generateBriefing(
       metalSymbol: config.includeMetals ? config.metalSymbol : null,
     }) || null;
 
+  const xDigest = await loadXIngestDigest(config.profileId, dayKey, config.cacheDir);
+  const xIngest = toXIngestBriefing(xDigest);
+
   const data: BriefingData = {
     greeting,
     date: dateLabel,
@@ -122,6 +126,8 @@ export async function generateBriefing(
     marketsText,
     news: headlines,
     newsText: formatNewsSpeech(headlines) || null,
+    xIngest,
+    xIngestText: xIngest?.speech ?? null,
     reminders,
     remindersText: formatRemindersSpeech(reminders) || null,
     generated: now.toISOString(),

@@ -288,17 +288,29 @@ apiMemoryRouter.get("/due", async (c) => {
       date: date ?? null,
       timezone,
       count: due.length,
-      reminders: due.map((r) => ({
-        recordId: r.recordId,
-        logicalId: r.logicalId,
-        name: r.recordName,
-        text: r.revision.text ?? null,
-        remindAt: r.remindAt,
-        reminderStatus: r.reminderStatus,
-        reminderReason: r.reminderReason,
-        reminderTimezone: r.reminderTimezone,
-        reminderSnoozedUntil: r.reminderSnoozedUntil,
-      })),
+      reminders: due.map((r) => {
+        // `id` is the canonical mobile field (did:memory:…). Keep recordId/logicalId too.
+        const id = r.recordId;
+        const remindAt = r.remindAt;
+        const dateOnly =
+          typeof remindAt === "string" && /^\d{4}-\d{2}-\d{2}$/.test(remindAt);
+        return {
+          id,
+          memoryId: id,
+          recordId: id,
+          logicalId: r.logicalId,
+          name: r.recordName,
+          text: r.revision.text ?? null,
+          remindAt,
+          dueAt: remindAt,
+          dateOnly,
+          date_only: dateOnly,
+          reminderStatus: r.reminderStatus,
+          reminderReason: r.reminderReason,
+          reminderTimezone: r.reminderTimezone,
+          reminderSnoozedUntil: r.reminderSnoozedUntil,
+        };
+      }),
     });
   } catch (err) {
     return c.json(
@@ -313,6 +325,69 @@ apiMemoryRouter.post("/:id/reminder/surfaced", async (c) => {
   const id = c.req.param("id");
   try {
     const rev = await memory.markReminderSurfaced(id);
+    return c.json({ ok: true, record: serializeRevision(rev) });
+  } catch (err) {
+    return c.json(
+      { error: err instanceof Error ? err.message : String(err) },
+      500,
+    );
+  }
+});
+
+/**
+ * POST /api/memory/:id/reminder/status
+ * Body: { status: "completed" | "dismissed" | "snoozed" | "pending" | "surfaced", snoozedUntil?: string }
+ */
+apiMemoryRouter.post("/:id/reminder/status", async (c) => {
+  const memory = oipForProfile();
+  const id = c.req.param("id");
+  try {
+    const body = await c.req.json<{
+      status?: string;
+      action?: string;
+      snoozedUntil?: string | null;
+      reminderSnoozedUntil?: string | null;
+    }>();
+    const status = (body.status ?? body.action ?? "").trim().toLowerCase();
+    const allowed = new Set([
+      "completed",
+      "dismissed",
+      "snoozed",
+      "pending",
+      "surfaced",
+    ]);
+    if (!allowed.has(status)) {
+      return c.json(
+        {
+          error:
+            'status must be one of: completed, dismissed, snoozed, pending, surfaced',
+        },
+        400,
+      );
+    }
+
+    const snoozedUntil =
+      body.snoozedUntil ?? body.reminderSnoozedUntil ?? undefined;
+    if (status === "snoozed" && !snoozedUntil) {
+      return c.json({ error: "snoozedUntil is required when status=snoozed" }, 400);
+    }
+
+    const patch: {
+      reminderStatus: string;
+      reminderSnoozedUntil?: string | null;
+      reminderCompletedAt?: string;
+    } = { reminderStatus: status };
+
+    if (status === "snoozed") {
+      patch.reminderSnoozedUntil = snoozedUntil ?? null;
+    } else if (status === "completed" || status === "dismissed") {
+      patch.reminderSnoozedUntil = null;
+      patch.reminderCompletedAt = new Date().toISOString();
+    } else if (status === "pending" || status === "surfaced") {
+      patch.reminderSnoozedUntil = null;
+    }
+
+    const rev = await memory.updateRecord(id, patch);
     return c.json({ ok: true, record: serializeRevision(rev) });
   } catch (err) {
     return c.json(

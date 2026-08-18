@@ -110,6 +110,15 @@ export const LlmGenerateRequestSchema = z.object({
   reasoningEffort: LlmReasoningEffortSchema.optional(),
   modelPreset: LlmModelPresetSchema.optional(),
   previousResponseId: z.string().optional(),
+  tools: z
+    .array(
+      z.object({
+        name: z.string(),
+        description: z.string().optional(),
+        parameters: z.record(z.unknown()).optional(),
+      }),
+    )
+    .optional(),
 });
 export type LlmGenerateRequest = z.infer<typeof LlmGenerateRequestSchema>;
 

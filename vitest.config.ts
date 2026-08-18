@@ -17,6 +17,7 @@ export default defineConfig({
       "@alfred/provider-openai": path.join(root, "packages/provider-openai/src/index.ts"),
       "@alfred/provider-elevenlabs": path.join(root, "packages/provider-elevenlabs/src/index.ts"),
       "@alfred/livekit": path.join(root, "packages/livekit/src/index.ts"),
+      "@alfred/browser": path.join(root, "packages/browser/src/index.ts"),
     },
   },
   test: {
@@ -28,11 +29,11 @@ export default defineConfig({
     // node:sqlite is a Node built-in; keep it out of Vite's dep optimizer
     server: {
       deps: {
-        external: ["node:sqlite"],
+        external: ["node:sqlite", "playwright-core"],
       },
     },
   },
   ssr: {
-    external: ["node:sqlite"],
+    external: ["node:sqlite", "playwright-core"],
   },
 });

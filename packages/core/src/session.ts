@@ -28,6 +28,7 @@ import type { AgentRouterPort, MemoryControllerPort, ProviderRegistryPort } from
 import { PromptAssembler } from "./prompt-assembler.js";
 import { ResponseLedger } from "./response-ledger.js";
 import { ConversationStateMachine } from "./state-machine.js";
+import { looksLikeXIngestTask } from "./x-ingest-intent.js";
 
 export interface SpeechDeliveryOptions {
   /** Milliseconds per simulated speech chunk. */
@@ -328,6 +329,10 @@ export class SessionOrchestrator {
       const delegation = parseDelegateIntent(text);
       if (delegation) {
         await this.runDelegation(turn, delegation.category, delegation.description);
+        return;
+      }
+      if (looksLikeXIngestTask(text)) {
+        await this.runDelegation(turn, "research", text);
         return;
       }
 
@@ -698,7 +703,10 @@ export class SessionOrchestrator {
       permissions: ["agent.delegate"],
       requestedOutputFormat: "text",
       confirmationRequired: false,
-      timeoutMs: 30_000,
+      timeoutMs:
+        category === "research" || category === "browser" || category === "computer_use"
+          ? 600_000
+          : 30_000,
     });
 
     if (result.status === "failed") {
@@ -801,10 +809,26 @@ export class SessionOrchestrator {
         try {
           const llm = this.opts.providers.getLlm(llmId);
           let text = "";
+          let toolCall: { toolName?: string; toolArgs?: Record<string, unknown> } | undefined;
           for await (const chunk of llm.generateStream({
             messages,
             signal: this.generationAbort.signal,
             correlationId: turnId,
+            tools: [
+              {
+                name: "delegate_task",
+                description:
+                  "Delegate an external action such as ingesting X.com links or fetching a URL into memory.",
+                parameters: {
+                  type: "object",
+                  properties: {
+                    category: { type: "string" },
+                    taskDescription: { type: "string" },
+                  },
+                  required: ["category", "taskDescription"],
+                },
+              },
+            ],
           })) {
             if (chunk.type === "error") {
               throw Object.assign(new Error(chunk.error ?? "llm error"), {
@@ -814,6 +838,26 @@ export class SessionOrchestrator {
             if (chunk.type === "token" && chunk.text) {
               text += chunk.text;
               await this.responseLedger.appendProposed(responseId, chunk.text);
+            }
+            if (chunk.type === "tool_call") {
+              toolCall = { toolName: chunk.toolName, toolArgs: chunk.toolArgs };
+            }
+          }
+          if (toolCall?.toolName === "delegate_task") {
+            const description = String(toolCall.toolArgs?.taskDescription ?? "");
+            const category = (toolCall.toolArgs?.category as TaskCategory | undefined) ?? "research";
+            if (description) {
+              const result = await this.opts.agents.delegate({
+                correlationId: turnId,
+                taskDescription: description,
+                taskCategory: category,
+                conversationContext: messages.map((m) => `${m.role}: ${m.content}`).join("\n"),
+                permissions: ["agent.delegate"],
+                requestedOutputFormat: "text",
+                confirmationRequired: false,
+                timeoutMs: 600_000,
+              });
+              text = result.output || result.error || text;
             }
           }
           if (segmentKind === "addendum") {

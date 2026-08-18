@@ -14,6 +14,7 @@ import {
   speakWeekday,
 } from "./speech.js";
 import { formatWeatherMarkdown, formatWeatherSpeech } from "./weather.js";
+import { formatXIngestMarkdown } from "./x-ingest.js";
 
 /**
  * Spoken narration for TTS. Built separately from markdown/display text
@@ -68,6 +69,9 @@ export function formatBriefingForSpeech(
   const news = formatNewsSpeech(data.news);
   if (news) parts.push(news);
 
+  const xIngest = data.xIngestText || data.xIngest?.speech;
+  if (xIngest) parts.push(xIngest);
+
   // Reminders last before sign-off so personal follow-ups land after the rundown.
   const rem = formatRemindersSpeech(data.reminders) || data.remindersText;
   if (rem) parts.push(rem);
@@ -83,6 +87,7 @@ export function formatBriefingAsMarkdown(data: BriefingData): string {
   if (data.markets.lines.length) sections.push("", formatMarketsMarkdown(data.markets.lines));
   if (data.launches.length) sections.push("", formatLaunchesMarkdown(data.launches));
   if (data.news.length) sections.push("", formatNewsMarkdown(data.news));
+  if (data.xIngest?.items.length) sections.push("", formatXIngestMarkdown({ items: data.xIngest.items }));
   if (data.reminders.length) sections.push("", formatRemindersMarkdown(data.reminders));
   sections.push("", `_Generated ${data.generated}_`);
   return sections.join("\n");

@@ -67,6 +67,8 @@ function sample(): BriefingData {
     marketsText: null,
     news: ["Example headline about CA vs TX"],
     newsText: null,
+    xIngest: null,
+    xIngestText: null,
     reminders: [],
     remindersText: "You asked me to remind you: Call Sarah.",
     generated: "2026-08-09T12:00:00.000Z",

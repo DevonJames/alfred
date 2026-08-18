@@ -8,8 +8,10 @@ import {
   createCodexStub,
   createHermesStub,
   createOpenClawStub,
+  createXIngestHarness,
   AgentRouter,
 } from "@alfred/agents";
+import { createPlaywrightCaptureAdapter } from "@alfred/browser";
 import type { PipelineConfiguration, UserConfiguration } from "@alfred/contracts";
 import { SessionOrchestrator, SystemClock } from "@alfred/core";
 import { MemoryController, OIP_LOCAL_MEMORY_PROVIDER_ID } from "@alfred/memory";
@@ -108,8 +110,9 @@ async function buildRuntime(): Promise<TextRuntime> {
     agentRouting: [
       { category: "coding", orderedHarnessIds: ["harness.codex"] },
       { category: "email", orderedHarnessIds: ["harness.openclaw"] },
-      { category: "computer_use", orderedHarnessIds: ["harness.openclaw"] },
-      { category: "research", orderedHarnessIds: ["harness.hermes"] },
+      { category: "computer_use", orderedHarnessIds: ["harness.x-ingest", "harness.openclaw"] },
+      { category: "research", orderedHarnessIds: ["harness.x-ingest", "harness.hermes"] },
+      { category: "browser", orderedHarnessIds: ["harness.x-ingest", "harness.hermes"] },
     ],
     systemInstructions:
       "You are ALFRED, a helpful personal assistant. Be concise. Use retrieved memory when relevant.",
@@ -125,6 +128,12 @@ async function buildRuntime(): Promise<TextRuntime> {
   agents.register(createHermesStub());
   agents.register(createCodexStub());
   agents.register(createClaudeStub());
+  agents.register(
+    createXIngestHarness({
+      profileId,
+      capture: createPlaywrightCaptureAdapter(),
+    }),
+  );
   agents.setRoutingRules(config.agentRouting);
 
   const session = new SessionOrchestrator({

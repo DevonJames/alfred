@@ -121,6 +121,37 @@ pnpm memory -- cleanup-user
 
 (`dedupe-user` only removes near-duplicates. `cleanup-user` rebuilds a compact profile under the inject budget and imports overflow notes. Both write a timestamped `USER.md.bak-*` backup.)
 
+### X.com Apple Notes ingest
+
+Alfred can pull X.com posts, threads, and Articles from one or more Apple Notes inboxes (no X API). Capture uses a dedicated local Chrome/Brave profile (Playwright, with OpenAI Computer Use as fallback). Each memory stores the **note name**, **X as source**, **when the post was published**, and **when Alfred ingested it**, so later you can ask things like “the X article from my marketing note last week.”
+
+Successful URLs are removed from the inbox note and appended to `{Note} Ingested`. Failures stay in the inbox (optionally marked `— failed: paywall`). New items that land today appear in the daily briefing; ingest invalidates that day’s briefing cache.
+
+**Setup**
+
+1. Log the Alfred browser profile into X once (headed window; close it when done):
+
+```bash
+pnpm memory -- ingest-x-login
+```
+
+2. Register each Apple Note by folder + title (fails if the note cannot be found):
+
+```bash
+pnpm memory -- ingest-x-source add --folder "Alfred" --note "Marketing"
+pnpm memory -- ingest-x-source list
+```
+
+3. Run ingest (first dump of dozens, then typically 3–5 new links per day). Same URL pasted back into the inbox refreshes the existing memory:
+
+```bash
+pnpm memory -- ingest-x
+pnpm memory -- ingest-x --note "Marketing"
+pnpm memory -- ingest-x https://x.com/foo/status/123
+```
+
+Voice: “ingest my X notes” starts the batch in the background; “go pull this X link …” fetches one URL and speaks the result. With `pnpm desktop` running, the same batch also runs on a schedule (`ALFRED_X_INGEST_SCHEDULE`, default `06:00` local). Optional env: `ALFRED_BROWSER_USER_DATA_DIR`, `ALFRED_BROWSER_CHANNEL` (`chrome` / `brave` / `chromium`), `ALFRED_X_CUA` (`fallback` / `always` / `off`). The Mac generally needs to be awake (and usually unlocked) for Notes scripting.
+
 **Live recall check:** with `pnpm voice` running, say “My name is Devon.” After the reply, stop the agent, start `pnpm voice` again, and ask “What’s my name?” — it should recall from the JSONL file. Confirm startup logs show `Memory: memory.local path=...` and `Persona: .../SOUL=yes`.
 
 ## Documentation
@@ -140,8 +171,10 @@ packages/provider-deepgram      Deepgram Flux STT
 packages/provider-openai        OpenAI Responses LLM (Terra/Luna presets)
 packages/provider-elevenlabs    ElevenLabs Flash multi-context TTS
 packages/livekit                Room session + media bridge (transport only)
-packages/memory                 Memory controller + fake/local providers
-packages/agents                 Agent router + harness stubs
+packages/memory                 Memory controller + fake/local/OIP providers + X ingest
+packages/browser                Playwright + Computer Use capture (X pages, out of core)
+packages/briefing               Daily briefing (including today’s X ingest)
+packages/agents                 Agent router + harness stubs + X ingest harness
 packages/persistence            Repository interfaces + in-memory implementations
 apps/simulator                  M1 text-only scenario runner
 apps/voice-agent                M2 cascaded voice runtime entrypoint

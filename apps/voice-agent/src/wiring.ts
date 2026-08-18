@@ -4,7 +4,9 @@ import {
   createCodexStub,
   createHermesStub,
   createOpenClawStub,
+  createXIngestHarness,
 } from "@alfred/agents";
+import { createPlaywrightCaptureAdapter } from "@alfred/browser";
 import { createBriefingController, type GreetingLlm } from "@alfred/briefing";
 import type { UserConfiguration } from "@alfred/contracts";
 import {
@@ -144,6 +146,9 @@ export async function createCascadedVoiceRuntime(opts?: {
     agentRouting: [
       { category: "coding", orderedHarnessIds: ["harness.codex"] },
       { category: "email", orderedHarnessIds: ["harness.openclaw", "harness.hermes"] },
+      { category: "research", orderedHarnessIds: ["harness.x-ingest", "harness.hermes"] },
+      { category: "browser", orderedHarnessIds: ["harness.x-ingest", "harness.hermes"] },
+      { category: "computer_use", orderedHarnessIds: ["harness.x-ingest", "harness.claude"] },
     ],
     systemInstructions:
       "You are ALFRED. Follow SOUL.md, IDENTITY.md, and USER.md below. Prefer delegate_task for external actions. Keep spoken answers concise.",
@@ -161,6 +166,12 @@ export async function createCascadedVoiceRuntime(opts?: {
   agents.register(createHermesStub());
   agents.register(createCodexStub());
   agents.register(createClaudeStub());
+  agents.register(
+    createXIngestHarness({
+      profileId,
+      capture: createPlaywrightCaptureAdapter(),
+    }),
+  );
   agents.setRoutingRules(config.agentRouting);
 
   const sessionId = `sess_${Date.now().toString(36)}`;
