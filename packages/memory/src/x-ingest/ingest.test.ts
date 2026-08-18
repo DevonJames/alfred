@@ -3,10 +3,12 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { OipLocalMemoryProvider } from "../oip-local/provider.js";
+import { composeNotesCaptureAdapter } from "./capture.js";
 import { ingestXNotes } from "./ingest.js";
 import type { NotesRunner } from "./notes.js";
 import { addXSource } from "./sources.js";
 import type { XCapture, XCaptureAdapter } from "./types.js";
+import type { YtDlpRunner } from "./youtube-capture.js";
 
 function fakeCapture(partial: Partial<XCapture> = {}): XCaptureAdapter {
   return {
@@ -118,6 +120,84 @@ describe("ingestXNotes", () => {
     });
     expect(hit.items.some((i) => /analytical engine/i.test(i.content))).toBe(true);
     expect(hit.items.some((i) => /source=X\.com/.test(i.content))).toBe(true);
+    expect(hit.items.some((i) => /note=Marketing/.test(i.content))).toBe(true);
+  });
+
+  it("ingests YouTube inbox URLs as VideoObject with transcript retrieval", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "alfred-ytingest-"));
+    dirs.push(dir);
+    process.env.ALFRED_X_INGEST_DIR = path.join(dir, "ingest");
+    process.env.BRIEFING_CACHE_DIR = path.join(dir, "briefing");
+    process.env.ALFRED_MEMORY_OIP_PATH = path.join(dir, "oip");
+
+    await addXSource("p", { folder: "Alfred", note: "Marketing" });
+
+    const ytUrl = "https://youtu.be/dQw4w9WgXcQ";
+    const notes = new Map<string, string>([["Alfred/Marketing", ytUrl]]);
+    const runner: NotesRunner = async (script) => {
+      const folder = /const folderName = "([^"]*)"/.exec(script)?.[1] ?? "";
+      const note = /const noteName = "([^"]*)"/.exec(script)?.[1] ?? "";
+      const key = `${folder}/${note}`;
+      if (script.includes("newBody")) {
+        const raw = /const newBody = "([\s\S]*?)";/.exec(script)?.[1] ?? "";
+        const body = raw.replace(/\\n/g, "\n").replace(/\\"/g, '"').replace(/\\\\/g, "\\");
+        notes.set(key, body);
+        return JSON.stringify({ ok: true });
+      }
+      const body = notes.get(key);
+      if (body == null && note.endsWith("Ingested")) {
+        return JSON.stringify({ ok: false, error: "note_not_found" });
+      }
+      if (body == null) return JSON.stringify({ ok: false, error: "note_not_found" });
+      return JSON.stringify({ ok: true, name: note, folder, body });
+    };
+
+    const ytdlp: YtDlpRunner = async (args, opts) => {
+      if (args.includes("-J")) {
+        return {
+          stdout: JSON.stringify({
+            id: "dQw4w9WgXcQ",
+            title: "Growth loops",
+            description: "A marketing primer on compounding acquisition.",
+            channel: "Acme Channel",
+            upload_date: "20260801",
+            duration: 125,
+            subtitles: { en: [{ ext: "vtt" }] },
+          }),
+          stderr: "",
+        };
+      }
+      if (args.includes("--write-subs") && opts?.cwd) {
+        const { writeFile } = await import("node:fs/promises");
+        await writeFile(
+          path.join(opts.cwd, "dQw4w9WgXcQ.en.vtt"),
+          "WEBVTT\n\n00:00:00.000 --> 00:00:01.000\nRetention holds the loop together.\n",
+        );
+      }
+      return { stdout: "", stderr: "" };
+    };
+
+    const provider = new OipLocalMemoryProvider(path.join(dir, "oip"));
+    const result = await ingestXNotes({
+      profileId: "p",
+      capture: composeNotesCaptureAdapter(fakeCapture(), { runner: ytdlp }),
+      notesRunner: runner,
+      provider,
+      now: new Date("2026-08-17T18:00:00.000Z"),
+    });
+
+    expect(result.processed).toHaveLength(1);
+    expect(result.processed[0]?.status).toBe("ingested");
+    expect(result.processed[0]?.kind).toBe("video");
+    expect(notes.get("Alfred/Marketing") ?? "").not.toContain("youtu.be");
+
+    const hit = await provider.retrieve({
+      text: "YouTube video from my marketing note about growth loops",
+      limit: 8,
+    });
+    expect(hit.items.some((i) => /Retention holds the loop/i.test(i.content))).toBe(true);
+    expect(hit.items.some((i) => /source=YouTube/.test(i.content))).toBe(true);
+    expect(hit.items.some((i) => /channel=Acme Channel/.test(i.content))).toBe(true);
     expect(hit.items.some((i) => /note=Marketing/.test(i.content))).toBe(true);
   });
 });

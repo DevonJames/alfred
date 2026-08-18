@@ -32,6 +32,22 @@ async function loadPlaywright() {
   return import("playwright-core");
 }
 
+export function profileLockErrorMessage(userDataDir: string): string {
+  return (
+    `Alfred browser profile is already in use (${userDataDir}). ` +
+    "Chrome only allows one process on this profile. Close the window from " +
+    "`pnpm memory -- ingest-x-login` (and quit that command), then rerun ingest-x."
+  );
+}
+
+export function rewriteProfileLockError(err: unknown, userDataDir: string): Error {
+  const msg = err instanceof Error ? err.message : String(err);
+  if (/ProcessSingleton|SingletonLock|profile is already in use|profile directory/i.test(msg)) {
+    return new Error(profileLockErrorMessage(userDataDir), { cause: err });
+  }
+  return err instanceof Error ? err : new Error(msg);
+}
+
 export async function launchPersistentContext(
   config: BrowserConfig,
   opts?: { headless?: boolean },
@@ -49,10 +65,14 @@ export async function launchPersistentContext(
     /* bundled/system chromium */
   }
   if (config.executablePath) launch.executablePath = config.executablePath;
-  return chromium.launchPersistentContext(
-    config.userDataDir,
-    launch as Parameters<typeof chromium.launchPersistentContext>[1],
-  );
+  try {
+    return await chromium.launchPersistentContext(
+      config.userDataDir,
+      launch as Parameters<typeof chromium.launchPersistentContext>[1],
+    );
+  } catch (err) {
+    throw rewriteProfileLockError(err, config.userDataDir);
+  }
 }
 
 const EXTRACT_PAGE_JS = `(() => {
@@ -325,8 +345,26 @@ export async function captureXPage(
 
 export function createPlaywrightCaptureAdapter(config?: BrowserConfig): XCaptureAdapter {
   const cfg = config ?? loadBrowserConfig();
+  let contextPromise: Promise<BrowserContext> | undefined;
+  const getContext = () => {
+    contextPromise ??= launchPersistentContext(cfg).catch((err) => {
+      contextPromise = undefined;
+      throw err;
+    });
+    return contextPromise;
+  };
   return {
-    capture: (url) => captureXPage(url, { config: cfg }),
+    capture: async (url) => {
+      const context = await getContext();
+      return captureXPage(url, { config: cfg, context });
+    },
+    close: async () => {
+      const pending = contextPromise;
+      contextPromise = undefined;
+      if (!pending) return;
+      const context = await pending.catch(() => undefined);
+      await context?.close().catch(() => undefined);
+    },
   };
 }
 

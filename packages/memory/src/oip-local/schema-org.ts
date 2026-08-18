@@ -9,6 +9,7 @@ export const SCHEMA_ORG = {
   CreativeWork: "https://schema.org/CreativeWork",
   SocialMediaPosting: "https://schema.org/SocialMediaPosting",
   Article: "https://schema.org/Article",
+  VideoObject: "https://schema.org/VideoObject",
   Thing: "https://schema.org/Thing",
 } as const;
 

@@ -9,22 +9,25 @@ export function formatXIngestSpeech(digest: XIngestDigest | null | undefined): s
 
   if (ok.length === 1) {
     const item = ok[0]!;
+    const source = item.kind === "video" ? "YouTube" : "X";
     const from = item.noteName ? ` from your ${item.noteName} note` : "";
     const author = item.author ? ` by ${item.author}` : "";
     const body = (item.summary ?? item.headline).replace(/\s+/g, " ").trim();
-    parts.push(`From X${from}: ${item.headline}${author}. ${body}`);
+    parts.push(`From ${source}${from}: ${item.headline}${author}. ${body}`);
   } else if (ok.length > 1) {
     const subjects = ok.map((i) => {
       const note = i.noteName ? ` (${i.noteName})` : "";
       return `${i.headline}${note}`;
     });
-    parts.push(`I saved ${ok.length} items from X: ${subjects.join("; ")}.`);
+    const labels = [...new Set(ok.map((i) => (i.kind === "video" ? "YouTube" : "X")))];
+    parts.push(`I saved ${ok.length} items from ${labels.join(" and ")}: ${subjects.join("; ")}.`);
   }
 
   for (const f of failed) {
     const title = f.headline || f.url;
     const why = f.error ?? "an unknown error";
-    parts.push(`The link titled ${title} could not be ingested because of ${why}.`);
+    const noun = f.kind === "video" || /youtube|youtu\.be/i.test(f.url) ? "YouTube video" : "link";
+    parts.push(`The ${noun} titled ${title} could not be ingested because of ${why}.`);
   }
   return parts.join(" ").trim();
 }

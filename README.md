@@ -121,36 +121,43 @@ pnpm memory -- cleanup-user
 
 (`dedupe-user` only removes near-duplicates. `cleanup-user` rebuilds a compact profile under the inject budget and imports overflow notes. Both write a timestamped `USER.md.bak-*` backup.)
 
-### X.com Apple Notes ingest
+### X.com and YouTube Apple Notes ingest
 
-Alfred can pull X.com posts, threads, and Articles from one or more Apple Notes inboxes (no X API). Capture uses a dedicated local Chrome/Brave profile (Playwright, with OpenAI Computer Use as fallback). Each memory stores the **note name**, **X as source**, **when the post was published**, and **when Alfred ingested it**, so later you can ask things like “the X article from my marketing note last week.”
+Alfred can pull X.com posts, threads, and Articles, plus **YouTube videos**, from one or more Apple Notes inboxes (no X API, no YouTube/Google API). X capture uses a dedicated local Chrome/Brave profile (Playwright, with OpenAI Computer Use as fallback). YouTube capture uses **yt-dlp** on `PATH` (or `ALFRED_YTDLP_PATH`) for metadata and captions only — never audio or video. Each memory stores the **note name**, **X or YouTube as source**, **when the post/video was published**, and **when Alfred ingested it**, so later you can ask things like “the X article from my marketing note last week” or “that YouTube video from my marketing note.”
 
-Successful URLs are removed from the inbox note and appended to `{Note} Ingested`. Failures stay in the inbox (optionally marked `— failed: paywall`). New items that land today appear in the daily briefing; ingest invalidates that day’s briefing cache.
+Successful URLs are removed from the inbox note and appended to `{Note} Ingested`. Failures stay in the inbox (optionally marked `— failed: paywall` or `— failed: no transcript`). Playlists and channel pages are not supported. New items that land today appear in the daily briefing; ingest invalidates that day’s briefing cache.
 
 **Setup**
 
-1. Log the Alfred browser profile into X once (headed window; close it when done):
+1. Install yt-dlp (required for YouTube links; no Google API):
+
+```bash
+brew install yt-dlp
+```
+
+2. Log the Alfred browser profile into X once (headed window). **Close that Chrome window** (and let `ingest-x-login` exit) before running ingest — Chrome only allows one process on this profile:
 
 ```bash
 pnpm memory -- ingest-x-login
 ```
 
-2. Register each Apple Note by folder + title (fails if the note cannot be found):
+3. Register each Apple Note by folder + title (fails if the note cannot be found):
 
 ```bash
 pnpm memory -- ingest-x-source add --folder "Alfred" --note "Marketing"
 pnpm memory -- ingest-x-source list
 ```
 
-3. Run ingest (first dump of dozens, then typically 3–5 new links per day). Same URL pasted back into the inbox refreshes the existing memory:
+4. Run ingest (first dump of dozens, then typically a few new links per day). Same URL pasted back into the inbox refreshes the existing memory:
 
 ```bash
 pnpm memory -- ingest-x
 pnpm memory -- ingest-x --note "Marketing"
 pnpm memory -- ingest-x https://x.com/foo/status/123
+pnpm memory -- ingest-x https://youtu.be/dQw4w9WgXcQ
 ```
 
-Voice: “ingest my X notes” starts the batch in the background; “go pull this X link …” fetches one URL and speaks the result. With `pnpm desktop` running, the same batch also runs on a schedule (`ALFRED_X_INGEST_SCHEDULE`, default `06:00` local). Optional env: `ALFRED_BROWSER_USER_DATA_DIR`, `ALFRED_BROWSER_CHANNEL` (`chrome` / `brave` / `chromium`), `ALFRED_X_CUA` (`fallback` / `always` / `off`). The Mac generally needs to be awake (and usually unlocked) for Notes scripting.
+Voice: “ingest my X notes” starts the batch in the background; “go pull this X link …” or “go pull this YouTube link …” fetches one URL and speaks the result. With `pnpm desktop` running, the same batch also runs on a schedule (`ALFRED_X_INGEST_SCHEDULE`, default `06:00` local). Optional env: `ALFRED_BROWSER_USER_DATA_DIR`, `ALFRED_BROWSER_CHANNEL` (`chrome` / `brave` / `chromium`), `ALFRED_X_CUA` (`fallback` / `always` / `off`), `ALFRED_YTDLP_PATH`. The Mac generally needs to be awake (and usually unlocked) for Notes scripting.
 
 **Live recall check:** with `pnpm voice` running, say “My name is Devon.” After the reply, stop the agent, start `pnpm voice` again, and ask “What’s my name?” — it should recall from the JSONL file. Confirm startup logs show `Memory: memory.local path=...` and `Persona: .../SOUL=yes`.
 

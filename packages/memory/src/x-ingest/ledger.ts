@@ -2,7 +2,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { defaultXLedgerPath } from "./paths.js";
 import type { XLedgerEntry } from "./types.js";
-import { canonicalizeXUrl } from "./urls.js";
+import { canonicalizeInboxUrl } from "./urls.js";
 
 export async function loadXLedger(
   profileId: string,
@@ -36,7 +36,7 @@ export function upsertLedgerEntry(
   ledger: Map<string, XLedgerEntry>,
   patch: Partial<XLedgerEntry> & { url: string },
 ): XLedgerEntry {
-  const canonicalUrl = patch.canonicalUrl ?? canonicalizeXUrl(patch.url);
+  const canonicalUrl = patch.canonicalUrl ?? canonicalizeInboxUrl(patch.url);
   const prev = ledger.get(canonicalUrl);
   const noteNames = unique([...(prev?.noteNames ?? []), ...(patch.noteNames ?? [])]);
   const noteFolders = unique([...(prev?.noteFolders ?? []), ...(patch.noteFolders ?? [])]);
@@ -80,7 +80,7 @@ export function urlsToProcess(
   const out: { url: string; canonicalUrl: string; entry?: XLedgerEntry }[] = [];
   const seen = new Set<string>();
   for (const url of inboxUrls) {
-    const canonicalUrl = canonicalizeXUrl(url);
+    const canonicalUrl = canonicalizeInboxUrl(url);
     if (seen.has(canonicalUrl)) continue;
     seen.add(canonicalUrl);
     const entry = ledger.get(canonicalUrl);

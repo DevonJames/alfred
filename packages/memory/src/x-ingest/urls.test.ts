@@ -1,5 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { canonicalizeXUrl, extractXUrls, isXUrl, slugFromTitle } from "./urls.js";
+import {
+  canonicalizeInboxUrl,
+  canonicalizeXUrl,
+  canonicalizeYouTubeUrl,
+  extractInboxLinkUrls,
+  extractXUrls,
+  extractYouTubeUrls,
+  isYouTubePlaylistOrChannelUrl,
+  isXUrl,
+  slugFromTitle,
+  youtubeVideoIdFromUrl,
+} from "./urls.js";
 
 describe("x-ingest urls", () => {
   it("extracts x.com and twitter.com links from HTML", () => {
@@ -26,5 +37,39 @@ describe("x-ingest urls", () => {
 
   it("slugs note titles", () => {
     expect(slugFromTitle("Marketing X")).toBe("marketing-x");
+  });
+
+  it("canonicalizes youtu.be, shorts, and tracking params", () => {
+    expect(canonicalizeYouTubeUrl("https://youtu.be/dQw4w9WgXcQ?si=abc")).toBe(
+      "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+    );
+    expect(canonicalizeYouTubeUrl("https://www.youtube.com/shorts/dQw4w9WgXcQ?feature=share")).toBe(
+      "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+    );
+    expect(canonicalizeYouTubeUrl("https://m.youtube.com/watch?v=dQw4w9WgXcQ&pp=0g")).toBe(
+      "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+    );
+    expect(canonicalizeInboxUrl("https://youtu.be/dQw4w9WgXcQ")).toBe(
+      "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+    );
+    expect(youtubeVideoIdFromUrl("https://www.youtube.com/live/dQw4w9WgXcQ")).toBe("dQw4w9WgXcQ");
+  });
+
+  it("extracts mixed X and YouTube inbox URLs", () => {
+    const html = `<div>
+      <a href="https://x.com/foo/status/1">x</a>
+      https://youtu.be/dQw4w9WgXcQ?si=zz
+      https://www.youtube.com/playlist?list=PLxxxx
+    </div>`;
+    expect(extractYouTubeUrls(html)).toEqual([
+      "https://youtu.be/dQw4w9WgXcQ?si=zz",
+      "https://www.youtube.com/playlist?list=PLxxxx",
+    ]);
+    expect(extractInboxLinkUrls(html)).toHaveLength(3);
+    expect(isYouTubePlaylistOrChannelUrl("https://www.youtube.com/playlist?list=PLxxxx")).toBe(true);
+    expect(isYouTubePlaylistOrChannelUrl("https://www.youtube.com/@acme")).toBe(true);
+    expect(isYouTubePlaylistOrChannelUrl("https://www.youtube.com/watch?v=dQw4w9WgXcQ&list=PLxxxx")).toBe(
+      false,
+    );
   });
 });

@@ -12,7 +12,9 @@ export async function openXLoginBrowser(): Promise<void> {
     context.on("close", () => resolve());
     page.on("close", () => resolve());
     console.log(
-      "Log into X in the opened window, then close the browser when done.\n" +
+      "Log into X in the opened window, then close that Chrome window when done.\n" +
+        "Leave this command running until you close the window. ingest-x cannot use the\n" +
+        "same profile while this login Chrome is still open.\n" +
         `Profile: ${config.userDataDir}`,
     );
   });

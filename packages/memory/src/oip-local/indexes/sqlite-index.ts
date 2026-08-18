@@ -485,6 +485,8 @@ function buildSearchText(r: MemoryRevision): string {
   if (r.text) parts.push(r.text);
   if (typeof r.schema?.name === "string") parts.push(String(r.schema.name));
   if (typeof r.schema?.url === "string") parts.push(String(r.schema.url));
+  if (typeof r.schema?.description === "string") parts.push(String(r.schema.description));
+  if (typeof r.schema?.author === "string") parts.push(String(r.schema.author));
   if (Array.isArray(r.schema?.alternateName)) {
     parts.push(...r.schema.alternateName.map(String));
   }
@@ -496,6 +498,7 @@ function buildSearchText(r: MemoryRevision): string {
   if (typeof prov.sourceType === "string") {
     parts.push(prov.sourceType.replace(/_/g, " "));
     if (prov.sourceType === "x_com") parts.push("x.com", "twitter", "X");
+    if (prov.sourceType === "youtube") parts.push("youtube", "YouTube", "video");
   }
   if (typeof prov.noteName === "string") parts.push(prov.noteName, "note");
   if (typeof prov.noteFolder === "string") parts.push(prov.noteFolder);

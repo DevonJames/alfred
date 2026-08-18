@@ -19,7 +19,7 @@ import type {
   XIngestRunResult,
   XSource,
 } from "./types.js";
-import { canonicalizeXUrl } from "./urls.js";
+import { canonicalizeInboxUrl } from "./urls.js";
 
 function summarizeCapture(text: string, headline: string): string {
   const trimmed = text.replace(/\s+/g, " ").trim();
@@ -49,39 +49,59 @@ export async function ingestXUrl(opts: {
         },
       ]
     : [];
-  const result = await ingestOneUrl({
-    url: opts.url,
-    profileId,
-    capture: opts.capture,
-    provider,
-    sources,
-    now,
-  });
-  if (result.status !== "skipped") {
-    await appendXIngestDigest(
+  try {
+    const result = await ingestOneUrl({
+      url: opts.url,
       profileId,
-      ingestDayKey(now),
-      [
-        {
-          url: result.url,
-          canonicalUrl: result.canonicalUrl,
-          noteName: result.noteName,
-          headline: result.headline ?? result.url,
-          author: result.author,
-          kind: result.kind,
-          status: result.status === "ingested" ? "ingested" : "failed",
-          error: result.error,
-          summary: result.summary,
-        },
-      ],
+      capture: opts.capture,
+      provider,
+      sources,
       now,
-    );
-    await invalidateBriefingCacheFile(profileId, ingestDayKey(now));
+    });
+    if (result.status !== "skipped") {
+      await appendXIngestDigest(
+        profileId,
+        ingestDayKey(now),
+        [
+          {
+            url: result.url,
+            canonicalUrl: result.canonicalUrl,
+            noteName: result.noteName,
+            headline: result.headline ?? result.url,
+            author: result.author,
+            kind: result.kind,
+            status: result.status === "ingested" ? "ingested" : "failed",
+            error: result.error,
+            summary: result.summary,
+          },
+        ],
+        now,
+      );
+      await invalidateBriefingCacheFile(profileId, ingestDayKey(now));
+    }
+    return result;
+  } finally {
+    await opts.capture.close?.();
   }
-  return result;
 }
 
 export async function ingestXNotes(opts: {
+  profileId?: string;
+  note?: string;
+  capture: XCaptureAdapter;
+  notesRunner?: NotesRunner;
+  provider?: OipLocalMemoryProvider;
+  now?: Date;
+  dryRun?: boolean;
+}): Promise<XIngestRunResult> {
+  try {
+    return await ingestXNotesInner(opts);
+  } finally {
+    await opts.capture.close?.();
+  }
+}
+
+async function ingestXNotesInner(opts: {
   profileId?: string;
   note?: string;
   capture: XCaptureAdapter;
@@ -206,7 +226,7 @@ async function ingestOneUrl(opts: {
   sources: XSource[];
   now: Date;
 }): Promise<XIngestItemResult> {
-  const canonicalUrl = canonicalizeXUrl(opts.url);
+  const canonicalUrl = canonicalizeInboxUrl(opts.url);
   const noteName = opts.sources[0]?.note;
   const noteFolder = opts.sources[0]?.folder;
   const ledger = await loadXLedger(opts.profileId);

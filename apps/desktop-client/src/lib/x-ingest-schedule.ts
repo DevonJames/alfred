@@ -1,4 +1,4 @@
-import { ingestXNotes } from "@alfred/memory";
+import { composeNotesCaptureAdapter, ingestXNotes } from "@alfred/memory";
 import { createPlaywrightCaptureAdapter } from "@alfred/browser";
 import { localDateTimeParts } from "@alfred/briefing";
 
@@ -25,7 +25,7 @@ export function startXIngestScheduler(): () => void {
     const profileId = process.env.ALFRED_PROFILE_ID ?? "profile.default";
     console.log(`[x-ingest] starting scheduled ingest for ${day}`);
     try {
-      const capture = createPlaywrightCaptureAdapter();
+      const capture = composeNotesCaptureAdapter(createPlaywrightCaptureAdapter());
       const result = await ingestXNotes({ profileId, capture });
       console.log(
         `[x-ingest] done: ${result.processed.filter((p) => p.status === "ingested").length} saved, ${result.processed.filter((p) => p.status === "failed").length} failed`,

@@ -10,8 +10,8 @@ describe("x-ingest notes body helpers", () => {
   const url = "https://x.com/foo/status/1";
 
   it("extracts inbox URLs and drains them", () => {
-    const body = `<div>${url}</div><div>https://x.com/bar/status/2</div>`;
-    expect(extractInboxUrls(body)).toHaveLength(2);
+    const body = `<div>${url}</div><div>https://x.com/bar/status/2</div><div>https://youtu.be/dQw4w9WgXcQ</div>`;
+    expect(extractInboxUrls(body)).toHaveLength(3);
     const next = removeUrlFromNoteBody(body, url);
     expect(next).not.toContain(url);
     expect(next).toContain("https://x.com/bar/status/2");

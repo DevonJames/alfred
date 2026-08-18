@@ -1,5 +1,20 @@
 export { archiveNoteName, addXSource, findXSource, loadXSources, removeXSource, saveXSources } from "./sources.js";
-export { canonicalizeXUrl, extractXUrls, isXUrl, slugFromTitle, statusIdFromUrl } from "./urls.js";
+export {
+  canonicalizeInboxUrl,
+  canonicalizeXUrl,
+  canonicalizeYouTubeUrl,
+  extractInboxLinkUrls,
+  extractXUrls,
+  extractYouTubeUrls,
+  isXUrl,
+  isYouTubePlaylistOrChannelUrl,
+  isYouTubeUrl,
+  slugFromTitle,
+  statusIdFromUrl,
+  youtubeVideoIdFromUrl,
+} from "./urls.js";
+export { composeNotesCaptureAdapter } from "./capture.js";
+export { captureYouTubeVideo, vttToPlainText, type YtDlpRunner } from "./youtube-capture.js";
 export { loadXLedger, saveXLedger, upsertLedgerEntry, urlsToProcess } from "./ledger.js";
 export {
   annotateFailureInNoteBody,

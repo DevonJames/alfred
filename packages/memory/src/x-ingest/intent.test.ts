@@ -23,4 +23,11 @@ describe("x-ingest intent", () => {
     expect(published?.field).toBe("published");
     expect(looksLikeXIngest("save this twitter thread https://twitter.com/a/status/1")).toBe(true);
   });
+
+  it("detects a YouTube pull-this-link request", () => {
+    expect(parseXIngestIntent("go pull this YouTube link https://youtu.be/dQw4w9WgXcQ")).toEqual({
+      kind: "url",
+      url: "https://youtu.be/dQw4w9WgXcQ",
+    });
+  });
 });

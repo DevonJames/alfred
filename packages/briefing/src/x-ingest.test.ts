@@ -49,4 +49,24 @@ describe("formatXIngestSpeech", () => {
     expect(many).toMatch(/I saved 2 items/);
     expect(many).toMatch(/Secret memo could not be ingested because of a paywall/);
   });
+
+  it("names YouTube videos in failure speech", () => {
+    const speech = formatXIngestSpeech({
+      dayKey: "2026-08-17",
+      updatedAt: "2026-08-17T12:00:00.000Z",
+      items: [
+        {
+          url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+          canonicalUrl: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+          headline: "Growth loops",
+          kind: "video",
+          status: "failed",
+          error: "no transcript",
+        },
+      ],
+    });
+    expect(speech).toBe(
+      "The YouTube video titled Growth loops could not be ingested because of no transcript.",
+    );
+  });
 });

@@ -1,4 +1,4 @@
-export type XCaptureKind = "post" | "thread" | "article" | "quote" | "linked_page";
+export type XCaptureKind = "post" | "thread" | "article" | "quote" | "linked_page" | "video";
 
 export type XIngestStatus = "ingested" | "failed" | "in_progress";
 
@@ -55,11 +55,15 @@ export interface XCapture {
   linkedPage?: { url: string; title: string; text: string };
   screenshots: Array<{ name: string; mimeType: string; bytes: Buffer }>;
   images: Array<{ name: string; mimeType: string; bytes: Buffer }>;
+  description?: string;
+  durationSeconds?: number;
+  videoId?: string;
   failure?: { reason: string; headline?: string };
 }
 
 export interface XCaptureAdapter {
   capture(url: string): Promise<XCapture>;
+  close?(): Promise<void>;
 }
 
 export interface XIngestDigestItem {

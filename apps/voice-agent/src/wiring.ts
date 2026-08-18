@@ -30,6 +30,7 @@ import {
   MemoryController,
   OIP_LOCAL_MEMORY_PROVIDER_ID,
   OipLocalMemoryProvider,
+  composeNotesCaptureAdapter,
   type LoadedPersonaContext,
 } from "@alfred/memory";
 import { createInMemoryPersistence } from "@alfred/persistence";
@@ -169,7 +170,7 @@ export async function createCascadedVoiceRuntime(opts?: {
   agents.register(
     createXIngestHarness({
       profileId,
-      capture: createPlaywrightCaptureAdapter(),
+      capture: composeNotesCaptureAdapter(createPlaywrightCaptureAdapter()),
     }),
   );
   agents.setRoutingRules(config.agentRouting);

@@ -94,6 +94,15 @@ export async function retrieveMemories(
     }
   }
 
+  if (isYouTubeSourceQuery(query.text)) {
+    for (const row of deps.sqlite.findBySearchSubstring("youtube", 40)) {
+      bump(row.id, (scores.get(row.id) ?? 0) + 0.25);
+    }
+    for (const row of deps.sqlite.findBySearchSubstring("video", 40)) {
+      bump(row.id, (scores.get(row.id) ?? 0) + 0.15);
+    }
+  }
+
   const noteHint = extractNoteHint(query.text);
   if (noteHint) {
     for (const row of deps.sqlite.findBySearchSubstring(noteHint, 40)) {
@@ -165,8 +174,12 @@ function formatContent(rev: MemoryRevision): string {
   const meta: string[] = [];
   const srcType = rev.provenance?.sourceType;
   if (srcType === "x_com") meta.push("source=X.com");
+  if (srcType === "youtube") meta.push("source=YouTube");
   const noteName = rev.provenance?.noteName;
   if (typeof noteName === "string" && noteName) meta.push(`note=${noteName}`);
+  if (srcType === "youtube" && typeof rev.provenance?.author === "string" && rev.provenance.author) {
+    meta.push(`channel=${rev.provenance.author}`);
+  }
   if (rev.validFrom) meta.push(`published=${rev.validFrom}`);
   if (rev.learnedAt) meta.push(`learned=${rev.learnedAt}`);
   const suffix = meta.length ? ` [${meta.join("; ")}]` : "";
@@ -180,6 +193,10 @@ function formatContent(rev: MemoryRevision): string {
 
 function isXSourceQuery(text: string): boolean {
   return /\bon x\b|\bx\.com\b|\btwitter\b|\bx article\b|\bx post\b|\bx thread\b/i.test(text);
+}
+
+function isYouTubeSourceQuery(text: string): boolean {
+  return /\byoutube\b|\byoutu\.be\b|\byou tube\b|\bvideo\b|\bchannel\b/i.test(text);
 }
 
 function extractNoteHint(text: string): string | undefined {
@@ -215,6 +232,8 @@ const QUERY_CAPS = new Set([
   "Were",
   "Is",
   "Are",
+  "YouTube",
+  "Video",
 ]);
 
 function capitalize(s: string): string {

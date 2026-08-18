@@ -14,7 +14,7 @@ import {
 import { createPlaywrightCaptureAdapter } from "@alfred/browser";
 import type { PipelineConfiguration, UserConfiguration } from "@alfred/contracts";
 import { SessionOrchestrator, SystemClock } from "@alfred/core";
-import { MemoryController, OIP_LOCAL_MEMORY_PROVIDER_ID } from "@alfred/memory";
+import { composeNotesCaptureAdapter, MemoryController, OIP_LOCAL_MEMORY_PROVIDER_ID } from "@alfred/memory";
 import { createInMemoryPersistence } from "@alfred/persistence";
 import {
   FakeLLMProvider,
@@ -131,7 +131,7 @@ async function buildRuntime(): Promise<TextRuntime> {
   agents.register(
     createXIngestHarness({
       profileId,
-      capture: createPlaywrightCaptureAdapter(),
+      capture: composeNotesCaptureAdapter(createPlaywrightCaptureAdapter()),
     }),
   );
   agents.setRoutingRules(config.agentRouting);

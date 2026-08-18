@@ -1,5 +1,7 @@
 const X_HOSTS = new Set(["x.com", "twitter.com", "www.x.com", "www.twitter.com", "mobile.x.com"]);
 
+const YT_HOSTS = new Set(["youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be", "www.youtu.be"]);
+
 const TRACKING_PARAMS = new Set([
   "s",
   "t",
@@ -11,14 +13,12 @@ const TRACKING_PARAMS = new Set([
   "refsrc",
 ]);
 
-/** Pull x.com / twitter.com / t.co URLs out of HTML or plain text. */
-export function extractXUrls(text: string): string[] {
+function collectUrls(text: string, re: RegExp): string[] {
   if (!text) return [];
   const decoded = text
     .replace(/&amp;/g, "&")
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'");
-  const re = /https?:\/\/(?:www\.)?(?:x\.com|twitter\.com|t\.co)\/[^\s<>"'”)\]]+/gi;
   const found: string[] = [];
   const seen = new Set<string>();
   for (const m of decoded.matchAll(re)) {
@@ -30,6 +30,14 @@ export function extractXUrls(text: string): string[] {
     found.push(raw);
   }
   return found;
+}
+
+/** Pull x.com / twitter.com / t.co URLs out of HTML or plain text. */
+export function extractXUrls(text: string): string[] {
+  return collectUrls(
+    text,
+    /https?:\/\/(?:www\.)?(?:x\.com|twitter\.com|t\.co)\/[^\s<>"'”)\]]+/gi,
+  );
 }
 
 export function isXUrl(url: string): boolean {
@@ -85,6 +93,91 @@ export function canonicalizeXUrl(raw: string): string {
 export function statusIdFromUrl(url: string): string | undefined {
   const m = canonicalizeXUrl(url).match(/\/status\/(\d+)/);
   return m?.[1];
+}
+
+export function extractYouTubeUrls(text: string): string[] {
+  return collectUrls(
+    text,
+    /https?:\/\/(?:www\.|m\.)?(?:youtube\.com|youtu\.be)\/[^\s<>"'”)\]]+/gi,
+  );
+}
+
+export function isYouTubeUrl(url: string): boolean {
+  try {
+    return YT_HOSTS.has(new URL(url).hostname.toLowerCase());
+  } catch {
+    return false;
+  }
+}
+
+/** 11-char watch id, or undefined for playlists/channels. */
+export function youtubeVideoIdFromUrl(raw: string): string | undefined {
+  let url: URL;
+  try {
+    url = new URL(raw.trim());
+  } catch {
+    return undefined;
+  }
+  const host = url.hostname.toLowerCase().replace(/^www\./, "");
+  if (host === "youtu.be") {
+    const id = url.pathname.replace(/^\//, "").split("/")[0] ?? "";
+    return /^[\w-]{11}$/.test(id) ? id : undefined;
+  }
+  if (host !== "youtube.com" && host !== "m.youtube.com") return undefined;
+  const v = url.searchParams.get("v");
+  if (v && /^[\w-]{11}$/.test(v)) return v;
+  const parts = url.pathname.split("/").filter(Boolean);
+  const kind = parts[0];
+  const maybeId = parts[1];
+  if (
+    (kind === "shorts" || kind === "live" || kind === "embed" || kind === "v") &&
+    maybeId &&
+    /^[\w-]{11}$/.test(maybeId)
+  ) {
+    return maybeId;
+  }
+  return undefined;
+}
+
+export function isYouTubePlaylistOrChannelUrl(raw: string): boolean {
+  if (!isYouTubeUrl(raw)) return false;
+  if (youtubeVideoIdFromUrl(raw)) return false;
+  try {
+    const url = new URL(raw.trim());
+    const path = url.pathname.replace(/\/+$/, "");
+    if (url.searchParams.has("list") && !url.searchParams.get("v")) return true;
+    if (path.startsWith("/playlist") || path.startsWith("/channel/") || path.startsWith("/@")) {
+      return true;
+    }
+    if (path.startsWith("/c/") || path.startsWith("/user/")) return true;
+  } catch {
+    return true;
+  }
+  return true;
+}
+
+export function canonicalizeYouTubeUrl(raw: string): string {
+  const id = youtubeVideoIdFromUrl(raw);
+  if (id) return `https://www.youtube.com/watch?v=${id}`;
+  return raw.trim();
+}
+
+/** Canonical ledger key for X or YouTube inbox URLs. */
+export function canonicalizeInboxUrl(raw: string): string {
+  if (isYouTubeUrl(raw)) return canonicalizeYouTubeUrl(raw);
+  return canonicalizeXUrl(raw);
+}
+
+export function extractInboxLinkUrls(text: string): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const url of [...extractXUrls(text), ...extractYouTubeUrls(text)]) {
+    const key = url.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(url);
+  }
+  return out;
 }
 
 export function slugFromTitle(title: string): string {

@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { extractXUrls } from "./urls.js";
+import { extractInboxLinkUrls } from "./urls.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -155,7 +155,7 @@ export async function writeAppleNote(
 }
 
 export function extractInboxUrls(body: string): string[] {
-  return extractXUrls(body);
+  return extractInboxLinkUrls(body);
 }
 
 export function removeUrlFromNoteBody(body: string, url: string): string {

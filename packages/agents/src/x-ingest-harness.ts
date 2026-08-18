@@ -17,11 +17,13 @@ import {
 export function speechFromItem(item: XIngestItemResult): string {
   if (item.status === "ingested") {
     const from = item.noteName ? ` from your ${item.noteName} note` : "";
-    return `Saved ${item.headline ?? "that X post"} to memory${from}.`;
+    const noun = item.kind === "video" ? "that YouTube video" : "that X post";
+    return `Saved ${item.headline ?? noun} to memory${from}.`;
   }
   if (item.status === "failed") {
     const title = item.headline ?? item.url;
-    return `The link titled ${title} could not be ingested because of ${item.error ?? "an error"}.`;
+    const noun = item.kind === "video" || /youtube|youtu\.be/i.test(item.url) ? "YouTube video" : "link";
+    return `The ${noun} titled ${title} could not be ingested because of ${item.error ?? "an error"}.`;
   }
   return `Skipped ${item.url}.`;
 }
@@ -29,14 +31,14 @@ export function speechFromItem(item: XIngestItemResult): string {
 export function speechFromRun(run: XIngestRunResult): string {
   const ok = run.processed.filter((p) => p.status === "ingested");
   const failed = run.processed.filter((p) => p.status === "failed");
-  if (!run.processed.length) return "There were no new X links in your notes.";
+  if (!run.processed.length) return "There were no new X or YouTube links in your notes.";
   const parts: string[] = [];
   if (ok.length === 1) parts.push(speechFromItem(ok[0]!));
   else if (ok.length > 1) {
-    parts.push(`Saved ${ok.length} X items: ${ok.map((i) => i.headline ?? i.url).join("; ")}.`);
+    parts.push(`Saved ${ok.length} items: ${ok.map((i) => i.headline ?? i.url).join("; ")}.`);
   }
   for (const f of failed) parts.push(speechFromItem(f));
-  return parts.join(" ") || "X ingest finished.";
+  return parts.join(" ") || "Ingest finished.";
 }
 
 export class XIngestHarness implements AgentHarness {
@@ -45,7 +47,7 @@ export class XIngestHarness implements AgentHarness {
     displayName: "X Notes Ingest",
     version: "0.1.0",
     capabilities: ["research", "browser", "computer_use"],
-    notes: "Ingests X.com links from Apple Notes or a single URL via local browser capture.",
+    notes: "Ingests X.com and YouTube links from Apple Notes (Playwright + yt-dlp).",
   };
 
   constructor(
@@ -64,14 +66,16 @@ export class XIngestHarness implements AgentHarness {
     const intent = parseXIngestIntent(request.taskDescription);
     if (
       !intent &&
-      !/\b(x\.com|twitter|ingest.{0,20}(x|note)|x notes)\b/i.test(request.taskDescription)
+      !/\b(x\.com|twitter|youtube|youtu\.be|ingest.{0,20}(x|note|youtube)|x notes)\b/i.test(
+        request.taskDescription,
+      )
     ) {
       return {
         correlationId: request.correlationId,
         harnessId: this.manifest.id,
         status: "failed",
         output: "",
-        error: "Not an X ingest task",
+        error: "Not an X or YouTube ingest task",
         metadata: {},
       };
     }

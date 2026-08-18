@@ -32,6 +32,7 @@ import type { CanonicalMemoryRecord } from "@alfred/contracts";
 import {
   addXSource,
   cleanupUserMd,
+  composeNotesCaptureAdapter,
   dedupeUserMd,
   defaultMemoryPath,
   defaultOipMemoryRoot,
@@ -63,7 +64,7 @@ function flagValue(args: string[], name: string): string | undefined {
 
 async function captureAdapter() {
   const { createPlaywrightCaptureAdapter } = await import("@alfred/browser");
-  return createPlaywrightCaptureAdapter();
+  return composeNotesCaptureAdapter(createPlaywrightCaptureAdapter());
 }
 
 function resolveInputPath(src: string): string {

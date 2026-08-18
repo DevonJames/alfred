@@ -3,6 +3,7 @@ import type { OipLocalMemoryProvider } from "../oip-local/provider.js";
 import { SCHEMA_ORG, schemaOrgPerson } from "../oip-local/schema-org.js";
 import type { MemoryRevision } from "../oip-local/schemas.js";
 import type { XCapture, XSource } from "./types.js";
+import { isoDuration } from "./youtube-capture.js";
 
 export interface XOipWriteResult {
   memoryDid: string;
@@ -17,10 +18,11 @@ function xProvenance(opts: {
   author?: string;
   noteNames: string[];
   noteFolders: string[];
+  sourceType?: "x_com" | "youtube";
   extra?: Record<string, unknown>;
 }): Record<string, unknown> {
   return {
-    sourceType: "x_com",
+    sourceType: opts.sourceType ?? "x_com",
     extractionMethod: "x_notes_ingest",
     source: opts.url,
     learnedAt: opts.learnedAt,
@@ -38,6 +40,7 @@ export function captureContentHash(capture: XCapture): string {
     JSON.stringify({
       url: capture.canonicalUrl,
       text: capture.text,
+      description: capture.description ?? "",
       posts: capture.posts.map((p) => p.text),
       linked: capture.linkedPage?.text ?? "",
     }),
@@ -91,12 +94,14 @@ export async function writeXCaptureToOip(opts: {
   const noteFolders = [...new Set(opts.sources.map((s) => s.folder).filter(Boolean))];
   const publishedAt = capture.publishedAt ?? capture.posts[0]?.publishedAt ?? null;
   const contentHash = captureContentHash(capture);
+  const isVideo = capture.kind === "video";
   const provenance = xProvenance({
     url: capture.canonicalUrl,
     learnedAt,
     author: capture.author,
     noteNames,
     noteFolders,
+    sourceType: isVideo ? "youtube" : "x_com",
     extra: { authorHandle: capture.authorHandle, kind: capture.kind, contentHash },
   });
 
@@ -174,18 +179,25 @@ export async function writeXCaptureToOip(opts: {
     );
   }
 
-  const schemaType =
-    capture.kind === "article" || capture.kind === "linked_page"
+  const schemaType = isVideo
+    ? SCHEMA_ORG.VideoObject
+    : capture.kind === "article" || capture.kind === "linked_page"
       ? SCHEMA_ORG.Article
       : SCHEMA_ORG.SocialMediaPosting;
-  const schemaAtType =
-    capture.kind === "article" || capture.kind === "linked_page" ? "Article" : "SocialMediaPosting";
+  const schemaAtType = isVideo
+    ? "VideoObject"
+    : capture.kind === "article" || capture.kind === "linked_page"
+      ? "Article"
+      : "SocialMediaPosting";
   const noteLabel = noteNames.length ? noteNames.join(", ") : "";
-  const searchBits = ["x.com", "twitter", "X", capture.authorHandle, noteLabel, "note"]
-    .filter(Boolean)
-    .join(" ");
+  const searchBits = isVideo
+    ? ["youtube", "YouTube", "video", capture.author, capture.description, noteLabel, "note"]
+        .filter(Boolean)
+        .join(" ")
+    : ["x.com", "twitter", "X", capture.authorHandle, noteLabel, "note"].filter(Boolean).join(" ");
   const bodyText = [
     capture.text,
+    capture.description && isVideo ? capture.description : "",
     capture.quoted ? `Quoted: ${capture.quoted.text}` : "",
     capture.linkedPage ? `Linked: ${capture.linkedPage.title}\n${capture.linkedPage.text}` : "",
     searchBits,
@@ -193,6 +205,7 @@ export async function writeXCaptureToOip(opts: {
     .filter(Boolean)
     .join("\n\n");
 
+  const duration = isoDuration(capture.durationSeconds);
   const postingBody = {
     name: capture.headline,
     text: bodyText,
@@ -203,8 +216,10 @@ export async function writeXCaptureToOip(opts: {
       url: capture.canonicalUrl,
       datePublished: publishedAt,
       author: capture.author,
-      identifier: capture.canonicalUrl,
-      keywords: ["x.com", capture.kind, ...noteNames].filter(Boolean).join(", "),
+      description: capture.description,
+      duration,
+      identifier: capture.videoId || capture.canonicalUrl,
+      keywords: [isVideo ? "youtube" : "x.com", capture.kind, ...noteNames].filter(Boolean).join(", "),
     },
     alfred: {
       entityClass: capture.kind,
@@ -236,7 +251,9 @@ export async function writeXCaptureToOip(opts: {
     "Assertion",
     {
       name: `${capture.author} authored ${capture.headline}`,
-      text: `${capture.author} authored this X ${capture.kind}`,
+      text: isVideo
+        ? `${capture.author} authored this YouTube video`
+        : `${capture.author} authored this X ${capture.kind}`,
       subject: author.id,
       predicate: "authored",
       object: posting.id,
