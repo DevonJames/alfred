@@ -545,7 +545,8 @@ async function main(): Promise<void> {
     const result = await ingestXNotes({ profileId, note, capture, dryRun });
     console.log(`Sources: ${result.sources.map((s) => s.note).join(", ") || "(none)"}`);
     for (const p of result.processed) {
-      console.log(`  [${p.status}] ${p.headline ?? p.url}${p.error ? ` (${p.error})` : ""}`);
+      const title = [p.author, p.headline].filter(Boolean).join(" — ") || p.url;
+      console.log(`  [${p.status}] ${title}${p.error ? ` (${p.error})` : ""}`);
     }
     return;
   }

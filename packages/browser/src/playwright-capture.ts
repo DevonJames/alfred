@@ -116,18 +116,7 @@ function extractPageScript(wantId: string): string {
     const timeEl = el.querySelector("time");
     const time = timeEl?.getAttribute("datetime") ?? "";
     const timeHref = timeEl?.closest("a")?.href ?? "";
-    const statusLinks = [...el.querySelectorAll("a")]
-      .filter((a) => /\\/status\\/\\d+/.test(a.href) && (!quote || !quote.contains(a)))
-      .map((a) => a.href);
-    const ownHref = wantId
-      ? statusLinks.find((h) => h.includes("/status/" + wantId)) ||
-        (timeHref.includes("/status/" + wantId) ? timeHref : "")
-      : "";
-    const href =
-      ownHref ||
-      (timeHref && /\\/status\\/\\d+/.test(timeHref) ? timeHref : "") ||
-      statusLinks[0] ||
-      location.href;
+    const href = timeHref && /\\/status\\/\\d+/.test(timeHref) ? timeHref : "";
     const images = [...el.querySelectorAll("img")]
       .map((img) => img.src)
       .filter((src) => /pbs\\.twimg\\.com\\/media|ton\\.twitter\\.com/i.test(src));
@@ -168,15 +157,6 @@ function extractPageScript(wantId: string): string {
 
 async function extractPage(page: Page, url?: string): Promise<PageExtract> {
   return page.evaluate(extractPageScript(statusIdFromUrl(url ?? "") ?? "")) as Promise<PageExtract>;
-}
-
-function replyAddsValue(post: TweetExtract, authorHandle?: string): boolean {
-  if (!post.isReply) return true;
-  if (authorHandle && post.handle.toLowerCase() === authorHandle.toLowerCase()) return true;
-  if (post.text.length >= 80) return true;
-  if (/\d/.test(post.text) && post.text.length >= 40) return true;
-  if (post.outbound.length) return true;
-  return false;
 }
 
 async function downloadImages(
@@ -225,23 +205,34 @@ async function fetchLinkedPage(page: Page, url: string): Promise<XCapture["linke
   }
 }
 
-async function expandThread(page: Page): Promise<void> {
-  for (const label of ["Show more", "Show this thread", "Show replies", "See more"]) {
-    const btn = page.getByText(label, { exact: false }).first();
-    if (await btn.count()) {
-      await btn.click({ timeout: 2000 }).catch(() => undefined);
-      await page.waitForTimeout(800);
-    }
+/** Timestamp permalink inside the saved tweet — not a "replying to" / quote link. */
+function focusedTweetLocator(page: Page, statusId: string) {
+  return page.locator(`article[data-testid="tweet"]:has(a[href*="/status/${statusId}"] time)`);
+}
+
+/** Expand truncated text on the saved tweet only. Do not click "Show this thread" / replies. */
+async function expandFocusedTweet(page: Page, url: string, statusId?: string): Promise<void> {
+  const article = statusId
+    ? focusedTweetLocator(page, statusId).first()
+    : page.locator('article[data-testid="tweet"]').first();
+  const more = article.getByRole("button", { name: /^(show more|see more)$/i });
+  if (await more.count()) {
+    await more.click({ timeout: 2000 }).catch(() => undefined);
+    await page.waitForTimeout(400);
   }
-  await page.mouse.wheel(0, 2400);
-  await page.waitForTimeout(800);
+  if (statusId && !page.url().includes(statusId)) {
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45_000 }).catch(() => undefined);
+  }
 }
 
 function tweetHandle<T extends { handle?: string }>(t: T): string {
   return (t.handle ?? "").replace(/^@/, "").toLowerCase();
 }
 
-/** Prefer the tweet whose status id (or URL handle) matches the requested link. */
+/**
+ * Prefer the tweet whose timestamp permalink matches the requested status id.
+ * If X opened a different conversation, do not fall back to tweets[0].
+ */
 export function selectPrimaryTweet<T extends { href?: string; handle?: string }>(
   tweets: T[],
   url: string,
@@ -250,15 +241,16 @@ export function selectPrimaryTweet<T extends { href?: string; handle?: string }>
   if (want) {
     const match = tweets.find((t) => statusIdFromUrl(t.href ?? "") === want);
     if (match) return match;
-  }
-  const handle = handleFromXStatusUrl(url)?.toLowerCase();
-  if (handle) {
-    const matches = tweets.filter((t) => tweetHandle(t) === handle);
-    if (matches.length === 1) return matches[0];
-    if (matches.length > 0) {
-      const rootHandle = tweets[0] ? tweetHandle(tweets[0]) : "";
-      if (rootHandle && rootHandle !== handle) return matches[0];
+    const handle = handleFromXStatusUrl(url)?.toLowerCase();
+    if (handle) {
+      const matches = tweets.filter((t) => tweetHandle(t) === handle);
+      if (matches.length === 1) return matches[0];
+      if (matches.length > 1) {
+        const parentHref = tweets[0]?.href;
+        return matches.find((t) => t.href && t.href !== parentHref) ?? matches[0];
+      }
     }
+    return undefined;
   }
   return tweets[0];
 }
@@ -266,14 +258,33 @@ export function selectPrimaryTweet<T extends { href?: string; handle?: string }>
 export function toCapture(url: string, extracted: PageExtract, extras: Partial<XCapture> = {}): XCapture {
   const tweets = extracted.tweets;
   const primary = selectPrimaryTweet(tweets, url);
+  const want = statusIdFromUrl(url);
+  if (want && !primary && !extracted.articleBody) {
+    return {
+      url,
+      canonicalUrl: canonicalizeXUrl(url),
+      kind: "post",
+      author: extras.author || "",
+      headline: extras.headline || url,
+      text: "",
+      posts: [],
+      outboundUrls: [],
+      screenshots: extras.screenshots ?? [],
+      images: extras.images ?? [],
+      failure: extras.failure ?? {
+        reason: "could not find that post on the page — X showed a different conversation",
+      },
+      linkedPage: extras.linkedPage,
+    };
+  }
   const authorHandle = primary?.handle;
-  const authorPosts = tweets.filter(
-    (t) => authorHandle && t.handle.toLowerCase() === authorHandle.toLowerCase(),
-  );
-  const kept = [
-    ...(primary ? [primary] : []),
-    ...tweets.filter((t) => t !== primary && replyAddsValue(t, authorHandle)),
-  ];
+  const authorPosts = tweets.filter((t) => {
+    const handle = (t.handle ?? "").replace(/^@/, "").toLowerCase();
+    return Boolean(authorHandle && handle === tweetHandle(primary!));
+  });
+  const kept = primary
+    ? [primary, ...authorPosts.filter((t) => t !== primary)]
+    : [];
   const kind: XCapture["kind"] = extracted.articleBody
     ? "article"
     : primary?.quotedText
@@ -297,16 +308,20 @@ export function toCapture(url: string, extracted: PageExtract, extras: Partial<X
     isReply: t.isReply,
   }));
   const headline =
-    extracted.articleTitle ||
+    (extracted.articleBody ? extracted.articleTitle : undefined) ||
     primary?.text.split("\n")[0]?.slice(0, 120) ||
+    primary?.quotedText?.split("\n")[0]?.slice(0, 120) ||
     extras.headline ||
     url;
   const bodyFromAuthor = (primary ? [primary, ...authorPosts.filter((t) => t !== primary)] : []).map(
     (t) => t.text,
   );
   const text =
-    extracted.articleBody || bodyFromAuthor.filter(Boolean).join("\n\n") || extracted.pageText;
-  const outbound = [...new Set(tweets.flatMap((t) => t.outbound))].slice(0, 3);
+    extracted.articleBody ||
+    bodyFromAuthor.filter(Boolean).join("\n\n") ||
+    primary?.quotedText ||
+    (want ? "" : extracted.pageText);
+  const outbound = [...new Set((primary ? [primary] : []).flatMap((t) => t.outbound))].slice(0, 3);
   return {
     url,
     canonicalUrl: canonicalizeXUrl(url),
@@ -338,15 +353,14 @@ export async function captureXPage(
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45_000 });
     const statusId = statusIdFromUrl(url);
     if (statusId) {
-      await page
-        .locator(`article[data-testid="tweet"] a[href*="/status/${statusId}"]`)
+      await focusedTweetLocator(page, statusId)
         .first()
         .waitFor({ timeout: 12_000 })
         .catch(() => undefined);
     } else {
       await page.waitForTimeout(2000);
     }
-    await expandThread(page);
+    await expandFocusedTweet(page, url, statusId);
     let extracted = await extractPage(page, url);
 
     const empty = !extracted.tweets.length && !extracted.articleBody;
@@ -355,7 +369,7 @@ export async function captureXPage(
       (config.cua === "fallback" && (extracted.loginWall || empty || extracted.paywall));
     if (needsCua) {
       await runComputerUseFallback(page, url);
-      await expandThread(page);
+      await expandFocusedTweet(page, url, statusId);
       extracted = await extractPage(page, url);
     }
 
@@ -375,11 +389,12 @@ export async function captureXPage(
     }
 
     const screenshot = await page.screenshot({ fullPage: true, type: "png" });
-    const imageUrls = extracted.tweets.flatMap((t) => t.images);
+    const primaryTweet = selectPrimaryTweet(extracted.tweets, url);
+    const imageUrls = (primaryTweet?.images ?? []).slice();
     const images = await downloadImages(page, imageUrls);
 
     let linkedPage: XCapture["linkedPage"];
-    const outbound = extracted.tweets.flatMap((t) => t.outbound)[0];
+    const outbound = primaryTweet?.outbound[0];
     if (outbound) {
       linkedPage = await fetchLinkedPage(page, outbound);
       if (linkedPage && !linkedPage.text) {
@@ -399,7 +414,7 @@ export async function captureXPage(
         text: "[Could not ingest linked page: paywall or empty]",
       };
     }
-    if (!capture.text.trim() && !capture.posts.length) {
+    if (!capture.failure && !capture.text.trim() && !capture.posts.some((p) => p.text.trim())) {
       capture.failure = {
         reason: "empty capture — page did not yield post or article text",
         headline: capture.headline,

@@ -39,14 +39,40 @@ describe("selectPrimaryTweet", () => {
     expect(picked).toEqual(reply);
   });
 
-  it("falls back to the first tweet when the page has no matching status", () => {
+  it("does not ingest the conversation parent when the saved tweet is missing", () => {
+    const parent = tweet({
+      href: "https://x.com/acme/status/111",
+      text: "everyone I know is canceling software and rebuilding internally",
+      author: "Acme",
+      handle: "acme",
+    });
+    const otherReply = tweet({
+      href: "https://x.com/random/status/333",
+      text: "Oh I’d love to!",
+      author: "Random",
+      handle: "random",
+    });
+    const url = "https://x.com/tomgreenwald/status/2089475434903953561";
+    expect(selectPrimaryTweet([parent, otherReply], url)).toBeUndefined();
+    const capture = toCapture(url, {
+      loginWall: false,
+      paywall: false,
+      tweets: [parent, otherReply],
+      pageText: parent.text,
+    });
+    expect(capture.failure?.reason).toMatch(/could not find that post/);
+    expect(capture.headline).not.toMatch(/canceling software/);
+    expect(capture.text).toBe("");
+  });
+
+  it("falls back to the first tweet only for non-status pages", () => {
     const only = tweet({
       href: "https://x.com/ada/status/1",
       text: "hello",
       author: "Ada",
       handle: "ada",
     });
-    expect(selectPrimaryTweet([only], "https://x.com/other/status/99")).toEqual(only);
+    expect(selectPrimaryTweet([only], "https://x.com/ada")).toEqual(only);
   });
 
   it("picks the reply by URL handle when every card's href is the parent permalink", () => {

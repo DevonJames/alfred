@@ -13,16 +13,26 @@ const TRACKING_PARAMS = new Set([
   "refsrc",
 ]);
 
+/** Notes HTML often turns `&amp;t=` into `&ampt=` / `&ampampt=`. */
+export function repairExtractedUrl(raw: string): string {
+  let s = raw.trim();
+  for (let i = 0; i < 5; i++) {
+    const next = s.replace(/&amp;/gi, "&");
+    if (next === s) break;
+    s = next;
+  }
+  return s.replace(/&ampampt=/gi, "&t=").replace(/&ampt=/gi, "&t=");
+}
+
 function collectUrls(text: string, re: RegExp): string[] {
   if (!text) return [];
-  const decoded = text
-    .replace(/&amp;/g, "&")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'");
+  const decoded = repairExtractedUrl(
+    text.replace(/&quot;/g, '"').replace(/&#39;/g, "'"),
+  );
   const found: string[] = [];
   const seen = new Set<string>();
   for (const m of decoded.matchAll(re)) {
-    const raw = (m[0] ?? "").replace(/[.,;:!?]+$/, "");
+    const raw = repairExtractedUrl((m[0] ?? "").replace(/[.,;:!?]+$/, ""));
     if (!raw) continue;
     const key = raw.toLowerCase();
     if (seen.has(key)) continue;
@@ -59,7 +69,7 @@ export function isXUrl(url: string): boolean {
 export function canonicalizeXUrl(raw: string): string {
   let url: URL;
   try {
-    url = new URL(raw.trim());
+    url = new URL(repairExtractedUrl(raw));
   } catch {
     return raw.trim();
   }
@@ -98,7 +108,7 @@ export function statusIdFromUrl(url: string): string | undefined {
 /** Handle from https://x.com/{handle}/status/{id} (not /i/status/...). */
 export function handleFromXStatusUrl(raw: string): string | undefined {
   try {
-    const url = new URL(raw.trim());
+    const url = new URL(repairExtractedUrl(raw));
     const host = url.hostname.toLowerCase().replace(/^www\./, "");
     if (host !== "x.com" && host !== "twitter.com" && host !== "mobile.x.com") return undefined;
     const parts = url.pathname.split("/").filter(Boolean);

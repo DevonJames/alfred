@@ -89,4 +89,13 @@ describe("x-ingest urls", () => {
       "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
     );
   });
+
+  it("repairs Notes-mangled &amp;t= query strings", () => {
+    expect(
+      extractXUrls("https://x.com/cyrilxbt/status/2088088373642539490?s=12&ampampt=JU3179xa-tFaV7rjXb2E3Q"),
+    ).toEqual(["https://x.com/cyrilxbt/status/2088088373642539490?s=12&t=JU3179xa-tFaV7rjXb2E3Q"]);
+    expect(
+      canonicalizeXUrl("https://x.com/cyrilxbt/status/2088088373642539490?s=12&ampt=abc"),
+    ).toBe("https://x.com/i/status/2088088373642539490");
+  });
 });
