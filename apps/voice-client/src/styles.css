@@ -32,6 +32,11 @@ body {
   grid-template-rows: auto 1fr auto;
 }
 
+body[data-layout="chat"] {
+  overflow: hidden;
+  height: 100vh;
+}
+
 .grid-bg {
   position: fixed;
   inset: 0;
@@ -89,6 +94,17 @@ body {
   color: var(--muted);
 }
 
+.header-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+}
+
+#layout-toggle {
+  padding: 0.55rem 0.95rem;
+  font-size: 0.68rem;
+}
+
 .link-state {
   display: flex;
   align-items: center;
@@ -133,23 +149,109 @@ body {
   }
 }
 
-.stage {
+.workspace {
   position: relative;
   z-index: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
   width: min(1100px, 100%);
   margin: 0 auto;
   padding: 0 clamp(0.75rem, 3vw, 1.5rem);
+}
+
+.thread {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 0.55rem;
+  overflow: hidden;
+  pointer-events: none;
+  opacity: 0.32;
+  padding: 1.5rem 6% 5.5rem;
+  font-size: 0.82rem;
+  line-height: 1.45;
+  view-transition-name: thread;
+  transition:
+    opacity 0.4s ease,
+    font-size 0.4s ease,
+    padding 0.4s ease;
+}
+
+.bubble {
+  margin: 0;
+  max-width: 72%;
+  text-wrap: pretty;
+}
+
+.bubble-user {
+  align-self: flex-end;
+  color: #ffe2b0;
+  font-family: var(--font-mono);
+  text-align: right;
+}
+
+.bubble-assistant {
+  align-self: flex-start;
+  color: var(--ink);
+  font-family: var(--font-display);
+  font-weight: 600;
+}
+
+.bubble.streaming::after {
+  content: "";
+  display: inline-block;
+  width: 0.45ch;
+  height: 0.85em;
+  margin-left: 0.15ch;
+  background: var(--mint);
+  animation: blink 0.9s steps(1) infinite;
+  vertical-align: baseline;
+}
+
+.stage {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  margin: auto 0;
   display: grid;
   align-content: center;
   gap: 1.1rem;
+  view-transition-name: stage;
+  transition:
+    gap 0.4s ease,
+    flex-basis 0.4s ease,
+    margin 0.4s ease;
+}
+
+.stage::before {
+  content: "";
+  position: absolute;
+  inset: -10% 0;
+  z-index: -1;
+  pointer-events: none;
+  background: radial-gradient(
+    ellipse at center,
+    rgba(5, 8, 15, 0.88) 18%,
+    rgba(5, 8, 15, 0.45) 52%,
+    transparent 78%
+  );
+  transition: opacity 0.4s ease;
 }
 
 .user-panel {
   padding: 0.85rem 0.15rem 0.35rem;
   border-bottom: 1px solid rgba(255, 179, 71, 0.18);
+  overflow: hidden;
   transition:
     border-color 0.2s ease,
-    opacity 0.2s ease;
+    opacity 0.4s ease,
+    max-height 0.4s ease,
+    padding 0.4s ease,
+    min-height 0.4s ease;
   opacity: 0.72;
 }
 
@@ -199,6 +301,7 @@ body {
 #wave {
   width: 100%;
   height: auto;
+  max-height: 42vh;
   aspect-ratio: 1400 / 420;
   display: block;
   border: 1px solid var(--line);
@@ -212,6 +315,10 @@ body {
       rgba(61, 255, 196, 0.03) 3px
     );
   clip-path: polygon(0 8%, 2% 0, 98% 0, 100% 8%, 100% 92%, 98% 100%, 2% 100%, 0 92%);
+  view-transition-name: wave;
+  transition:
+    max-height 0.4s ease,
+    aspect-ratio 0.4s ease;
 }
 
 .hud-ring {
@@ -234,6 +341,12 @@ body {
 .readout {
   min-height: 7.5rem;
   padding: 0.25rem 0.15rem 0;
+  overflow: hidden;
+  transition:
+    opacity 0.4s ease,
+    max-height 0.4s ease,
+    min-height 0.4s ease,
+    padding 0.4s ease;
 }
 
 .readout-meta {
@@ -306,7 +419,14 @@ button {
   letter-spacing: 0.2em;
   padding: 0.85rem 1.4rem;
   cursor: pointer;
-  clip-path: polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 10px 100%, 0 calc(100% - 10px));
+  clip-path: polygon(
+    0 0,
+    calc(100% - 10px) 0,
+    100% 10px,
+    100% 100%,
+    10px 100%,
+    0 calc(100% - 10px)
+  );
   transition:
     background 0.15s ease,
     color 0.15s ease,
@@ -345,11 +465,130 @@ body.linked .brand-mark {
   color: #eafff8;
 }
 
+.composer {
+  z-index: 2;
+  display: flex;
+  align-items: flex-end;
+  gap: 0.55rem;
+  max-height: 0;
+  opacity: 0;
+  overflow: hidden;
+  pointer-events: none;
+  padding: 0;
+  margin: 0;
+  transition:
+    max-height 0.4s ease,
+    opacity 0.4s ease,
+    padding 0.4s ease;
+}
+
+.composer textarea {
+  flex: 1;
+  resize: none;
+  min-height: 2.8rem;
+  max-height: 10rem;
+  padding: 0.75rem 0.9rem;
+  border: 1px solid var(--line);
+  background: rgba(10, 18, 32, 0.85);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 0.95rem;
+  line-height: 1.4;
+  clip-path: polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 8px 100%, 0 calc(100% - 8px));
+}
+
+.composer textarea:focus {
+  outline: none;
+  border-color: var(--mint);
+}
+
+.composer textarea::placeholder {
+  color: var(--muted);
+}
+
+.composer button {
+  padding: 0.75rem 1rem;
+  font-size: 0.68rem;
+}
+
+#dictate.active {
+  border-color: var(--amber);
+  color: var(--amber);
+  background: rgba(255, 179, 71, 0.12);
+}
+
+body[data-layout="chat"] .thread {
+  position: relative;
+  inset: auto;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  pointer-events: auto;
+  opacity: 1;
+  font-size: 1.02rem;
+  padding: 0.5rem 0.15rem 1rem;
+  justify-content: flex-start;
+}
+
+body[data-layout="chat"] .bubble {
+  max-width: 78%;
+}
+
+body[data-layout="chat"] .bubble-user {
+  font-size: 0.98rem;
+}
+
+body[data-layout="chat"] .bubble-assistant {
+  font-size: clamp(1.05rem, 2.2vw, 1.45rem);
+}
+
+body[data-layout="chat"] .stage {
+  margin: 0;
+  gap: 0.35rem;
+  flex: 0 0 auto;
+}
+
+body[data-layout="chat"] .stage::before {
+  opacity: 0;
+}
+
+body[data-layout="chat"] .user-panel,
+body[data-layout="chat"] .readout {
+  max-height: 0;
+  min-height: 0;
+  opacity: 0;
+  padding: 0;
+  margin: 0;
+  border: none;
+  pointer-events: none;
+}
+
+body[data-layout="chat"] #wave {
+  max-height: 72px;
+  aspect-ratio: 1400 / 160;
+}
+
+body[data-layout="chat"] .hud-ring {
+  display: none;
+}
+
+body[data-layout="chat"] .composer {
+  max-height: 12rem;
+  opacity: 1;
+  pointer-events: auto;
+  padding: 0.35rem 0 0.85rem;
+}
+
 @media (max-width: 640px) {
   .top,
   .bottom {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .header-controls {
+    width: 100%;
+    justify-content: space-between;
   }
 
   .meta {
@@ -358,5 +597,9 @@ body.linked .brand-mark {
 
   .hud-ring {
     display: none;
+  }
+
+  body[data-layout="chat"] .bubble {
+    max-width: 92%;
   }
 }

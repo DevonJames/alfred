@@ -14,6 +14,7 @@ import {
   type RemoteParticipant,
 } from "@livekit/rtc-node";
 import type { AudioFrame } from "@alfred/contracts";
+import { parseUiCommand } from "@alfred/core";
 import { createLiveKitToken } from "./tokens.js";
 import { LiveKitMediaBridge } from "./media-bridge.js";
 import { EnergyVad } from "./energy-vad.js";
@@ -92,6 +93,14 @@ export class LiveKitRoomSession {
     room.on(RoomEvent.ParticipantConnected, (p: RemoteParticipant) => {
       this.log.log(`[livekit] participant connected: ${p.identity}`);
     });
+    room.on(
+      RoomEvent.DataReceived,
+      (payload: Uint8Array, _participant?: RemoteParticipant, _kind?: unknown, topic?: string) => {
+        if (topic && topic !== "alfred.control") return;
+        const command = parseUiCommand(payload, topic);
+        if (command) this.opts.media.pushUiCommand(command);
+      },
+    );
 
     await room.connect(this.opts.url, token, {
       autoSubscribe: true,

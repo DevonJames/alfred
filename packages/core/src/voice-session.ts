@@ -16,7 +16,7 @@ import type { Clock } from "./clock.js";
 import type { EventLedger } from "./event-ledger.js";
 import type { BackchannelClassifier, InterruptionArbiter } from "./interruption.js";
 import { HeuristicBackchannelClassifier, RuleBasedInterruptionArbiter } from "./interruption.js";
-import type { MediaPort } from "./media-port.js";
+import type { MediaPort, UiCommand, UiLayout } from "./media-port.js";
 import { NullMediaPort } from "./media-port.js";
 import type {
   AgentRouterPort,
@@ -89,6 +89,16 @@ export class VoiceSessionController {
   private running = false;
   private unsubAudio?: () => void;
   private unsubVad?: () => void;
+  private unsubUi?: () => void;
+  /** Client layout: chat is text-first (no STT auto-commit). */
+  private uiLayout: UiLayout = "voice";
+  /** Chat-layout hold-to-transcribe into the composer (never commits). */
+  private dictating = false;
+  /** Whether the in-flight / pending user turn should be spoken. */
+  private pendingUserSpeak?: boolean;
+  private pendingUserSource?: "stt.end_of_turn" | "text";
+  private lastCaptionRevealMs = 0;
+  private pendingCaptionReveal?: string;
 
   private partialText = "";
   private provisionalResponseId?: string;
@@ -151,6 +161,9 @@ export class VoiceSessionController {
     this.unsubVad = this.media.onVad((signal) => {
       void this.onVad(signal);
     });
+    this.unsubUi = this.media.onUiCommand((command) => {
+      this.handleUiCommand(command);
+    });
 
     void this.consumeSttEvents();
   }
@@ -159,6 +172,8 @@ export class VoiceSessionController {
     this.running = false;
     this.unsubAudio?.();
     this.unsubVad?.();
+    this.unsubUi?.();
+    this.unsubUi = undefined;
     this.provisionalAbort?.abort({ reason: "session_termination" });
     await this.sttSession?.close();
     await this.ttsSession?.close();
@@ -169,6 +184,50 @@ export class VoiceSessionController {
   /** Test helper: inject STT events without audio. */
   async handleSttEvent(event: SttTurnEvent): Promise<void> {
     await this.onSttEvent(event);
+  }
+
+  /** Client typed send (or test helper): same session, no TTS. */
+  async handleUserText(text: string): Promise<void> {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+
+    this.provisionalAbort?.abort({ reason: "superseded_generation" });
+    this.provisionalResponseId = undefined;
+    if (this.isSpeaking || this.activeContextId) {
+      await this.stopAssistantPlayback("text_supersede");
+    }
+
+    if (this.turnInFlight) {
+      this.pendingUserText = trimmed;
+      this.pendingUserSpeak = false;
+      this.pendingUserSource = "text";
+      return;
+    }
+
+    this.turnInFlight = true;
+    this.lastUserTurn = trimmed;
+    this.pendingUserText = undefined;
+    this.bargeInListening = false;
+    this.bargeInDraft = undefined;
+    try {
+      await this.runCommittedTurn(trimmed, { source: "text", speak: false });
+    } catch (err) {
+      console.error("[voice] runCommittedTurn (text) failed:", err);
+    }
+  }
+
+  /** Client layout / dictate / text commands from the media port. */
+  handleUiCommand(command: UiCommand): void {
+    if (command.type === "layout") {
+      this.uiLayout = command.layout;
+      if (command.layout === "voice") this.dictating = false;
+      return;
+    }
+    if (command.type === "dictate") {
+      this.dictating = command.active && this.uiLayout === "chat";
+      return;
+    }
+    void this.handleUserText(command.text);
   }
 
   getLatencyMarks(): ReadonlyMap<LatencyMarkName, number> {
@@ -260,10 +319,7 @@ export class VoiceSessionController {
   }
 
   /** Push user STT to the client HUD (partials throttled). */
-  private async publishUserTranscriptUi(
-    text: string,
-    kind: "partial" | "final",
-  ): Promise<void> {
+  private async publishUserTranscriptUi(text: string, kind: "partial" | "final"): Promise<void> {
     const trimmed = text.trim();
     if (!trimmed) return;
     const now = this.deps.clock.now();
@@ -349,8 +405,16 @@ export class VoiceSessionController {
 
   private sameUtterance(a: string | undefined, b: string | undefined): boolean {
     if (!a?.trim() || !b?.trim()) return false;
-    const na = a.toLowerCase().replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
-    const nb = b.toLowerCase().replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
+    const na = a
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    const nb = b
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
     if (na === nb) return true;
     return na.includes(nb) || nb.includes(na);
   }
@@ -380,6 +444,11 @@ export class VoiceSessionController {
   private async onSttEvent(event: SttTurnEvent): Promise<void> {
     if (process.env.ALFRED_LOG_VOICE === "1" || process.env.ALFRED_LOG_STT === "1") {
       console.log(`[voice] stt ${event.type}${event.text ? `: ${event.text.slice(0, 100)}` : ""}`);
+    }
+
+    if (this.uiLayout === "chat") {
+      await this.onChatLayoutStt(event);
+      return;
     }
 
     const eventText =
@@ -420,9 +489,7 @@ export class VoiceSessionController {
         event.type === "end_of_turn")
     ) {
       if (process.env.ALFRED_LOG_VOICE === "1" || process.env.ALFRED_LOG_STT === "1") {
-        console.log(
-          `[voice] ignoring echo stt ${event.type}: "${(eventText ?? "").slice(0, 80)}"`,
-        );
+        console.log(`[voice] ignoring echo stt ${event.type}: "${(eventText ?? "").slice(0, 80)}"`);
       }
       return;
     }
@@ -531,6 +598,26 @@ export class VoiceSessionController {
           type: "error",
           payload: { source: "stt", error: event.error, failureClass: event.failureClass },
         });
+        break;
+    }
+  }
+
+  /** Chat layout: STT fills the composer while dictating; never auto-commits. */
+  private async onChatLayoutStt(event: SttTurnEvent): Promise<void> {
+    if (!this.dictating) return;
+    switch (event.type) {
+      case "start_of_turn":
+      case "partial_transcript":
+      case "eager_end_of_turn":
+      case "turn_resumed":
+        this.partialText = event.text ?? this.partialText;
+        await this.publishUserTranscriptUi(this.partialText, "partial");
+        break;
+      case "end_of_turn":
+        this.partialText = event.text ?? this.partialText;
+        await this.publishUserTranscriptUi(this.partialText, "final");
+        break;
+      default:
         break;
     }
   }
@@ -707,13 +794,18 @@ export class VoiceSessionController {
     });
   }
 
-  private async runCommittedTurn(text: string): Promise<void> {
+  private async runCommittedTurn(
+    text: string,
+    opts?: { source?: "stt.end_of_turn" | "text"; speak?: boolean },
+  ): Promise<void> {
+    const source = opts?.source ?? "stt.end_of_turn";
+    const speak = opts?.speak ?? true;
     const turnId = createId("turn");
     await this.deps.events.emit({
       sessionId: this.deps.sessionId,
       type: "turn.committed",
       turnId,
-      payload: { text, source: "stt.end_of_turn" },
+      payload: { text, source },
     });
 
     await this.deps.memory.commitTurn({
@@ -749,7 +841,7 @@ export class VoiceSessionController {
         await this.deps.responseLedger.commit(responseId, assistantText);
         this.activeResponseId = responseId;
         console.log(`[voice] speaking briefing: "${assistantText.slice(0, 160)}"`);
-        await this.speakWithMultiContext(responseId, assistantText, "primary");
+        await this.deliverAssistant(responseId, assistantText, speak);
         await this.deps.memory.commitTurn({
           profileId: this.deps.profileId,
           sessionId: this.deps.sessionId,
@@ -773,15 +865,7 @@ export class VoiceSessionController {
           },
         });
       } finally {
-        this.turnInFlight = false;
-        const pending = this.pendingUserText;
-        this.pendingUserText = undefined;
-        if (pending) {
-          this.bargeInListening = false;
-          this.bargeInDraft = undefined;
-          await this.publishUserTranscriptUi(pending, "final");
-          this.commitEndOfTurn(pending);
-        }
+        await this.finishTurn({ speak });
       }
       return;
     }
@@ -830,7 +914,7 @@ export class VoiceSessionController {
         }
         await this.deps.responseLedger.commit(responseId, assistantText);
         this.activeResponseId = responseId;
-        await this.speakWithMultiContext(responseId, assistantText, "primary");
+        await this.deliverAssistant(responseId, assistantText, speak);
         await this.deps.memory.commitTurn({
           profileId: this.deps.profileId,
           sessionId: this.deps.sessionId,
@@ -844,15 +928,7 @@ export class VoiceSessionController {
       } catch (err) {
         console.error("[voice] X ingest failed:", err);
       } finally {
-        this.turnInFlight = false;
-        const pending = this.pendingUserText;
-        this.pendingUserText = undefined;
-        if (pending) {
-          this.bargeInListening = false;
-          this.bargeInDraft = undefined;
-          await this.publishUserTranscriptUi(pending, "final");
-          this.commitEndOfTurn(pending);
-        }
+        await this.finishTurn({ speak });
       }
       return;
     }
@@ -869,12 +945,12 @@ export class VoiceSessionController {
     });
 
     const appendOffer = briefingDecision?.action === "chat" && briefingDecision.appendOffer;
-    const offerHint =
-      briefingDecision?.action === "chat" ? briefingDecision.systemHint : undefined;
+    const offerHint = briefingDecision?.action === "chat" ? briefingDecision.systemHint : undefined;
 
     try {
       let responseId = this.provisionalResponseId;
       let assistantText = responseId ? this.deps.responseLedger.getProposedText(responseId) : "";
+      let streamedCaptions = false;
 
       // Soft-offer turns always regenerate so the system hint applies (skip provisional).
       // Always regenerate when durable memory is available — provisional EagerEOT
@@ -905,7 +981,10 @@ export class VoiceSessionController {
           availableCapabilities,
           dueReminders,
         });
-        assistantText = await this.generateCommitted(prompt.messages, responseId, dueReminders);
+        assistantText = await this.generateCommitted(prompt.messages, responseId, dueReminders, {
+          streamCaptions: !speak,
+        });
+        streamedCaptions = !speak;
       }
 
       if (appendOffer && this.deps.briefing) {
@@ -928,7 +1007,9 @@ export class VoiceSessionController {
       await this.deps.responseLedger.commit(responseId, assistantText);
       this.activeResponseId = responseId;
       console.log(`[voice] speaking: "${assistantText.slice(0, 160)}"`);
-      await this.speakWithMultiContext(responseId, assistantText, "primary");
+      await this.deliverAssistant(responseId, assistantText, speak, {
+        alreadyStreaming: streamedCaptions,
+      });
       await this.deps.memory.commitTurn({
         profileId: this.deps.profileId,
         sessionId: this.deps.sessionId,
@@ -952,21 +1033,7 @@ export class VoiceSessionController {
         },
       });
     } finally {
-      this.turnInFlight = false;
-      const pending = this.pendingUserText;
-      this.pendingUserText = undefined;
-      if (pending) {
-        this.bargeInListening = false;
-        this.bargeInDraft = undefined;
-        await this.publishUserTranscriptUi(pending, "final");
-        // Force-start the interrupting turn (do not re-queue as barge-in).
-        await this.commitEndOfTurn(pending, { force: true });
-      } else if (this.bargeInListening) {
-        // Audio already cut; wait for end_of_turn with the full ask.
-        console.log("[voice] barge-in listening for complete ask");
-      } else {
-        this.armEchoGuard();
-      }
+      await this.finishTurn({ speak });
     }
   }
 
@@ -990,6 +1057,7 @@ export class VoiceSessionController {
     messages: { role: "system" | "user" | "assistant" | "tool"; content: string }[],
     responseId: string,
     dueReminders: DueReminderSummary[] = [],
+    opts?: { streamCaptions?: boolean },
   ): Promise<string> {
     const llmId =
       this.deps.config.pipeline.llmPriority?.orderedProviderIds[0] ?? "llm.openai.terra";
@@ -1000,6 +1068,11 @@ export class VoiceSessionController {
     const tools = this.deps.reminders
       ? [DELEGATE_TASK_TOOL, UPDATE_REMINDER_TOOL]
       : [DELEGATE_TASK_TOOL];
+    if (opts?.streamCaptions) {
+      this.lastCaptionRevealMs = 0;
+      this.pendingCaptionReveal = undefined;
+      await this.media.publishCaption({ type: "start", text: "" });
+    }
     for await (const chunk of llm.generateStream({
       messages,
       modelPreset: "conversational",
@@ -1013,6 +1086,9 @@ export class VoiceSessionController {
         }
         text += chunk.text;
         await this.deps.responseLedger.appendProposed(responseId, chunk.text);
+        if (opts?.streamCaptions) {
+          await this.publishCaptionReveal(text);
+        }
       }
       if (chunk.type === "tool_call") {
         toolCall = { toolName: chunk.toolName, toolArgs: chunk.toolArgs };
@@ -1034,14 +1110,19 @@ export class VoiceSessionController {
           confirmationRequired: false,
           timeoutMs: 600_000,
         });
-        return result.output || result.error || text;
+        const out = result.output || result.error || text;
+        if (opts?.streamCaptions) await this.publishCaptionReveal(out, true);
+        return out;
       }
     }
     if (toolCall?.toolName === "update_reminder" && this.deps.reminders) {
       const ack = await this.applyReminderUpdate(toolCall.toolArgs ?? {}, dueReminders);
       const spoken = text.trim();
-      return spoken || ack;
+      const out = spoken || ack;
+      if (opts?.streamCaptions) await this.publishCaptionReveal(out, true);
+      return out;
     }
+    if (opts?.streamCaptions) await this.publishCaptionReveal(text, true);
     return text;
   }
 
@@ -1059,8 +1140,7 @@ export class VoiceSessionController {
       return "I need to know whether to complete, dismiss, or snooze that reminder.";
     }
 
-    const due =
-      dueReminders.length > 0 ? dueReminders : await this.loadDueReminders();
+    const due = dueReminders.length > 0 ? dueReminders : await this.loadDueReminders();
     const resolved = resolveReminderMatch(due, {
       recordId: typeof args.recordId === "string" ? args.recordId : null,
       match: typeof args.match === "string" ? args.match : null,
@@ -1098,6 +1178,81 @@ export class VoiceSessionController {
       console.error("[voice] update_reminder failed:", err);
       return "I couldn't update that reminder just now.";
     }
+  }
+
+  private async finishTurn(opts?: { speak?: boolean }): Promise<void> {
+    this.turnInFlight = false;
+    const pending = this.pendingUserText;
+    this.pendingUserText = undefined;
+    if (pending) {
+      const source = this.pendingUserSource ?? "stt.end_of_turn";
+      this.pendingUserSpeak = undefined;
+      this.pendingUserSource = undefined;
+      this.bargeInListening = false;
+      this.bargeInDraft = undefined;
+      if (source === "text") {
+        this.turnInFlight = true;
+        this.lastUserTurn = pending;
+        void this.runCommittedTurn(pending, { source: "text", speak: false }).catch((err) => {
+          console.error("[voice] runCommittedTurn (text drain) failed:", err);
+        });
+        return;
+      }
+      await this.publishUserTranscriptUi(pending, "final");
+      await this.commitEndOfTurn(pending, { force: true });
+      return;
+    }
+    this.pendingUserSpeak = undefined;
+    this.pendingUserSource = undefined;
+    if (this.bargeInListening) {
+      console.log("[voice] barge-in listening for complete ask");
+      return;
+    }
+    if (opts?.speak !== false) this.armEchoGuard();
+  }
+
+  private async deliverAssistant(
+    responseId: string,
+    text: string,
+    speak: boolean,
+    opts?: { alreadyStreaming?: boolean },
+  ): Promise<void> {
+    if (speak) {
+      await this.speakWithMultiContext(responseId, text, "primary");
+      return;
+    }
+    await this.deliverTextCaption(responseId, text, opts);
+  }
+
+  private async deliverTextCaption(
+    responseId: string,
+    text: string,
+    opts?: { alreadyStreaming?: boolean },
+  ): Promise<void> {
+    if (!text.trim()) return;
+    await this.deps.responseLedger.addSegment(responseId, "primary", text);
+    await this.deps.responseLedger.markDelivered(responseId, text);
+    if (!opts?.alreadyStreaming) {
+      await this.media.publishCaption({ type: "start", text });
+    }
+    await this.publishCaptionReveal(text, true);
+    await this.media.publishCaption({ type: "end", reason: "complete" });
+    if (this.deps.fsm.canTransition("Listening")) {
+      await this.deps.fsm.transition("Listening", "voice.text_turn_complete");
+    } else {
+      await this.deps.fsm.force("Listening", "voice.text_turn_complete");
+    }
+  }
+
+  private async publishCaptionReveal(text: string, force = false): Promise<void> {
+    const now = this.deps.clock.now();
+    if (!force && now - this.lastCaptionRevealMs < 50) {
+      this.pendingCaptionReveal = text;
+      return;
+    }
+    this.lastCaptionRevealMs = now;
+    this.pendingCaptionReveal = undefined;
+    await this.media.publishCaption({ type: "reveal", text });
   }
 
   private async speakWithMultiContext(
@@ -1267,8 +1422,7 @@ export class VoiceSessionController {
   private recentConversationForPrompt(): { role: "user" | "assistant"; text: string }[] {
     if (this.recentTurns.length === 0) return [];
     const last = this.recentTurns[this.recentTurns.length - 1];
-    const prior =
-      last?.role === "user" ? this.recentTurns.slice(0, -1) : this.recentTurns;
+    const prior = last?.role === "user" ? this.recentTurns.slice(0, -1) : this.recentTurns;
     return prior.map((t) => ({ role: t.role, text: t.text }));
   }
 

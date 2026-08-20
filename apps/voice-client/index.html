@@ -12,7 +12,7 @@
     />
     <link rel="stylesheet" href="/src/styles.css" />
   </head>
-  <body>
+  <body data-layout="voice">
     <div class="grid-bg" aria-hidden="true"></div>
     <div class="vignette" aria-hidden="true"></div>
 
@@ -21,42 +21,62 @@
         <span class="brand-mark">ALFRED</span>
         <span class="brand-sub">UPLINK // VOICE</span>
       </div>
-      <div class="link-state">
-        <span id="link-dot" class="dot"></span>
-        <span id="status">OFFLINE</span>
+      <div class="header-controls">
+        <button id="layout-toggle" type="button" aria-pressed="false">CHAT</button>
+        <div class="link-state">
+          <span id="link-dot" class="dot"></span>
+          <span id="status">OFFLINE</span>
+        </div>
       </div>
     </header>
 
-    <section class="stage">
-      <div id="user-panel" class="user-panel">
-        <div class="user-meta">
-          <span class="user-tag">YOU // MIC</span>
-          <span id="user-mode">IDLE</span>
-        </div>
-        <p id="user-caption" class="user-caption">
-          <span id="user-text" class="placeholder">Speak to uplink…</span
-          ><span id="user-cursor" class="cursor user-cursor" hidden></span>
-        </p>
-      </div>
+    <div class="workspace">
+      <div id="thread" class="thread" aria-live="polite"></div>
 
-      <canvas id="wave" width="1400" height="420" aria-label="Live speech waveform"></canvas>
-      <div class="hud-ring" aria-hidden="true"></div>
-
-      <div class="readout">
-        <div class="readout-meta">
-          <span class="alfred-tag">ALFRED // OUT</span>
-          <span>
-            <span id="mode-tag">STANDBY</span>
-            ·
-            <span id="level-tag">LVL --</span>
-          </span>
+      <section class="stage">
+        <div id="user-panel" class="user-panel">
+          <div class="user-meta">
+            <span class="user-tag">YOU // MIC</span>
+            <span id="user-mode">IDLE</span>
+          </div>
+          <p id="user-caption" class="user-caption">
+            <span id="user-text" class="placeholder">Speak to uplink…</span
+            ><span id="user-cursor" class="cursor user-cursor" hidden></span>
+          </p>
         </div>
-        <p id="caption" class="caption">
-          <span id="caption-live"></span><span id="caption-rest" class="caption-rest"></span
-          ><span id="cursor" class="cursor" hidden></span>
-        </p>
-      </div>
-    </section>
+
+        <canvas id="wave" width="1400" height="420" aria-label="Live speech waveform"></canvas>
+        <div class="hud-ring" aria-hidden="true"></div>
+
+        <div class="readout">
+          <div class="readout-meta">
+            <span class="alfred-tag">ALFRED // OUT</span>
+            <span>
+              <span id="mode-tag">STANDBY</span>
+              ·
+              <span id="level-tag">LVL --</span>
+            </span>
+          </div>
+          <p id="caption" class="caption">
+            <span id="caption-live"></span><span id="caption-rest" class="caption-rest"></span
+            ><span id="cursor" class="cursor" hidden></span>
+          </p>
+        </div>
+      </section>
+
+      <form id="composer" class="composer" autocomplete="off">
+        <textarea
+          id="composer-input"
+          rows="1"
+          placeholder="Message Alfred…"
+          aria-label="Message Alfred"
+        ></textarea>
+        <button id="dictate" type="button" aria-pressed="false" title="Dictate into the box">
+          MIC
+        </button>
+        <button id="send" type="submit">SEND</button>
+      </form>
+    </div>
 
     <footer class="bottom">
       <div class="actions">

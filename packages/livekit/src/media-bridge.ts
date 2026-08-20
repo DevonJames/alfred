@@ -1,5 +1,10 @@
 import type { AudioFrame, VadSignal } from "@alfred/contracts";
-import type { AssistantCaptionEvent, MediaPort, UserTranscriptEvent } from "@alfred/core";
+import type {
+  AssistantCaptionEvent,
+  MediaPort,
+  UiCommand,
+  UserTranscriptEvent,
+} from "@alfred/core";
 
 /**
  * LiveKit is transport only. Conversation policy stays in @alfred/core.
@@ -16,9 +21,8 @@ export class LiveKitMediaBridge implements MediaPort {
   private playbackHandlers = new Set<(frame: AudioFrame) => void | Promise<void>>();
   private stopHandlers = new Set<(reason?: string) => void>();
   private captionHandlers = new Set<(event: AssistantCaptionEvent) => void | Promise<void>>();
-  private userTranscriptHandlers = new Set<
-    (event: UserTranscriptEvent) => void | Promise<void>
-  >();
+  private userTranscriptHandlers = new Set<(event: UserTranscriptEvent) => void | Promise<void>>();
+  private uiCommandHandlers = new Set<(command: UiCommand) => void>();
   private stopped = false;
 
   onAudioFrame(handler: (frame: AudioFrame) => void): () => void {
@@ -94,6 +98,16 @@ export class LiveKitMediaBridge implements MediaPort {
     for (const h of this.userTranscriptHandlers) {
       await h(event);
     }
+  }
+
+  onUiCommand(handler: (command: UiCommand) => void): () => void {
+    this.uiCommandHandlers.add(handler);
+    return () => this.uiCommandHandlers.delete(handler);
+  }
+
+  /** Called by LiveKitRoomSession when the client publishes `alfred.control`. */
+  pushUiCommand(command: UiCommand): void {
+    for (const h of this.uiCommandHandlers) h(command);
   }
 
   reset(): void {
