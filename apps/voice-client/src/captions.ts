@@ -1,3 +1,5 @@
+import { markdownToHtml, stripMarkdown } from "./markdown.js";
+
 export type CaptionMessage =
   | { type: "start"; text: string }
   | { type: "reveal"; text: string }
@@ -6,6 +8,7 @@ export type CaptionMessage =
 /**
  * HUD caption state: full utterance with live reveal prefix.
  * Falls back to amplitude-driven reveal when word-alignment is sparse.
+ * Assistant text is rendered as lightweight markdown (bold/lists/code).
  */
 export class CaptionHud {
   private full = "";
@@ -98,12 +101,14 @@ export class CaptionHud {
   }
 
   private render(): void {
-    this.liveEl.textContent = this.revealed;
-    this.restEl.textContent = this.full.slice(this.revealed.length);
     if (!this.full && !this.revealed) {
-      this.liveEl.textContent = "";
+      this.liveEl.innerHTML = "";
       this.restEl.textContent = "Awaiting signal…";
+      return;
     }
+    // Live prefix: render markdown. Ghost remainder: plain (markers stripped).
+    this.liveEl.innerHTML = markdownToHtml(this.revealed);
+    this.restEl.textContent = stripMarkdown(this.full.slice(this.revealed.length));
   }
 }
 

@@ -1,4 +1,5 @@
 import type { CaptionMessage } from "./captions.js";
+import { markdownToHtml } from "./markdown.js";
 
 export type ThreadMessage = {
   id: string;
@@ -89,7 +90,11 @@ export class TranscriptThread {
       if (!m.text && m.streaming) continue;
       const el = document.createElement("p");
       el.className = `bubble bubble-${m.role}${m.streaming ? " streaming" : ""}`;
-      el.textContent = m.text;
+      if (m.role === "assistant") {
+        el.innerHTML = markdownToHtml(m.text);
+      } else {
+        el.textContent = m.text;
+      }
       this.root.appendChild(el);
     }
     this.root.scrollTop = this.root.scrollHeight;
