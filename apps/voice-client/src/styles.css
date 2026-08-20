@@ -379,7 +379,7 @@ body {
   margin: 0;
   flex: 1 1 auto;
   min-height: 3.2em;
-  max-height: min(28vh, 14rem);
+  max-height: min(56vh, 28rem);
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;

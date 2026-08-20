@@ -62,8 +62,8 @@ export function markdownToHtml(text: string): string {
   s = s.replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, "$1<em>$2</em>");
   s = s.replace(/(^|[^_])_([^_\n]+)_(?!_)/g, "$1<em>$2</em>");
 
-  // Headings → strong line
-  s = s.replace(/(^|<br>)#{1,6}\s+(.+?)(?=<br>|$)/g, "$1<strong class=\"md-h\">$2</strong>");
+  // ATX headings (must run while newlines are still \n, not <br>)
+  s = s.replace(/^#{1,6}\s+(.+)$/gm, '<strong class="md-h">$1</strong>');
 
   // Newlines before list handling
   s = s.replace(/\r\n/g, "\n").replace(/\n/g, "<br>");

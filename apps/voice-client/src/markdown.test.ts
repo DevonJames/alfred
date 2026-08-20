@@ -24,6 +24,12 @@ describe("markdownToHtml", () => {
     expect(html).toContain("<strong>Action item:</strong>");
     expect(html).not.toContain("**");
   });
+
+  it("renders ATX headings without leaving ### markers", () => {
+    const html = markdownToHtml("Intro\n### Action item\nBuild the pilot");
+    expect(html).toContain('<strong class="md-h">Action item</strong>');
+    expect(html).not.toContain("###");
+  });
 });
 
 describe("stripMarkdown / closeIncompleteMarkdown", () => {
