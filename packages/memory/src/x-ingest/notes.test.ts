@@ -28,5 +28,22 @@ describe("x-ingest notes body helpers", () => {
     });
     expect(archived).toContain("Ada");
     expect(archived).toContain("Hello");
+    expect(archived).toContain("https://x.com/foo/status/1");
+    expect(
+      appendArchiveLine("", {
+        date: "2026-08-20",
+        author: "Ada",
+        headline: "Hello",
+        url: "https://x.com/foo/status/1?s=12&t=abc",
+      }),
+    ).toContain("https://x.com/foo/status/1");
+    expect(
+      appendArchiveLine("", {
+        date: "2026-08-20",
+        author: "Ada",
+        headline: "Hello",
+        url: "https://x.com/foo/status/1?s=12&t=abc",
+      }),
+    ).not.toContain("s=12");
   });
 });

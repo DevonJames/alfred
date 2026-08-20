@@ -1,5 +1,6 @@
 export { archiveNoteName, addXSource, findXSource, loadXSources, removeXSource, saveXSources } from "./sources.js";
 export {
+  archiveDisplayUrl,
   canonicalizeInboxUrl,
   canonicalizeXUrl,
   canonicalizeYouTubeUrl,
@@ -11,6 +12,7 @@ export {
   isYouTubeUrl,
   slugFromTitle,
   statusIdFromUrl,
+  handleFromXStatusUrl,
   youtubeVideoIdFromUrl,
 } from "./urls.js";
 export { composeNotesCaptureAdapter } from "./capture.js";

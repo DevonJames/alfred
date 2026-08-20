@@ -48,6 +48,48 @@ describe("selectPrimaryTweet", () => {
     });
     expect(selectPrimaryTweet([only], "https://x.com/other/status/99")).toEqual(only);
   });
+
+  it("picks the reply by URL handle when every card's href is the parent permalink", () => {
+    const parent = tweet({
+      href: "https://x.com/elonmusk/status/111",
+      text: "There is a potential future that is super amazing is we all fight hard to achieve it",
+      author: "Elon Musk",
+      handle: "elonmusk",
+    });
+    const reply = tweet({
+      href: "https://x.com/elonmusk/status/111",
+      text: "this is the quote I actually saved",
+      author: "Vibe Marketer",
+      handle: "vibemarketer_",
+    });
+    const url = "https://x.com/vibemarketer_/status/2089740376718610518?s=12";
+    expect(selectPrimaryTweet([parent, reply], url)).toEqual(reply);
+    const capture = toCapture(url, {
+      loginWall: false,
+      paywall: false,
+      tweets: [parent, reply],
+      pageText: "",
+    });
+    expect(capture.author).toBe("Vibe Marketer");
+    expect(capture.headline).toMatch(/quote I actually saved/);
+    expect(capture.headline).not.toMatch(/potential future/);
+  });
+
+  it("keeps the root tweet when the requested handle is the conversation author", () => {
+    const root = tweet({
+      href: "https://x.com/elonmusk/status/111",
+      text: "root post",
+      author: "Elon Musk",
+      handle: "elonmusk",
+    });
+    const later = tweet({
+      href: "https://x.com/elonmusk/status/111",
+      text: "later in the thread",
+      author: "Elon Musk",
+      handle: "elonmusk",
+    });
+    expect(selectPrimaryTweet([root, later], "https://x.com/elonmusk/status/111")).toEqual(root);
+  });
 });
 
 describe("toCapture", () => {

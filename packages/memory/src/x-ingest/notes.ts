@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { extractInboxLinkUrls } from "./urls.js";
+import { archiveDisplayUrl, extractInboxLinkUrls } from "./urls.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -177,7 +177,7 @@ export function appendArchiveLine(
   line: { date: string; author?: string; headline: string; url: string },
 ): string {
   const author = line.author ? `${line.author} — ` : "";
-  const html = `<div>${line.date} — ${escapeHtml(author)}${escapeHtml(line.headline)} — ${escapeHtml(line.url)}</div>`;
+  const html = `<div>${line.date} — ${escapeHtml(author)}${escapeHtml(line.headline)} — ${escapeHtml(archiveDisplayUrl(line.url))}</div>`;
   const trimmed = body.trim();
   if (!trimmed) {
     return `<div><b>Ingested</b></div>${html}`;

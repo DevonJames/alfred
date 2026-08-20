@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
+  archiveDisplayUrl,
   canonicalizeInboxUrl,
   canonicalizeXUrl,
   canonicalizeYouTubeUrl,
   extractInboxLinkUrls,
   extractXUrls,
   extractYouTubeUrls,
+  handleFromXStatusUrl,
   isYouTubePlaylistOrChannelUrl,
   isXUrl,
   slugFromTitle,
@@ -70,6 +72,21 @@ describe("x-ingest urls", () => {
     expect(isYouTubePlaylistOrChannelUrl("https://www.youtube.com/@acme")).toBe(true);
     expect(isYouTubePlaylistOrChannelUrl("https://www.youtube.com/watch?v=dQw4w9WgXcQ&list=PLxxxx")).toBe(
       false,
+    );
+  });
+
+  it("reads the handle from a status URL and drops tracking for archive lines", () => {
+    expect(handleFromXStatusUrl("https://x.com/vibemarketer_/status/2089740376718610518?s=12&t=abc")).toBe(
+      "vibemarketer_",
+    );
+    expect(handleFromXStatusUrl("https://x.com/i/status/2089740376718610518")).toBeUndefined();
+    expect(
+      archiveDisplayUrl(
+        "https://x.com/felixrieseberg/status/2079624265528475975?s=12&t=JU3179xa-tFaV7rjXb2E3Q",
+      ),
+    ).toBe("https://x.com/felixrieseberg/status/2079624265528475975");
+    expect(archiveDisplayUrl("https://youtu.be/dQw4w9WgXcQ?si=zz")).toBe(
+      "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
     );
   });
 });

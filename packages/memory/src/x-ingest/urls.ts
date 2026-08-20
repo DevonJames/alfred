@@ -95,6 +95,29 @@ export function statusIdFromUrl(url: string): string | undefined {
   return m?.[1];
 }
 
+/** Handle from https://x.com/{handle}/status/{id} (not /i/status/...). */
+export function handleFromXStatusUrl(raw: string): string | undefined {
+  try {
+    const url = new URL(raw.trim());
+    const host = url.hostname.toLowerCase().replace(/^www\./, "");
+    if (host !== "x.com" && host !== "twitter.com" && host !== "mobile.x.com") return undefined;
+    const parts = url.pathname.split("/").filter(Boolean);
+    if (parts[1] === "status" && parts[0] && parts[0] !== "i") return parts[0];
+  } catch {
+    return undefined;
+  }
+  return undefined;
+}
+
+/** Archive / display URL: keep the handle, drop tracking (`?s=` / `&t=` / `&amp;t=`). */
+export function archiveDisplayUrl(raw: string): string {
+  if (isYouTubeUrl(raw)) return canonicalizeYouTubeUrl(raw);
+  const handle = handleFromXStatusUrl(raw);
+  const id = statusIdFromUrl(raw);
+  if (handle && id) return `https://x.com/${handle}/status/${id}`;
+  return canonicalizeInboxUrl(raw);
+}
+
 export function extractYouTubeUrls(text: string): string[] {
   return collectUrls(
     text,

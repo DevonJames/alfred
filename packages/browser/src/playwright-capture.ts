@@ -3,6 +3,7 @@ import path from "node:path";
 import type { BrowserContext, Page } from "playwright-core";
 import {
   canonicalizeXUrl,
+  handleFromXStatusUrl,
   statusIdFromUrl,
   type XCapture,
   type XCaptureAdapter,
@@ -81,7 +82,9 @@ export async function launchPersistentContext(
   }
 }
 
-const EXTRACT_PAGE_JS = `(() => {
+function extractPageScript(wantId: string): string {
+  return `(() => {
+  const wantId = ${JSON.stringify(wantId)};
   const bodyText = document.body?.innerText ?? "";
   const loginWall =
     /sign in to x|log in to x|sign in to twitter/i.test(bodyText) &&
@@ -98,20 +101,38 @@ const EXTRACT_PAGE_JS = `(() => {
         .join("\\n\\n")
     : "";
 
-  const tweets = [...document.querySelectorAll('article[data-testid="tweet"]')].map((el) => {
-    const text = el.querySelector('[data-testid="tweetText"]')?.innerText ?? "";
+  const tweets = [...document.querySelectorAll('article[data-testid="tweet"]')]
+    .filter((el) => !el.parentElement?.closest('article[data-testid="tweet"]'))
+    .map((el) => {
+    const quote = el.querySelector('[data-testid="quoteTweet"]');
+    const textEl = [...el.querySelectorAll('[data-testid="tweetText"]')].find(
+      (n) => !quote || !quote.contains(n),
+    );
+    const text = textEl?.innerText ?? "";
     const user = el.querySelector('[data-testid="User-Name"]')?.innerText ?? "";
     const lines = user.split("\\n").map((s) => s.trim()).filter(Boolean);
     const author = lines[0] ?? "";
     const handleLine = lines.find((l) => l.startsWith("@")) ?? "";
-    const time = el.querySelector("time")?.getAttribute("datetime") ?? "";
-    const statusA = [...el.querySelectorAll("a")].find((a) => /\\/status\\/\\d+/.test(a.href));
+    const timeEl = el.querySelector("time");
+    const time = timeEl?.getAttribute("datetime") ?? "";
+    const timeHref = timeEl?.closest("a")?.href ?? "";
+    const statusLinks = [...el.querySelectorAll("a")]
+      .filter((a) => /\\/status\\/\\d+/.test(a.href) && (!quote || !quote.contains(a)))
+      .map((a) => a.href);
+    const ownHref = wantId
+      ? statusLinks.find((h) => h.includes("/status/" + wantId)) ||
+        (timeHref.includes("/status/" + wantId) ? timeHref : "")
+      : "";
+    const href =
+      ownHref ||
+      (timeHref && /\\/status\\/\\d+/.test(timeHref) ? timeHref : "") ||
+      statusLinks[0] ||
+      location.href;
     const images = [...el.querySelectorAll("img")]
       .map((img) => img.src)
       .filter((src) => /pbs\\.twimg\\.com\\/media|ton\\.twitter\\.com/i.test(src));
-    const quoted = el.querySelector('[data-testid="quoteTweet"], [aria-labelledby*="quote"]');
-    const quotedText = quoted
-      ? (quoted.querySelector('[data-testid="tweetText"]')?.innerText ?? "")
+    const quotedText = quote
+      ? (quote.querySelector('[data-testid="tweetText"]')?.innerText ?? "")
       : "";
     const outbound = [...el.querySelectorAll("a")]
       .map((a) => a.href)
@@ -122,12 +143,12 @@ const EXTRACT_PAGE_JS = `(() => {
       author,
       handle: handleLine.replace(/^@/, ""),
       publishedAt: time,
-      href: statusA?.href ?? location.href,
+      href,
       images,
       isReply,
       quotedText: quotedText || undefined,
-      quotedAuthor: quoted
-        ? (quoted.querySelector('[data-testid="User-Name"]')?.innerText.split("\\n")[0] ?? undefined)
+      quotedAuthor: quote
+        ? (quote.querySelector('[data-testid="User-Name"]')?.innerText.split("\\n")[0] ?? undefined)
         : undefined,
       outbound,
     };
@@ -143,9 +164,10 @@ const EXTRACT_PAGE_JS = `(() => {
     pageText: bodyText.slice(0, 20000),
   };
 })()`;
+}
 
-async function extractPage(page: Page): Promise<PageExtract> {
-  return page.evaluate(EXTRACT_PAGE_JS) as Promise<PageExtract>;
+async function extractPage(page: Page, url?: string): Promise<PageExtract> {
+  return page.evaluate(extractPageScript(statusIdFromUrl(url ?? "") ?? "")) as Promise<PageExtract>;
 }
 
 function replyAddsValue(post: TweetExtract, authorHandle?: string): boolean {
@@ -215,8 +237,12 @@ async function expandThread(page: Page): Promise<void> {
   await page.waitForTimeout(800);
 }
 
-/** Prefer the tweet whose status id matches the URL we were asked to ingest. */
-export function selectPrimaryTweet<T extends { href?: string }>(
+function tweetHandle<T extends { handle?: string }>(t: T): string {
+  return (t.handle ?? "").replace(/^@/, "").toLowerCase();
+}
+
+/** Prefer the tweet whose status id (or URL handle) matches the requested link. */
+export function selectPrimaryTweet<T extends { href?: string; handle?: string }>(
   tweets: T[],
   url: string,
 ): T | undefined {
@@ -224,6 +250,15 @@ export function selectPrimaryTweet<T extends { href?: string }>(
   if (want) {
     const match = tweets.find((t) => statusIdFromUrl(t.href ?? "") === want);
     if (match) return match;
+  }
+  const handle = handleFromXStatusUrl(url)?.toLowerCase();
+  if (handle) {
+    const matches = tweets.filter((t) => tweetHandle(t) === handle);
+    if (matches.length === 1) return matches[0];
+    if (matches.length > 0) {
+      const rootHandle = tweets[0] ? tweetHandle(tweets[0]) : "";
+      if (rootHandle && rootHandle !== handle) return matches[0];
+    }
   }
   return tweets[0];
 }
@@ -304,7 +339,7 @@ export async function captureXPage(
     const statusId = statusIdFromUrl(url);
     if (statusId) {
       await page
-        .locator(`a[href*="/status/${statusId}"]`)
+        .locator(`article[data-testid="tweet"] a[href*="/status/${statusId}"]`)
         .first()
         .waitFor({ timeout: 12_000 })
         .catch(() => undefined);
@@ -312,7 +347,7 @@ export async function captureXPage(
       await page.waitForTimeout(2000);
     }
     await expandThread(page);
-    let extracted = await extractPage(page);
+    let extracted = await extractPage(page, url);
 
     const empty = !extracted.tweets.length && !extracted.articleBody;
     const needsCua =
@@ -321,7 +356,7 @@ export async function captureXPage(
     if (needsCua) {
       await runComputerUseFallback(page, url);
       await expandThread(page);
-      extracted = await extractPage(page);
+      extracted = await extractPage(page, url);
     }
 
     if (extracted.loginWall) {
