@@ -20,6 +20,7 @@ export type LKParticipant = {
 export type LKLocalParticipant = {
   identity: LocalParticipant["identity"];
   setMicrophoneEnabled: LocalParticipant["setMicrophoneEnabled"];
+  publishData?: LocalParticipant["publishData"];
 };
 export type LKRoom = {
   localParticipant: LKLocalParticipant;

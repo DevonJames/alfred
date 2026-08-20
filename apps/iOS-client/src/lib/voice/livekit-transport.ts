@@ -10,6 +10,7 @@
  * without it every entry point here reports `unavailable` instead of throwing,
  * and Talk falls back to typing.
  */
+import type { RemoteAudioTrack, RemoteTrack } from "livekit-client";
 import { configureAudioSession, releaseAudioSession, requestMicPermission } from "../audio";
 import { endSession, sessionToken } from "../desktop-api";
 import type {
@@ -21,8 +22,15 @@ import type {
   LiveKitNativeModule,
 } from "./livekit-types";
 import { loadLiveKitClient, loadLiveKitNative } from "./optional-module";
-import { AGENT_IDENTITY, CAPTION_TOPIC, USER_TOPIC, decodeVoiceFrame } from "./protocol";
-import type { VoiceMessage } from "./protocol";
+import {
+  AGENT_IDENTITY,
+  CAPTION_TOPIC,
+  CONTROL_TOPIC,
+  USER_TOPIC,
+  decodeVoiceFrame,
+  encodeControlCommand,
+} from "./protocol";
+import type { UiCommand, VoiceMessage } from "./protocol";
 
 interface Sdk {
   client: LiveKitClientModule;
@@ -71,6 +79,8 @@ export interface VoiceSessionHandlers {
   onMessage: (message: VoiceMessage) => void;
   /** A remote audio track arrived or went away — for the "Alfred is here" dot. */
   onAgentAudio: (present: boolean) => void;
+  /** Agent TTS track for waveform analysis (null when gone). */
+  onAgentAudioTrack: (track: RemoteAudioTrack | null) => void;
   onDisconnected: (reason: string | null) => void;
 }
 
@@ -78,6 +88,7 @@ export interface VoiceSessionHandle {
   identity: string;
   room: string;
   setMicrophoneEnabled: (enabled: boolean) => Promise<void>;
+  publishControl: (command: UiCommand) => Promise<void>;
   disconnect: () => Promise<void>;
 }
 
@@ -126,14 +137,24 @@ export async function startVoiceSession(
 
   const isAudio = (kind: string | undefined) => kind === Track.Kind.Audio;
 
+  const setAgentTrack = (track: RemoteTrack | LKTrack | null) => {
+    if (track && isAudio(track.kind)) {
+      handlers.onAgentAudio(true);
+      handlers.onAgentAudioTrack(track as RemoteAudioTrack);
+      return;
+    }
+    handlers.onAgentAudio(false);
+    handlers.onAgentAudioTrack(null);
+  };
+
   room
-    .on(RoomEvent.TrackSubscribed, ((track: LKTrack) => {
+    .on(RoomEvent.TrackSubscribed, ((track: RemoteTrack) => {
       // On React Native the SDK routes subscribed audio to the output device
       // itself; there is no element to attach, so this is purely for the UI.
-      if (isAudio(track.kind)) handlers.onAgentAudio(true);
+      if (isAudio(track.kind)) setAgentTrack(track);
     }) as (...args: never[]) => void)
-    .on(RoomEvent.TrackUnsubscribed, ((track: LKTrack) => {
-      if (isAudio(track.kind)) handlers.onAgentAudio(false);
+    .on(RoomEvent.TrackUnsubscribed, ((track: RemoteTrack) => {
+      if (isAudio(track.kind)) setAgentTrack(null);
     }) as (...args: never[]) => void)
     .on(RoomEvent.DataReceived, ((
       payload: Uint8Array,
@@ -145,6 +166,7 @@ export async function startVoiceSession(
       if (message) handlers.onMessage(message);
     }) as (...args: never[]) => void)
     .on(RoomEvent.Disconnected, ((reason?: unknown) => {
+      handlers.onAgentAudioTrack(null);
       handlers.onDisconnected(typeof reason === "string" ? reason : null);
     }) as (...args: never[]) => void);
 
@@ -154,11 +176,21 @@ export async function startVoiceSession(
   // The agent usually joins before the phone does, and tracks published before
   // we connected raise no TrackSubscribed event for us to catch.
   for (const participant of room.remoteParticipants.values()) {
-    if (hasLiveAudio(participant, isAudio)) {
-      handlers.onAgentAudio(true);
-      break;
+    for (const publication of participant.trackPublications.values()) {
+      const existing = publication.track;
+      if (existing && isAudio(publicationKind(publication))) {
+        setAgentTrack(existing as RemoteTrack);
+        break;
+      }
     }
   }
+
+  const publishControl = async (command: UiCommand) => {
+    await room.localParticipant.publishData?.(encodeControlCommand(command), {
+      reliable: true,
+      topic: CONTROL_TOPIC,
+    });
+  };
 
   return {
     identity: minted.identity || "",
@@ -166,18 +198,9 @@ export async function startVoiceSession(
     setMicrophoneEnabled: async (enabled: boolean) => {
       await room.localParticipant.setMicrophoneEnabled(enabled);
     },
+    publishControl,
     disconnect: () => teardown(room, loaded, minted.sessionId),
   };
-}
-
-function hasLiveAudio(
-  participant: LKParticipant,
-  isAudio: (kind: string | undefined) => boolean
-): boolean {
-  for (const publication of participant.trackPublications.values()) {
-    if (publication.track && isAudio(publicationKind(publication))) return true;
-  }
-  return false;
 }
 
 function publicationKind(publication: LKTrackPublication): string | undefined {
@@ -197,4 +220,4 @@ async function teardown(room: LKRoom, loaded: Sdk, sessionId: string): Promise<v
   if (sessionId) await endSession(sessionId).catch(() => {});
 }
 
-export { AGENT_IDENTITY, CAPTION_TOPIC, USER_TOPIC };
+export { AGENT_IDENTITY, CAPTION_TOPIC, USER_TOPIC, CONTROL_TOPIC };

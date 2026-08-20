@@ -13,9 +13,30 @@
 
 export const CAPTION_TOPIC = "alfred.caption";
 export const USER_TOPIC = "alfred.user";
+export const CONTROL_TOPIC = "alfred.control";
 
 /** The Mac's voice agent joins under this identity unless LIVEKIT_IDENTITY says otherwise. */
 export const AGENT_IDENTITY = "alfred-agent";
+
+/** Matches desktop voice-client / packages/core media-port. */
+export type UiLayout = "voice" | "chat";
+
+export type UiCommand =
+  | { type: "layout"; layout: UiLayout }
+  | { type: "dictate"; active: boolean }
+  | { type: "text"; text: string };
+
+/** Encode an `alfred.control` payload for LiveKit publishData. */
+export function encodeControlCommand(command: UiCommand): Uint8Array {
+  return new TextEncoder().encode(
+    JSON.stringify({
+      v: 1,
+      channel: CONTROL_TOPIC,
+      ...command,
+      atMs: Date.now(),
+    })
+  );
+}
 
 export interface CaptionMessage {
   channel: typeof CAPTION_TOPIC;

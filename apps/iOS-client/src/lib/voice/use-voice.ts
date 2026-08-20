@@ -5,6 +5,7 @@
  * Nothing here decides that an utterance ended or that a turn is final — those
  * are the agent's calls, arriving as data frames.
  */
+import type { RemoteAudioTrack } from "livekit-client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { create } from "zustand";
 import { isNotBuiltYet, sessionStatus } from "../desktop-api";
@@ -15,7 +16,7 @@ import {
 } from "./livekit-transport";
 import type { VoiceSessionHandle } from "./livekit-transport";
 import { CAPTION_TOPIC, IDLE_CAPTION, applyCaption, revealedText } from "./protocol";
-import type { CaptionState, VoiceMessage } from "./protocol";
+import type { CaptionState, UiCommand, UiLayout, VoiceMessage } from "./protocol";
 
 export type VoicePhase = "idle" | "connecting" | "live" | "error";
 
@@ -37,6 +38,8 @@ interface VoiceStore {
   blocker: VoiceBlocker;
   micEnabled: boolean;
   agentPresent: boolean;
+  /** LiveKit remote audio track for Alfred's TTS (waveform). */
+  agentAudioTrack: RemoteAudioTrack | null;
   identity: string | null;
   room: string | null;
   caption: CaptionState;
@@ -53,6 +56,7 @@ const EMPTY = {
   phase: "idle" as VoicePhase,
   micEnabled: false,
   agentPresent: false,
+  agentAudioTrack: null as RemoteAudioTrack | null,
   identity: null,
   room: null,
   caption: IDLE_CAPTION,
@@ -159,6 +163,7 @@ export function useVoiceSession() {
       const session = await startVoiceSession({
         onMessage: applyMessage,
         onAgentAudio: (present) => store({ agentPresent: present }),
+        onAgentAudioTrack: (track) => store({ agentAudioTrack: track }),
         onDisconnected: () => {
           handle.current = null;
           reset();
@@ -196,6 +201,32 @@ export function useVoiceSession() {
     [store]
   );
 
+  const publishControl = useCallback(async (command: UiCommand) => {
+    if (!handle.current) return;
+    await handle.current.publishControl(command).catch(() => {});
+  }, []);
+
+  /** Tell the agent which UI layout is active (voice auto-commits; chat does not). */
+  const setLayout = useCallback(
+    async (layout: UiLayout) => {
+      await publishControl({ type: "layout", layout });
+      if (layout === "chat") {
+        await setMic(false);
+      } else if (handle.current) {
+        await setMic(true);
+      }
+    },
+    [publishControl, setMic]
+  );
+
+  /** Typed turn over LiveKit (silent on the agent — speak: false). */
+  const sendVoiceText = useCallback(
+    async (text: string) => {
+      await publishControl({ type: "text", text });
+    },
+    [publishControl]
+  );
+
   // A live microphone must never outlive the screen that owns it.
   useEffect(() => {
     return () => {
@@ -205,5 +236,5 @@ export function useVoiceSession() {
     };
   }, []);
 
-  return { start, stop, setMic };
+  return { start, stop, setMic, setLayout, sendVoiceText, publishControl };
 }
