@@ -24,17 +24,13 @@ body {
 
 body {
   min-height: 100vh;
+  height: 100vh;
   color: var(--ink);
   background: var(--void);
   font-family: var(--font-mono);
-  overflow-x: hidden;
+  overflow: hidden;
   display: grid;
   grid-template-rows: auto 1fr auto;
-}
-
-body[data-layout="chat"] {
-  overflow: hidden;
-  height: 100vh;
 }
 
 .grid-bg {
@@ -153,6 +149,7 @@ body[data-layout="chat"] {
   position: relative;
   z-index: 1;
   min-height: 0;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
   width: min(1100px, 100%);
@@ -216,10 +213,14 @@ body[data-layout="chat"] {
   position: relative;
   z-index: 1;
   width: 100%;
-  margin: auto 0;
+  flex: 1;
+  min-height: 0;
+  margin: 0;
   display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
   align-content: center;
   gap: 1.1rem;
+  overflow: hidden;
   view-transition-name: stage;
   transition:
     gap 0.4s ease,
@@ -285,8 +286,14 @@ body[data-layout="chat"] {
   line-height: 1.45;
   letter-spacing: 0.02em;
   min-height: 2.6em;
+  max-height: 4.8em;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   color: #ffe2b0;
   text-align: left;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 179, 71, 0.45) transparent;
 }
 
 #user-text.placeholder {
@@ -301,9 +308,10 @@ body[data-layout="chat"] {
 #wave {
   width: 100%;
   height: auto;
-  max-height: 42vh;
+  max-height: min(42vh, 280px);
   aspect-ratio: 1400 / 420;
   display: block;
+  flex-shrink: 0;
   border: 1px solid var(--line);
   background:
     linear-gradient(180deg, rgba(10, 18, 32, 0.2), rgba(5, 8, 15, 0.65)),
@@ -339,8 +347,11 @@ body[data-layout="chat"] {
 }
 
 .readout {
-  min-height: 7.5rem;
+  min-height: 0;
+  max-height: none;
   padding: 0.25rem 0.15rem 0;
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
   transition:
     opacity 0.4s ease,
@@ -356,6 +367,7 @@ body[data-layout="chat"] {
   letter-spacing: 0.22em;
   color: var(--muted);
   margin-bottom: 0.65rem;
+  flex-shrink: 0;
 }
 
 #mode-tag,
@@ -365,13 +377,36 @@ body[data-layout="chat"] {
 
 .caption {
   margin: 0;
+  flex: 1 1 auto;
+  min-height: 3.2em;
+  max-height: min(28vh, 14rem);
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   font-family: var(--font-display);
   font-weight: 600;
   font-size: clamp(1.15rem, 2.8vw, 1.85rem);
   line-height: 1.35;
   letter-spacing: 0.01em;
-  min-height: 3.2em;
   text-wrap: pretty;
+  padding-right: 0.4rem;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(61, 255, 196, 0.45) transparent;
+}
+
+.caption::-webkit-scrollbar,
+.user-caption::-webkit-scrollbar {
+  width: 6px;
+}
+
+.caption::-webkit-scrollbar-thumb,
+.user-caption::-webkit-scrollbar-thumb {
+  background: rgba(61, 255, 196, 0.35);
+  border-radius: 999px;
+}
+
+.user-caption::-webkit-scrollbar-thumb {
+  background: rgba(255, 179, 71, 0.4);
 }
 
 #caption-live {

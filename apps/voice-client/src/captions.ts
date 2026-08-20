@@ -109,6 +109,9 @@ export class CaptionHud {
     // Live prefix: render markdown. Ghost remainder: plain (markers stripped).
     this.liveEl.innerHTML = markdownToHtml(this.revealed);
     this.restEl.textContent = stripMarkdown(this.full.slice(this.revealed.length));
+    // Keep the newest spoken text in view without scrolling the page.
+    const scroller = this.liveEl.parentElement;
+    if (scroller) scroller.scrollTop = scroller.scrollHeight;
   }
 }
 
