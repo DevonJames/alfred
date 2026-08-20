@@ -67,4 +67,21 @@ describe("PromptAssembler persona", () => {
     expect(system).toContain("formal offer letter");
     expect(system).toContain("delegate_task");
   });
+
+  it("attaches extraSystem household extras", () => {
+    const assembled = new PromptAssembler().assemble({
+      systemInstructions: "You are ALFRED.",
+      extraSystem: "CURRENT SCHEDULE CONTEXT:\n- 3pm dentist",
+      currentUserTurn: "what's next",
+      recentConversation: [],
+      retrievedMemory: [],
+      mode: "initial",
+      lateAddenda: [],
+      agentResults: [],
+      availableCapabilities: ["delegate_task"],
+    });
+    const system = assembled.messages[0]?.content ?? "";
+    expect(assembled.notes).toContain("extra_system_attached");
+    expect(system).toContain("3pm dentist");
+  });
 });

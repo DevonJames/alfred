@@ -9,3 +9,27 @@ coverage
 tmp
 data
 *.tsbuildinfo
+
+# Expo / React Native native projects (regenerate with `npx expo prebuild`)
+apps/iOS-client/ios/Pods
+apps/iOS-client/ios/build
+apps/iOS-client/ios/DerivedData
+apps/iOS-client/ios/**/xcuserdata
+apps/iOS-client/android/.gradle
+apps/iOS-client/android/app/build
+apps/iOS-client/.expo
+apps/iOS-client/dist
+
+apps/iOS-client/.env
+
+# Expo / Metro (iOS client)
+apps/iOS-client/web-build
+apps/iOS-client/expo-env.d.ts
+apps/iOS-client/.metro-health-check*
+
+# Native signing / keystores (if they ever land in-repo)
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision

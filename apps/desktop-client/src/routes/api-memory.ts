@@ -5,11 +5,26 @@
 import { OpenAiResponsesLLMProvider } from "@alfred/provider-openai";
 import { Hono } from "hono";
 import { activeProfileId, oipForProfile } from "../lib/oip-memory.js";
-import { requireDevice } from "../middleware/require-device.js";
+import {
+  isConversationTurn,
+  parseCategory,
+  revisionToCard,
+  type MemoryCardCategory,
+} from "../lib/memory-cards.js";
+import { requireSidecarOrDevice } from "../middleware/sidecar-or-device.js";
 
 export const apiMemoryRouter = new Hono();
 
-apiMemoryRouter.use("*", requireDevice);
+apiMemoryRouter.use("*", requireSidecarOrDevice);
+
+function profileFromRequest(c: { req: { query: (k: string) => string | undefined; header: (k: string) => string | undefined } }): string {
+  return (
+    c.req.query("householdId")?.trim() ||
+    c.req.query("profileId")?.trim() ||
+    c.req.header("x-household-id")?.trim() ||
+    activeProfileId()
+  );
+}
 
 function serializeRevision(rev: {
   id: string;
@@ -35,7 +50,7 @@ function serializeRevision(rev: {
 
 /** POST /api/memory — text and/or multipart artifact */
 apiMemoryRouter.post("/", async (c) => {
-  const memory = oipForProfile();
+  const memory = oipForProfile(profileFromRequest(c));
   const contentType = c.req.header("content-type") ?? "";
 
   try {
@@ -90,32 +105,38 @@ apiMemoryRouter.post("/", async (c) => {
 
     const body = await c.req.json<{
       text?: string;
+      content?: string;
+      title?: string;
+      category?: string;
       type?: "Observation" | "Assertion" | "Episode" | "Entity" | "Artifact";
       name?: string;
       remindAt?: string | null;
       reminderTimezone?: string;
       reminderReason?: string;
+      householdId?: string;
     }>();
-    const text = body.text?.trim();
+    const text = (body.text ?? body.content ?? "").trim();
     if (!text) {
       return c.json({ error: "text is required" }, 400);
     }
 
     const type = body.type ?? "Observation";
+    const category = parseCategory(body.category);
     const record = await memory.createRecord(type, {
       text,
-      name: body.name ?? text.slice(0, 80),
+      name: body.name ?? body.title ?? text.slice(0, 80),
       observedAt: type === "Observation" ? new Date().toISOString() : undefined,
       remindAt: body.remindAt ?? undefined,
       reminderTimezone: body.reminderTimezone,
       reminderReason: body.reminderReason ?? (body.remindAt ? "user_requested" : undefined),
       reminderStatus: body.remindAt ? "pending" : undefined,
       provenance: {
-        sourceType: "ios_text",
+        sourceType: category ? "alfred_home_card" : "ios_text",
+        alfredHomeCategory: category,
         learnedAt: new Date().toISOString(),
       },
       alfred: { visibility: "private", confidence: 1, assertionType: "explicit" },
-      schema: { text, name: body.name },
+      schema: { text, name: body.name ?? body.title },
     });
 
     return c.json({ ok: true, record: serializeRevision(record) });
@@ -128,7 +149,7 @@ apiMemoryRouter.post("/", async (c) => {
 });
 
 apiMemoryRouter.post("/search", async (c) => {
-  const memory = oipForProfile();
+  const memory = oipForProfile(profileFromRequest(c));
   try {
     const body = await c.req.json<{ query?: string; text?: string; limit?: number }>();
     const text = (body.query ?? body.text ?? "").trim();
@@ -152,7 +173,7 @@ apiMemoryRouter.post("/search", async (c) => {
 });
 
 apiMemoryRouter.post("/ask", async (c) => {
-  const memory = oipForProfile();
+  const memory = oipForProfile(profileFromRequest(c));
   try {
     const body = await c.req.json<{ query?: string; text?: string; limit?: number }>();
     const query = (body.query ?? body.text ?? "").trim();
@@ -234,7 +255,7 @@ apiMemoryRouter.post("/ask", async (c) => {
 });
 
 apiMemoryRouter.post("/correct", async (c) => {
-  const memory = oipForProfile();
+  const memory = oipForProfile(profileFromRequest(c));
   try {
     const body = await c.req.json<{
       id?: string;
@@ -278,7 +299,7 @@ apiMemoryRouter.post("/correct", async (c) => {
 });
 
 apiMemoryRouter.get("/due", async (c) => {
-  const memory = oipForProfile();
+  const memory = oipForProfile(profileFromRequest(c));
   const date = c.req.query("date") ?? undefined;
   const timezone =
     c.req.query("timezone") ?? process.env.BRIEFING_TIMEZONE ?? "America/Los_Angeles";
@@ -321,7 +342,7 @@ apiMemoryRouter.get("/due", async (c) => {
 });
 
 apiMemoryRouter.post("/:id/reminder/surfaced", async (c) => {
-  const memory = oipForProfile();
+  const memory = oipForProfile(profileFromRequest(c));
   const id = c.req.param("id");
   try {
     const rev = await memory.markReminderSurfaced(id);
@@ -339,7 +360,7 @@ apiMemoryRouter.post("/:id/reminder/surfaced", async (c) => {
  * Body: { status: "completed" | "dismissed" | "snoozed" | "pending" | "surfaced", snoozedUntil?: string }
  */
 apiMemoryRouter.post("/:id/reminder/status", async (c) => {
-  const memory = oipForProfile();
+  const memory = oipForProfile(profileFromRequest(c));
   const id = c.req.param("id");
   try {
     const body = await c.req.json<{
@@ -397,8 +418,115 @@ apiMemoryRouter.post("/:id/reminder/status", async (c) => {
   }
 });
 
+apiMemoryRouter.get("/cards", async (c) => {
+  const memory = oipForProfile(profileFromRequest(c));
+  const category = parseCategory(c.req.query("category"));
+  const limit = Number(c.req.query("limit") ?? "500") || 500;
+  try {
+    const cards = [];
+    for await (const rev of memory.packages.iterateCurrentRevisions()) {
+      if (isConversationTurn(rev)) continue;
+      const card = revisionToCard(rev);
+      if (category && card.category !== category) continue;
+      cards.push(card);
+      if (cards.length >= limit) break;
+    }
+    cards.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    return c.json({ items: cards, count: cards.length });
+  } catch (err) {
+    return c.json({ error: err instanceof Error ? err.message : String(err) }, 500);
+  }
+});
+
+apiMemoryRouter.get("/cards/:id", async (c) => {
+  const memory = oipForProfile(profileFromRequest(c));
+  const id = c.req.param("id");
+  const logicalId = id.replace(/^did:memory:/, "").split("#")[0]!;
+  try {
+    const rev = await memory.packages.readCurrent(logicalId);
+    if (!rev) return c.json({ error: "not_found" }, 404);
+    return c.json(revisionToCard(rev));
+  } catch (err) {
+    return c.json({ error: err instanceof Error ? err.message : String(err) }, 500);
+  }
+});
+
+apiMemoryRouter.post("/cards", async (c) => {
+  const memory = oipForProfile(profileFromRequest(c));
+  try {
+    const body = await c.req.json<{
+      category?: string;
+      title?: string;
+      content?: string;
+      metadata?: Record<string, unknown>;
+    }>();
+    const content = (body.content ?? "").trim();
+    const title = (body.title ?? "").trim();
+    if (!title && !content) return c.json({ error: "title or content is required" }, 400);
+    const category = (parseCategory(body.category) ?? "preferences") as MemoryCardCategory;
+    const now = new Date().toISOString();
+    const record = await memory.createRecord("Observation", {
+      text: content || title,
+      name: title || content.slice(0, 80),
+      observedAt: now,
+      provenance: {
+        sourceType: "alfred_home_card",
+        alfredHomeCategory: category,
+        learnedAt: now,
+        ...(body.metadata ?? {}),
+      },
+      alfred: { visibility: "private", confidence: 1, assertionType: "explicit" },
+      schema: { text: content || title, name: title },
+    });
+    return c.json({ ok: true, ...revisionToCard(record), created: true });
+  } catch (err) {
+    return c.json({ error: err instanceof Error ? err.message : String(err) }, 500);
+  }
+});
+
+apiMemoryRouter.patch("/cards/:id", async (c) => {
+  const memory = oipForProfile(profileFromRequest(c));
+  const id = c.req.param("id");
+  try {
+    const body = await c.req.json<{
+      category?: string;
+      title?: string;
+      content?: string;
+      metadata?: Record<string, unknown>;
+    }>();
+    const logicalId = id.replace(/^did:memory:/, "").split("#")[0]!;
+    const current = await memory.packages.readCurrent(logicalId);
+    if (!current) return c.json({ error: "not_found" }, 404);
+    const category = parseCategory(body.category);
+    const rev = await memory.updateRecord(id, {
+      text: body.content ?? current.text,
+      name: body.title ?? current.name,
+      provenance: {
+        ...(current.provenance ?? {}),
+        ...(body.metadata ?? {}),
+        ...(category ? { alfredHomeCategory: category } : {}),
+        sourceType: current.provenance?.sourceType ?? "alfred_home_card",
+      },
+    });
+    return c.json({ ok: true, ...revisionToCard(rev), updated: true });
+  } catch (err) {
+    return c.json({ error: err instanceof Error ? err.message : String(err) }, 500);
+  }
+});
+
+apiMemoryRouter.delete("/cards/:id", async (c) => {
+  const memory = oipForProfile(profileFromRequest(c));
+  const id = c.req.param("id");
+  try {
+    await memory.delete(id);
+    return c.json({ ok: true, deleted: id });
+  } catch (err) {
+    return c.json({ error: err instanceof Error ? err.message : String(err) }, 500);
+  }
+});
+
 apiMemoryRouter.delete("/:id", async (c) => {
-  const memory = oipForProfile();
+  const memory = oipForProfile(profileFromRequest(c));
   const id = c.req.param("id");
   try {
     await memory.delete(id);
@@ -412,7 +540,7 @@ apiMemoryRouter.delete("/:id", async (c) => {
 });
 
 apiMemoryRouter.get("/:id", async (c) => {
-  const memory = oipForProfile();
+  const memory = oipForProfile(profileFromRequest(c));
   const id = c.req.param("id");
   const logicalId = id.replace(/^did:memory:/, "").split("#")[0]!;
   try {

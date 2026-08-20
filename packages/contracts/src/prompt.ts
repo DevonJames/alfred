@@ -52,6 +52,8 @@ export const PromptAssemblyInputSchema = z.object({
     .optional(),
   agentResults: z.array(AgentDelegationResultSchema).default([]),
   availableCapabilities: z.array(z.string()).default(["delegate_task"]),
+  /** Extra household/channel instructions from a host (calendar, FACE protocol, agent persona). */
+  extraSystem: z.string().optional(),
   /** Due briefing reminders the model may complete/dismiss/snooze via update_reminder. */
   dueReminders: z
     .array(

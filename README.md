@@ -26,6 +26,7 @@ cp .env.example .env
 | `pnpm voice`     | Start cascaded voice runtime (`apps/voice-agent`) |
 | `pnpm client`     | Local mic client with WebRTC AEC (`apps/voice-client`, port 5173) |
 | `pnpm desktop`    | Local UI host — voice uplink, memory graph/ingest (port 3000) |
+| `pnpm sidecar`    | Alfred:Home conversation+memory sidecar (localhost:3100) |
 | `pnpm mint-token` | Print a LiveKit join token (Meet / Playground)         |
 | `pnpm memory`     | Inspect / export / import local long-term memory       |
 | `pnpm typecheck` | TypeScript check across packages                  |
@@ -188,6 +189,12 @@ packages/persistence            Repository interfaces + in-memory implementation
 apps/simulator                  M1 text-only scenario runner
 apps/voice-agent                M2 cascaded voice runtime entrypoint
 ```
+
+## Alfred:Home sidecar
+
+When `ALFRED_SIDECAR_MODE=true`, `pnpm sidecar` binds `127.0.0.1:3100`, skips alfrd.net cloud-connect, and authenticates `/api/*` with `X-Internal-Secret` (`ALFRED_CORE_SECRET`). Alfred:Home proxies chat and memory through this process. See `alfred-home/docs/alfred-core-sidecar.md`.
+
+Memory provider for this mode is `memory.oip-local`. Set `ALFRED_MEMORY_OIP_PATH` to a parent directory; each household id is a subdirectory.
 
 ## Central rule
 

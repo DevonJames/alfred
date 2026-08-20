@@ -62,6 +62,12 @@ export interface UserUtteranceInput {
   forcedArbitration?: ArbitrationOutcome;
   /** Treat as late addendum if generation is in progress. */
   asAddendum?: boolean;
+  /** Host-provided system extras (calendar, FACE/SPEECH, agent persona). */
+  extraSystem?: string;
+  /** Camera frames or other images for this turn. */
+  imageDataUrls?: string[];
+  /** Stream token deltas to an HTTP host as they arrive. */
+  onToken?: (delta: string) => void;
 }
 
 export interface SessionSnapshot {
@@ -107,6 +113,9 @@ export class SessionOrchestrator {
   private pendingAddenda: string[] = [];
   private lastDeliveredCommitted = "";
   private interruptedDuringDelivery = false;
+  private turnExtraSystem?: string;
+  private turnImageDataUrls?: string[];
+  private turnOnToken?: (delta: string) => void;
 
   constructor(private readonly opts: SessionOrchestratorOptions) {
     this.sessionId = opts.sessionId ?? createId("sess");
@@ -242,6 +251,9 @@ export class SessionOrchestrator {
    * Routes to addendum / backchannel / interruption / normal turn based on state.
    */
   async handleUserUtterance(input: UserUtteranceInput): Promise<void> {
+    this.turnExtraSystem = input.extraSystem;
+    this.turnImageDataUrls = input.imageDataUrls;
+    this.turnOnToken = input.onToken;
     const state = this.fsm.getState();
 
     if (this.isSpeaking || state === "AssistantSpeaking") {
@@ -342,6 +354,7 @@ export class SessionOrchestrator {
 
       const prompt = this.promptAssembler.assemble({
         systemInstructions: this.config.systemInstructions,
+        extraSystem: this.turnExtraSystem,
         currentUserTurn: text,
         recentConversation: this.recentTurns
           .slice(0, -1)
@@ -456,6 +469,7 @@ export class SessionOrchestrator {
 
     const prompt = this.promptAssembler.assemble({
       systemInstructions: this.config.systemInstructions,
+      extraSystem: this.turnExtraSystem,
       currentUserTurn: addenda.join("\n"),
       recentConversation: this.recentTurns.map((t) => ({ role: t.role, text: t.text })),
       personaContext: this.opts.personaContext,
@@ -640,6 +654,7 @@ export class SessionOrchestrator {
     this.currentResponseId = responseId;
     const prompt = this.promptAssembler.assemble({
       systemInstructions: this.config.systemInstructions,
+      extraSystem: this.turnExtraSystem,
       currentUserTurn: turn.text,
       recentConversation: this.recentTurns.map((t) => ({ role: t.role, text: t.text })),
       personaContext: this.opts.personaContext,
@@ -732,6 +747,7 @@ export class SessionOrchestrator {
     this.currentResponseId = responseId;
     const prompt = this.promptAssembler.assemble({
       systemInstructions: this.config.systemInstructions,
+      extraSystem: this.turnExtraSystem,
       currentUserTurn: turn.text,
       recentConversation: this.recentTurns.map((t) => ({ role: t.role, text: t.text })),
       personaContext: this.opts.personaContext,
@@ -814,11 +830,12 @@ export class SessionOrchestrator {
             messages,
             signal: this.generationAbort.signal,
             correlationId: turnId,
+            imageDataUrls: this.turnImageDataUrls,
             tools: [
               {
                 name: "delegate_task",
                 description:
-                  "Delegate an external action such as ingesting X.com links or fetching a URL into memory.",
+                  "Delegate an external action such as household calendar/camera/approvals, ingesting X.com links, coding, or email.",
                 parameters: {
                   type: "object",
                   properties: {
@@ -838,6 +855,7 @@ export class SessionOrchestrator {
             if (chunk.type === "token" && chunk.text) {
               text += chunk.text;
               await this.responseLedger.appendProposed(responseId, chunk.text);
+              this.turnOnToken?.(chunk.text);
             }
             if (chunk.type === "tool_call") {
               toolCall = { toolName: chunk.toolName, toolArgs: chunk.toolArgs };
@@ -903,6 +921,7 @@ export class SessionOrchestrator {
           if (chunk.type === "token" && chunk.text) {
             text += chunk.text;
             await this.responseLedger.appendProposed(responseId, chunk.text);
+            this.turnOnToken?.(chunk.text);
           }
         }
         if (segmentKind === "addendum") {

@@ -22,6 +22,11 @@ export class PromptAssembler {
       systemParts.push(`USER.md (user model):\n${persona.user}`);
     }
 
+    if (input.extraSystem?.trim()) {
+      notes.push("extra_system_attached");
+      systemParts.push(input.extraSystem.trim());
+    }
+
     if (input.availableCapabilities.length > 0) {
       systemParts.push(
         `Available high-level capabilities: ${input.availableCapabilities.join(", ")}.`,

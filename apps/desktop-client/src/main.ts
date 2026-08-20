@@ -18,6 +18,8 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { startCloudConnect, stopCloudConnect } from "./lib/cloud-connect.js";
 import { startXIngestScheduler } from "./lib/x-ingest-schedule.js";
+import { sidecarHostname, sidecarPort, isSidecarMode } from "./lib/sidecar-mode.js";
+import { sidecarRuntimeReady, warmupSidecarMemory } from "./lib/text-session.js";
 import { apiMemoryRouter } from "./routes/api-memory.js";
 import { briefingRouter } from "./routes/briefing.js";
 import { connectRouter } from "./routes/connect.js";
@@ -32,7 +34,9 @@ import { voiceRouter } from "./routes/voice.js";
 loadEnv({ path: resolve(process.cwd(), "../../.env") });
 loadEnv();
 
-const port = Number(process.env.PORT ?? 3000);
+const port = sidecarPort();
+const hostname = sidecarHostname();
+const sidecar = isSidecarMode();
 const uiDir = resolve(dirname(fileURLToPath(import.meta.url)), "ui");
 
 const app = new Hono();
@@ -62,7 +66,30 @@ app.get("/", async (c) => {
   return c.html(html);
 });
 
-app.get("/status", (c) => c.json(statusPayload));
+app.get("/status", (c) => c.json({ ...statusPayload, sidecar, service: sidecar ? "alfred-conversation-sidecar" : statusPayload.service }));
+
+app.get("/health", async (c) => {
+  const runtime = sidecarRuntimeReady();
+  let memory: { ok: boolean; path?: string; error?: string } = { ok: false };
+  try {
+    const warmed = await warmupSidecarMemory();
+    memory = { ok: warmed.ok, path: warmed.path };
+  } catch (err) {
+    memory = { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+  const ready = memory.ok;
+  return c.json(
+    {
+      status: ready ? "ok" : "degraded",
+      sidecar,
+      openaiConfigured: runtime.openai,
+      sessions: runtime.sessions,
+      memory,
+      timestamp: new Date().toISOString(),
+    },
+    ready ? 200 : 503,
+  );
+});
 
 app.route("/connect", connectRouter);
 app.route("/pair", pairRouter);
@@ -81,7 +108,16 @@ app.route("/memory", memoryRouter);
 // Voice SPA assets stay public; token mint for SPA is /api/token above.
 app.route("/voice", voiceRouter);
 
-const server = serve({ fetch: app.fetch, port }, (info) => {
+const server = serve({ fetch: app.fetch, port, hostname }, (info) => {
+  const host = hostname === "0.0.0.0" ? "127.0.0.1" : hostname;
+  if (sidecar) {
+    console.log(`ALFRED conversation sidecar listening on http://${host}:${info.port}`);
+    console.log(`  Health:         GET  http://${host}:${info.port}/health`);
+    console.log(`  Conversation:   POST http://${host}:${info.port}/api/conversation/turn`);
+    console.log(`  Memory cards:   GET  http://${host}:${info.port}/api/memory/cards`);
+    console.log("  Cloud connect:  disabled (sidecar mode)");
+    return;
+  }
   console.log(`ALFRED desktop client listening on http://127.0.0.1:${info.port}`);
   console.log(`  UI hub:        http://127.0.0.1:${info.port}/`);
   console.log(`  Claim QR:      http://127.0.0.1:${info.port}/connect/claim`);
@@ -110,11 +146,16 @@ server.on("error", (err: NodeJS.ErrnoException) => {
 });
 
 // Match alfred-home: register after a short delay so the HTTP listener is ready.
-setTimeout(() => {
-  startCloudConnect(port).catch((err) => {
-    console.error("[CloudConnect] Startup failed:", err);
-  });
-}, 3_000);
+if (!sidecar) {
+  setTimeout(() => {
+    startCloudConnect(port).catch((err) => {
+      console.error("[CloudConnect] Startup failed:", err);
+    });
+  }, 3_000);
+} else if (process.env.ALFRD_CLOUD_DISABLED !== "true") {
+  process.env.ALFRD_CLOUD_DISABLED = "true";
+  console.log("[CloudConnect] Forced off in ALFRED_SIDECAR_MODE");
+}
 
 const stopXIngest = startXIngestScheduler();
 

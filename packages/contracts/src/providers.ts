@@ -119,6 +119,8 @@ export const LlmGenerateRequestSchema = z.object({
       }),
     )
     .optional(),
+  /** Data-URL or http(s) images attached to the current user turn (camera frames). */
+  imageDataUrls: z.array(z.string()).optional(),
 });
 export type LlmGenerateRequest = z.infer<typeof LlmGenerateRequestSchema>;
 

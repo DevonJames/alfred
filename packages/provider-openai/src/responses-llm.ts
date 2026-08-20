@@ -90,10 +90,27 @@ export class OpenAiResponsesLLMProvider implements LLMProvider {
         }
       ).responses.create({
         model,
-        input: request.messages.map((m) => ({
-          role: m.role === "tool" ? "user" : m.role,
-          content: m.content,
-        })),
+        input: request.messages.map((m, index) => {
+          let lastUserIndex = -1;
+          for (let i = 0; i < request.messages.length; i++) {
+            if (request.messages[i]?.role === "user") lastUserIndex = i;
+          }
+          const isLastUser = m.role === "user" && index === lastUserIndex;
+          const images = isLastUser ? (request.imageDataUrls ?? []).filter(Boolean) : [];
+          if (images.length === 0) {
+            return {
+              role: m.role === "tool" ? "user" : m.role,
+              content: m.content,
+            };
+          }
+          return {
+            role: "user" as const,
+            content: [
+              { type: "input_text", text: m.content },
+              ...images.map((url) => ({ type: "input_image", image_url: url })),
+            ],
+          };
+        }),
         stream: true,
         reasoning: { effort },
         previous_response_id: request.previousResponseId,

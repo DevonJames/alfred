@@ -12,6 +12,7 @@ export const AgentCapabilitySchema = z.enum([
   "research",
   "computer_use",
   "messaging",
+  "household",
   "general",
 ]);
 export type AgentCapability = z.infer<typeof AgentCapabilitySchema>;
@@ -26,6 +27,7 @@ export const TaskCategorySchema = z.enum([
   "browser",
   "research",
   "computer_use",
+  "household",
   "general",
 ]);
 export type TaskCategory = z.infer<typeof TaskCategorySchema>;

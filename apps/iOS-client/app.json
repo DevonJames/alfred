@@ -1,0 +1,72 @@
+{
+  "expo": {
+    "name": "Alfred",
+    "slug": "alfred",
+    "scheme": "alfred",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "net.alfrd.alfred",
+      "buildNumber": "1",
+      "infoPlist": {
+        "CFBundleDisplayName": "Alfred",
+        "NSMicrophoneUsageDescription": "Alfred listens only while you're speaking to it, and sends what you say to your own Mac to answer. Nothing is recorded or stored on this phone.",
+        "NSPhotoLibraryUsageDescription": "Attach photos to something you'd like Alfred to remember. They're sent to your Mac and stored there.",
+        "NSCameraUsageDescription": "Scan the claim QR code shown on your Mac to link this phone to Alfred.",
+        "NSLocalNetworkUsageDescription": "Alfred looks for your Mac on your local network first, so your conversation never leaves the house when it doesn't have to.",
+        "NSAppTransportSecurity": {
+          "NSAllowsLocalNetworking": true
+        },
+        "UIBackgroundModes": ["audio"],
+        "ITSAppUsesNonExemptEncryption": false
+      }
+    },
+    "android": {
+      "package": "net.alfrd.alfred",
+      "edgeToEdgeEnabled": true
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      "expo-dev-client",
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "Alfred listens only while you're speaking to it, and sends what you say to your own Mac to answer. Nothing is recorded or stored on this phone."
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Scan the claim QR code shown on your Mac to link this phone to Alfred."
+        }
+      ],
+      "expo-notifications",
+      [
+        "@livekit/react-native-expo-plugin",
+        {
+          "android": {
+            "audioType": "communication"
+          }
+        }
+      ],
+      [
+        "@config-plugins/react-native-webrtc",
+        {
+          "microphonePermission": "Alfred listens only while you're speaking to it, and sends what you say to your own Mac to answer. Nothing is recorded or stored on this phone."
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": true
+    },
+    "extra": {
+      "eas": {
+        "projectId": "replace-with-eas-project-id"
+      }
+    }
+  }
+}

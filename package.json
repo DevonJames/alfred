@@ -19,6 +19,7 @@
     "voice": "pnpm --filter @alfred/voice-agent start",
     "client": "pnpm --filter @alfred/voice-client dev",
     "desktop": "pnpm --filter @alfred/desktop-client start",
+    "sidecar": "ALFRED_SIDECAR_MODE=true ALFRD_CLOUD_DISABLED=true pnpm --filter @alfred/desktop-client start:sidecar",
     "mint-token": "pnpm --filter @alfred/voice-agent run mint-token",
     "memory": "pnpm --filter @alfred/voice-agent memory",
     "clean": "pnpm -r exec rm -rf dist"
