@@ -42,9 +42,14 @@ export function detectBriefingIntent(
     }
   }
 
-  // Short affirmation (optionally with trailing politeness)
-  const normalized = trimmed.replace(/[.!?]+$/g, "").trim();
-  if (normalized.length <= 40 && AFFIRM_RE.test(normalized)) {
+  // Short affirmation (optionally with trailing politeness).
+  // STT often inserts commas: "Yes, please. I would."
+  const normalized = trimmed
+    .replace(/[.!?]+$/g, "")
+    .replace(/,/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (normalized.length <= 48 && AFFIRM_RE.test(normalized)) {
     return "affirmOffer";
   }
 

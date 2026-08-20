@@ -25,6 +25,9 @@ export class FakeLLMProvider implements LLMProvider {
   private callCount = 0;
   healthy: boolean;
   private firstTokenDelayMs: number;
+  /** Most recent generateStream request (for tests). */
+  lastRequest?: LlmGenerateRequest;
+  readonly requests: LlmGenerateRequest[] = [];
 
   constructor(
     id: string,
@@ -62,6 +65,8 @@ export class FakeLLMProvider implements LLMProvider {
 
   async *generateStream(request: LlmGenerateRequest): AsyncIterable<LlmStreamChunk> {
     this.callCount += 1;
+    this.lastRequest = request;
+    this.requests.push(request);
     if (this.failRemaining > 0) {
       this.failRemaining -= 1;
       yield {

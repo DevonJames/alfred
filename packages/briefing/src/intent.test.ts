@@ -21,6 +21,9 @@ describe("detectBriefingIntent", () => {
     expect(detectBriefingIntent("yes", true)).toBe("affirmOffer");
     expect(detectBriefingIntent("sure", true)).toBe("affirmOffer");
     expect(detectBriefingIntent("go ahead", true)).toBe("affirmOffer");
+    expect(detectBriefingIntent("Yes, please", true)).toBe("affirmOffer");
+    expect(detectBriefingIntent("Yes, please. I would.", true)).toBe("affirmOffer");
+    expect(detectBriefingIntent("yes please I would", true)).toBe("affirmOffer");
     expect(detectBriefingIntent("no", true)).toBe("declineOffer");
     expect(detectBriefingIntent("not now", true)).toBe("declineOffer");
   });

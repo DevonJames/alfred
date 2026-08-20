@@ -265,4 +265,87 @@ describe("VoiceSessionController", () => {
     );
     await voice.stop();
   });
+
+  it("includes prior turns in the LLM prompt on follow-up EndOfTurn", async () => {
+    const prevCooldown = process.env.ALFRED_ECHO_COOLDOWN_MS;
+    process.env.ALFRED_ECHO_COOLDOWN_MS = "0";
+    try {
+      const clock = new FakeClock();
+      const persistence = createInMemoryPersistence();
+      const events = new EventLedger(persistence.events, clock, new NoopObservability());
+      const sessionId = "sess_history";
+      const fsm = new ConversationStateMachine(sessionId, events);
+      await fsm.force("Listening", "start");
+      const responseLedger = new ResponseLedger(persistence.responseLedgers, events, clock);
+      const registry = new ProviderRegistry();
+      const stt = new FakeStreamingSTTProvider();
+      const llm = new FakeLLMProvider("llm.fake", {
+        reply: (user) =>
+          /yes/i.test(user)
+            ? "Playing the briefing now."
+            : "Would you like the daily briefing now?",
+      });
+      registry.registerStt(stt);
+      registry.registerLlm(llm);
+      registry.registerTts(new FakeMultiContextTTSProvider());
+      const memory = new MemoryController("p1", persistence.memorySettings);
+      memory.register(new FakeMemoryProvider());
+      await memory.initialize();
+      const agents = new AgentRouter();
+      agents.register(createCodexStub());
+
+      const voice = new VoiceSessionController({
+        sessionId,
+        profileId: "p1",
+        config: baseConfig(clock.nowIso()),
+        clock,
+        events,
+        fsm,
+        responseLedger,
+        providers: registry,
+        memory,
+        agents,
+        media: new NullMediaPort(),
+        sttSessionFactory: async () => stt.openSession(),
+        ttsSessionFactory: async () =>
+          registry.getTts("tts.fake.multicontext").openMultiContextSession!(),
+      });
+      await voice.start();
+      const session = stt.lastSession.current!;
+
+      session.pushEvent({
+        type: "end_of_turn",
+        text: "Hey Alfred, how are you?",
+        metadata: {},
+      });
+      await new Promise((r) => setTimeout(r, 80));
+
+      session.pushEvent({
+        type: "end_of_turn",
+        text: "Yes, please. I would.",
+        metadata: {},
+      });
+      await new Promise((r) => setTimeout(r, 80));
+
+      expect(llm.requests.length).toBeGreaterThanOrEqual(2);
+      const followUp = llm.requests[llm.requests.length - 1]!;
+      const roles = followUp.messages.map((m) => m.role);
+      expect(roles).toContain("assistant");
+      expect(
+        followUp.messages.some(
+          (m) => m.role === "assistant" && /briefing/i.test(m.content),
+        ),
+      ).toBe(true);
+      expect(
+        followUp.messages.some(
+          (m) => m.role === "user" && /Yes, please/i.test(m.content),
+        ),
+      ).toBe(true);
+
+      await voice.stop();
+    } finally {
+      if (prevCooldown === undefined) delete process.env.ALFRED_ECHO_COOLDOWN_MS;
+      else process.env.ALFRED_ECHO_COOLDOWN_MS = prevCooldown;
+    }
+  });
 });

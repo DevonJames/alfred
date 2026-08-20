@@ -109,6 +109,12 @@ export class VoiceSessionController {
   private lastAssistantSpeech = "";
   /** User turn currently being answered (STT often re-hears it). */
   private lastUserTurn = "";
+  /**
+   * In-session chat history for LLM prompts (deixis: "yes", "that", etc.).
+   * Distinct from long-term memory retrieve.
+   */
+  private recentTurns: { role: "user" | "assistant"; text: string }[] = [];
+  private readonly maxRecentTurns = 20;
   /** Apply echo matching until this clock time (ms) after TTS ends. */
   private echoGuardUntilMs = 0;
   private latencyMarks = new Map<LatencyMarkName, number>();
@@ -563,7 +569,7 @@ export class VoiceSessionController {
     const prompt = this.promptAssembler.assemble({
       systemInstructions: this.deps.config.systemInstructions,
       currentUserTurn: text,
-      recentConversation: [],
+      recentConversation: this.recentConversationForPrompt(),
       personaContext: this.deps.personaContext,
       retrievedMemory: memory.items,
       mode: "initial",
@@ -718,6 +724,7 @@ export class VoiceSessionController {
       text,
       metadata: {},
     });
+    this.pushRecentTurn("user", text);
 
     // Daily briefing: play / decline may short-circuit the normal LLM path.
     let briefingDecision: BriefingVoiceDecision | undefined;
@@ -751,7 +758,9 @@ export class VoiceSessionController {
           text: assistantText,
           metadata: { responseId, briefing: briefingDecision.action },
         });
+        this.pushRecentTurn("assistant", assistantText);
         console.log("[voice] briefing turn playback complete");
+        this.provisionalResponseId = undefined;
       } catch (err) {
         console.error("[voice] briefing speak failed:", err);
         await this.deps.events.emit({
@@ -830,6 +839,8 @@ export class VoiceSessionController {
           text: assistantText,
           metadata: { responseId, xIngest: true },
         });
+        this.pushRecentTurn("assistant", assistantText);
+        this.provisionalResponseId = undefined;
       } catch (err) {
         console.error("[voice] X ingest failed:", err);
       } finally {
@@ -885,7 +896,7 @@ export class VoiceSessionController {
         const prompt = this.promptAssembler.assemble({
           systemInstructions,
           currentUserTurn: text,
-          recentConversation: [],
+          recentConversation: this.recentConversationForPrompt(),
           personaContext: this.deps.personaContext,
           retrievedMemory: memory.items,
           mode: "initial",
@@ -926,6 +937,8 @@ export class VoiceSessionController {
         text: assistantText,
         metadata: { responseId },
       });
+      this.pushRecentTurn("assistant", assistantText);
+      this.provisionalResponseId = undefined;
       console.log("[voice] turn playback complete");
     } catch (err) {
       console.error("[voice] commitEndOfTurn failed:", err);
@@ -1235,6 +1248,28 @@ export class VoiceSessionController {
     } else {
       await this.deps.fsm.force("Listening", "voice.turn_complete");
     }
+  }
+
+  private pushRecentTurn(role: "user" | "assistant", text: string): void {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    this.recentTurns.push({ role, text: trimmed });
+    if (this.recentTurns.length > this.maxRecentTurns) {
+      this.recentTurns.splice(0, this.recentTurns.length - this.maxRecentTurns);
+    }
+  }
+
+  /**
+   * Prior turns for the prompt assembler.
+   * When the current user utterance is already in recentTurns, omit it — it is
+   * also passed as `currentUserTurn`.
+   */
+  private recentConversationForPrompt(): { role: "user" | "assistant"; text: string }[] {
+    if (this.recentTurns.length === 0) return [];
+    const last = this.recentTurns[this.recentTurns.length - 1];
+    const prior =
+      last?.role === "user" ? this.recentTurns.slice(0, -1) : this.recentTurns;
+    return prior.map((t) => ({ role: t.role, text: t.text }));
   }
 
   private async mark(name: LatencyMarkName): Promise<void> {
