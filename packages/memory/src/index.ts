@@ -11,4 +11,5 @@ export * from "./oip-local/index.js";
 export * from "./persona.js";
 export * from "./persona-templates.js";
 export * from "./x-ingest/index.js";
+export * from "./docs-ingest/index.js";
 

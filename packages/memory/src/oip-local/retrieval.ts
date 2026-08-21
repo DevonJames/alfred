@@ -103,6 +103,15 @@ export async function retrieveMemories(
     }
   }
 
+  if (isDocsSourceQuery(query.text)) {
+    for (const row of deps.sqlite.findBySearchSubstring("docs_folder", 40)) {
+      bump(row.id, (scores.get(row.id) ?? 0) + 0.3);
+    }
+    for (const row of deps.sqlite.findBySearchSubstring("documentation", 40)) {
+      bump(row.id, (scores.get(row.id) ?? 0) + 0.2);
+    }
+  }
+
   const noteHint = extractNoteHint(query.text);
   if (noteHint) {
     for (const row of deps.sqlite.findBySearchSubstring(noteHint, 40)) {
@@ -180,6 +189,13 @@ function formatContent(rev: MemoryRevision): string {
   if (srcType === "youtube" && typeof rev.provenance?.author === "string" && rev.provenance.author) {
     meta.push(`channel=${rev.provenance.author}`);
   }
+  if (srcType === "docs_folder") {
+    meta.push("source=docs");
+    const relPath = rev.provenance?.relPath;
+    if (typeof relPath === "string" && relPath) meta.push(`file=${relPath}`);
+    const folderLabel = rev.provenance?.folderLabel;
+    if (typeof folderLabel === "string" && folderLabel) meta.push(`folder=${folderLabel}`);
+  }
   if (rev.validFrom) meta.push(`published=${rev.validFrom}`);
   if (rev.learnedAt) meta.push(`learned=${rev.learnedAt}`);
   const suffix = meta.length ? ` [${meta.join("; ")}]` : "";
@@ -197,6 +213,14 @@ function isXSourceQuery(text: string): boolean {
 
 function isYouTubeSourceQuery(text: string): boolean {
   return /\byoutube\b|\byoutu\.be\b|\byou tube\b|\bvideo\b|\bchannel\b/i.test(text);
+}
+
+function isDocsSourceQuery(text: string): boolean {
+  return (
+    /\bdocumentation\b|\barchitecture\b|\bmarkdown\b|\bthe docs\b|\bdocs folder\b|\bproject docs\b/i.test(
+      text,
+    ) || /\bdocs\b/i.test(text)
+  );
 }
 
 function extractNoteHint(text: string): string | undefined {

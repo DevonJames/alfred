@@ -28,6 +28,7 @@ import type { AgentRouterPort, MemoryControllerPort, ProviderRegistryPort } from
 import { PromptAssembler } from "./prompt-assembler.js";
 import { ResponseLedger } from "./response-ledger.js";
 import { ConversationStateMachine } from "./state-machine.js";
+import { looksLikeDocsIngestTask } from "./docs-ingest-intent.js";
 import { looksLikeXIngestTask } from "./x-ingest-intent.js";
 
 export interface SpeechDeliveryOptions {
@@ -341,6 +342,10 @@ export class SessionOrchestrator {
       const delegation = parseDelegateIntent(text);
       if (delegation) {
         await this.runDelegation(turn, delegation.category, delegation.description);
+        return;
+      }
+      if (looksLikeDocsIngestTask(text)) {
+        await this.runDelegation(turn, "research", text);
         return;
       }
       if (looksLikeXIngestTask(text)) {

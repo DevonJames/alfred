@@ -10,6 +10,8 @@ export const SCHEMA_ORG = {
   SocialMediaPosting: "https://schema.org/SocialMediaPosting",
   Article: "https://schema.org/Article",
   VideoObject: "https://schema.org/VideoObject",
+  Collection: "https://schema.org/Collection",
+  DigitalDocument: "https://schema.org/DigitalDocument",
   Thing: "https://schema.org/Thing",
 } as const;
 

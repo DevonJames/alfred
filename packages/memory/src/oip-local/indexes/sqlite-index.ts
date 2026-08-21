@@ -499,7 +499,13 @@ function buildSearchText(r: MemoryRevision): string {
     parts.push(prov.sourceType.replace(/_/g, " "));
     if (prov.sourceType === "x_com") parts.push("x.com", "twitter", "X");
     if (prov.sourceType === "youtube") parts.push("youtube", "YouTube", "video");
+    if (prov.sourceType === "docs_folder") {
+      parts.push("docs", "documentation", "markdown", "docs_folder");
+    }
   }
+  if (typeof prov.sourcePath === "string") parts.push(prov.sourcePath);
+  if (typeof prov.relPath === "string") parts.push(prov.relPath);
+  if (typeof prov.folderLabel === "string") parts.push(prov.folderLabel);
   if (typeof prov.noteName === "string") parts.push(prov.noteName, "note");
   if (typeof prov.noteFolder === "string") parts.push(prov.noteFolder);
   if (Array.isArray(prov.noteNames)) parts.push(...prov.noteNames.map(String));

@@ -37,6 +37,7 @@ import {
   looksIncompleteInterrupt,
 } from "./echo-filter.js";
 import { SelfVoiceGate } from "./self-voice.js";
+import { looksLikeDocsIngestTask } from "./docs-ingest-intent.js";
 import { looksLikeXIngestTask } from "./x-ingest-intent.js";
 
 /** Structural port for Daily Briefing (implemented by @alfred/briefing). */
@@ -864,6 +865,49 @@ export class VoiceSessionController {
             message: err instanceof Error ? err.message : String(err),
           },
         });
+      } finally {
+        await this.finishTurn({ speak });
+      }
+      return;
+    }
+
+    if (looksLikeDocsIngestTask(text)) {
+      try {
+        this.provisionalAbort?.abort({ reason: "docs_ingest_short_circuit" });
+        const responseId = this.deps.responseLedger.beginResponse(this.deps.sessionId, turnId);
+        this.provisionalResponseId = responseId;
+        const assistantText = "I'll ingest your documentation folder into memory now.";
+        void this.deps.agents
+          .delegate({
+            correlationId: createId("corr"),
+            taskDescription: text,
+            taskCategory: "research",
+            conversationContext: text,
+            permissions: ["agent.delegate"],
+            requestedOutputFormat: "text",
+            confirmationRequired: false,
+            timeoutMs: 600_000,
+          })
+          .catch((err) => console.error("[voice] background docs ingest failed:", err));
+        if (this.pendingUserText || this.bargeInListening) {
+          console.log("[voice] skip docs ingest speak; barge-in pending");
+          return;
+        }
+        await this.deps.responseLedger.commit(responseId, assistantText);
+        this.activeResponseId = responseId;
+        await this.deliverAssistant(responseId, assistantText, speak);
+        await this.deps.memory.commitTurn({
+          profileId: this.deps.profileId,
+          sessionId: this.deps.sessionId,
+          turnId: createId("turn"),
+          role: "assistant",
+          text: assistantText,
+          metadata: { responseId, docsIngest: true },
+        });
+        this.pushRecentTurn("assistant", assistantText);
+        this.provisionalResponseId = undefined;
+      } catch (err) {
+        console.error("[voice] docs ingest failed:", err);
       } finally {
         await this.finishTurn({ speak });
       }

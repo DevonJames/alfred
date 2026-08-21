@@ -21,6 +21,10 @@
  *   pnpm memory -- ingest-x-login
  *   pnpm memory -- ingest-x [--note Name] [--dry-run]
  *   pnpm memory -- ingest-x <url>
+ *   pnpm memory -- ingest-docs-source add --path /abs/docs [--label "Alfred docs"]
+ *   pnpm memory -- ingest-docs-source list
+ *   pnpm memory -- ingest-docs-source remove --path /abs/docs
+ *   pnpm memory -- ingest-docs [--path /abs/docs] [--dry-run]
  *   pnpm memory -- seed-reminder [text...]
  */
 import { config as loadEnv } from "dotenv";
@@ -31,6 +35,7 @@ import { seedDueReminder } from "@alfred/briefing";
 import type { CanonicalMemoryRecord } from "@alfred/contracts";
 import {
   addXSource,
+  addDocsSource,
   cleanupUserMd,
   composeNotesCaptureAdapter,
   dedupeUserMd,
@@ -41,9 +46,12 @@ import {
   ensurePersonaFiles,
   eraseOipMemory,
   getItemKind,
+  ingestDocsFolders,
   ingestKnowledgeDocument,
   ingestXNotes,
   ingestXUrl,
+  isDirectory,
+  loadDocsSources,
   loadXSources,
   LocalFileMemoryProvider,
   mergeUserMd,
@@ -51,6 +59,7 @@ import {
   PERSONA_FILES,
   planIngestExport,
   readAppleNote,
+  removeDocsSource,
   removeXSource,
   resolveRepoRoot,
   USER_MD_MAX_CHARS,
@@ -551,6 +560,80 @@ async function main(): Promise<void> {
     return;
   }
 
+  if (cmd === "ingest-docs-source") {
+    const sub = args[1];
+    if (sub === "list") {
+      const sources = await loadDocsSources(profileId);
+      if (!sources.length) {
+        console.log("No documentation folders registered.");
+        return;
+      }
+      for (const s of sources) {
+        console.log(`  ${s.id}: label="${s.label}" path="${s.path}"`);
+      }
+      return;
+    }
+    if (sub === "remove") {
+      const dir = flagValue(args, "--path") ?? args[2];
+      if (!dir) {
+        console.error('Usage: pnpm memory -- ingest-docs-source remove --path "/abs/docs"');
+        process.exitCode = 1;
+        return;
+      }
+      const removed = await removeDocsSource(profileId, dir);
+      if (!removed) {
+        console.error(`No docs source matching "${dir}"`);
+        process.exitCode = 1;
+        return;
+      }
+      console.log(`Removed ${removed.label} (${removed.path})`);
+      return;
+    }
+    if (sub === "add") {
+      const dir = flagValue(args, "--path");
+      const label = flagValue(args, "--label");
+      if (!dir) {
+        console.error(
+          'Usage: pnpm memory -- ingest-docs-source add --path "/abs/docs" [--label "Alfred docs"]',
+        );
+        process.exitCode = 1;
+        return;
+      }
+      const resolved = resolveInputPath(dir);
+      if (!(await isDirectory(resolved))) {
+        console.error(`Not a directory: ${resolved}`);
+        process.exitCode = 1;
+        return;
+      }
+      const added = await addDocsSource(profileId, { path: resolved, label });
+      console.log(`Registered ${added.label} (id=${added.id})`);
+      console.log(`Path: ${added.path}`);
+      return;
+    }
+    console.error(
+      'Usage: pnpm memory -- ingest-docs-source add|list|remove --path "…" [--label "…"]',
+    );
+    process.exitCode = 1;
+    return;
+  }
+
+  if (cmd === "ingest-docs") {
+    const dryRun = args.includes("--dry-run");
+    const dir = flagValue(args, "--path");
+    const result = await ingestDocsFolders({ profileId, path: dir, dryRun });
+    console.log(`Sources: ${result.sources.map((s) => s.label).join(", ") || "(none)"}`);
+    for (const p of result.processed) {
+      const extra =
+        p.status === "ingested"
+          ? ` (${p.sections ?? 0} sections${p.extracted ? `, ${p.extracted} extracted` : ""})`
+          : p.error
+            ? ` (${p.error})`
+            : "";
+      console.log(`  [${p.status}] ${p.relPath || p.path}${extra}`);
+    }
+    return;
+  }
+
   if (cmd === "seed-reminder") {
     const text =
       args
@@ -571,7 +654,7 @@ async function main(): Promise<void> {
 
   console.error(`Unknown command: ${cmd}`);
   console.error(
-    "Usage: pnpm memory -- inspect|persona|export|import|ingest-export|ingest-knowledge|ingest-x-source|ingest-x-login|ingest-x|dedupe-user|cleanup-user|erase|oip-inspect|oip-verify|oip-rebuild|oip-export|oip-import|seed-reminder",
+    "Usage: pnpm memory -- inspect|persona|export|import|ingest-export|ingest-knowledge|ingest-x-source|ingest-x-login|ingest-x|ingest-docs-source|ingest-docs|dedupe-user|cleanup-user|erase|oip-inspect|oip-verify|oip-rebuild|oip-export|oip-import|seed-reminder",
   );
   process.exitCode = 1;
 }

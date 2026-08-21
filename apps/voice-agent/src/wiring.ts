@@ -2,6 +2,7 @@ import {
   AgentRouter,
   createClaudeStub,
   createCodexStub,
+  createDocsIngestHarness,
   createHermesStub,
   createOpenClawStub,
   createXIngestHarness,
@@ -148,7 +149,7 @@ export async function createCascadedVoiceRuntime(opts?: {
     agentRouting: [
       { category: "coding", orderedHarnessIds: ["harness.codex"] },
       { category: "email", orderedHarnessIds: ["harness.openclaw", "harness.hermes"] },
-      { category: "research", orderedHarnessIds: ["harness.x-ingest", "harness.hermes"] },
+      { category: "research", orderedHarnessIds: ["harness.docs-ingest", "harness.x-ingest", "harness.hermes"] },
       { category: "browser", orderedHarnessIds: ["harness.x-ingest", "harness.hermes"] },
       { category: "computer_use", orderedHarnessIds: ["harness.x-ingest", "harness.claude"] },
     ],
@@ -168,6 +169,7 @@ export async function createCascadedVoiceRuntime(opts?: {
   agents.register(createHermesStub());
   agents.register(createCodexStub());
   agents.register(createClaudeStub());
+  agents.register(createDocsIngestHarness({ profileId }));
   agents.register(
     createXIngestHarness({
       profileId,
