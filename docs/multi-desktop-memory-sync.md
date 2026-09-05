@@ -1,6 +1,6 @@
 # Multi-Desktop Memory Sync
 
-**Status:** Future work — design notes only  
+**Status:** Partial — offline Alfred Memory File export/merge shipped (`oip-bundle-export` / `oip-bundle-merge` + ingest UI). Live peer sync over alfrd.net remains future work.  
 **Related:** [ALFRED-MEMORY-prd.md](./ALFRED-MEMORY-prd.md), [alfrd-net-desktop-handoff.md](./alfrd-net-desktop-handoff.md), [ios-desktop-pairing.md](./ios-desktop-pairing.md)
 
 ---

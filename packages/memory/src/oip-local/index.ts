@@ -1,3 +1,14 @@
+export {
+  ALFRED_MEMORY_BUNDLE_EXT,
+  ALFRED_MEMORY_BUNDLE_FORMAT,
+  ALFRED_MEMORY_BUNDLE_VERSION,
+  exportAlfredMemoryBundle,
+  extractAlfredMemoryBundle,
+  mergeAlfredMemoryBundle,
+  mergeAlfredMemoryFromDir,
+  type AlfredMemoryBundleManifest,
+  type AlfredMemoryMergeReport,
+} from "./bundle.js";
 export { ArtifactStore, type StoredArtifact } from "./artifact-store.js";
 export { canonicalJsonBytes, canonicalJsonString, normalizeTimestamp } from "./canonical-json.js";
 export {

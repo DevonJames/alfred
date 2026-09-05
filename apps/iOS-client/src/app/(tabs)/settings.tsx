@@ -23,7 +23,7 @@ import {
   Notice,
   Sheet,
 } from "@/components/ui";
-import { logout, unlinkDesktop } from "@/lib/cloud-api";
+import { unlinkDesktop } from "@/lib/cloud-api";
 import { cn } from "@/lib/cn";
 import { useConnection } from "@/lib/connection";
 import { desktopErrorMessage, getSettings, isNotBuiltYet, patchSettings, rebuildIndexes, revokePairing, verifyMemory } from "@/lib/desktop-api";
@@ -31,7 +31,7 @@ import { rediscover } from "@/lib/discovery";
 import { useMirror } from "@/lib/memory-cache";
 import { syncMirror, useMirrorSync } from "@/lib/mirror-sync";
 import { describeCopy } from "@/lib/recall";
-import { clearDeviceAccount, storageIsSecure } from "@/lib/secure-store";
+import { storageIsSecure } from "@/lib/secure-store";
 import { useSession } from "@/lib/session";
 import type { DesktopSettings } from "@/lib/types";
 
@@ -102,14 +102,9 @@ export default function Settings() {
         await state.unpairDevice();
       }
       if (action === "reset") {
-        // Release the Mac *before* forgetting the identity that holds the
-        // claim, or the desktop would stay bound to an account nothing can
-        // reach and the next scan would earn a 409.
         await revokePairing().catch(() => {});
         if (cloudToken && serverId) await unlinkDesktop(cloudToken, serverId).catch(() => {});
-        if (cloudToken) await logout(cloudToken).catch(() => {});
         await state.signOut();
-        await clearDeviceAccount();
       }
       useSession.getState().reset();
       queryClient.clear();

@@ -7,10 +7,17 @@
     "orientation": "portrait",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
+    "icon": "./assets/icon.png",
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0A0B0D"
+    },
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "net.alfrd.alfred",
       "buildNumber": "1",
+      "icon": "./assets/icon.png",
       "infoPlist": {
         "CFBundleDisplayName": "Alfred",
         "NSMicrophoneUsageDescription": "Alfred listens only while you're speaking to it, and sends what you say to your own Mac to answer. Nothing is recorded or stored on this phone.",
@@ -18,7 +25,14 @@
         "NSCameraUsageDescription": "Scan the claim QR code shown on your Mac to link this phone to Alfred.",
         "NSLocalNetworkUsageDescription": "Alfred looks for your Mac on your local network first, so your conversation never leaves the house when it doesn't have to.",
         "NSAppTransportSecurity": {
-          "NSAllowsLocalNetworking": true
+          "NSAllowsLocalNetworking": true,
+          "NSExceptionDomains": {
+            "tail8cc8e2.ts.net": {
+              "NSIncludesSubdomains": true,
+              "NSExceptionAllowsInsecureHTTPLoads": true,
+              "NSExceptionMinimumTLSVersion": "TLSv1.0"
+            }
+          }
         },
         "UIBackgroundModes": ["audio"],
         "ITSAppUsesNonExemptEncryption": false
@@ -26,7 +40,11 @@
     },
     "android": {
       "package": "net.alfrd.alfred",
-      "edgeToEdgeEnabled": true
+      "edgeToEdgeEnabled": true,
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/icon.png",
+        "backgroundColor": "#0A0B0D"
+      }
     },
     "plugins": [
       "expo-router",

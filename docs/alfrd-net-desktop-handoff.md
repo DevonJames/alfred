@@ -113,14 +113,14 @@ Manual 8-character entry remains supported. Full iOS parse/claim steps: [ios-des
 
 ## Claim + discovery flow (mobile)
 
-1. User creates/logs into an alfrd.net account (`/auth/register`, `/auth/login`).
-2. User claims this desktop client: `POST /servers/claim` with `{ serverId, claimSecret }` (JWT).
-   - Preferred: scan QR from `http://127.0.0.1:3000/connect/claim` (or `alfred://claim` deep link).
-   - Fallback: type Desktop Client ID + 8-char claim secret from logs / `/connect/info`.
-3. Mobile loads candidates: `GET /servers` or `GET /servers/:id/candidates`.
-4. Mobile tries candidates by priority: LAN (10) → WAN (20) → relay (100) via `GET {url}/connect/health`.
-5. Store the winning URL (SecureStore `alfred_server_url`) for subsequent API calls.
-6. For relay URLs (`…/proxy/{id}/…`), send `X-Cloud-Token: Bearer <cloudJwt>` so `Authorization` can carry future device tokens.
+1. User scans QR or enters Desktop Client ID + claim secret (no alfrd.net account).
+2. Phone calls `POST /servers/link` → scoped **link JWT** + candidates.
+3. Discovery tries LAN → WAN → relay via `GET {url}/connect/health`.
+4. Store winning URL + link JWT (`alfred_cloud_token` — not a user session).
+5. For relay URLs, send `X-Cloud-Token: Bearer <linkJwt>`.
+6. Complete PIN pairing, then use device bearer for Alfred APIs.
+
+See [accountless-alfrd-net.md](./accountless-alfrd-net.md).
 
 ### Suggested SecureStore keys (from alfred-home iOS spec)
 
@@ -152,7 +152,19 @@ Expect `{ "status": "ok", "service": "alfred-desktop-client", … }` from `GET /
 - Electron (or other) Mac shell around this Node host
 - Embed voice-agent in desktop process (today: run `pnpm voice` separately)
 - Switch voice default memory provider to `memory.oip-local`
+- Full Alfred web SPA in this repo (today `app.alfrd.net` is still built from `alfred-home/web`; it now PIN-pairs to this desktop instead of Home username/password)
 - iOS Expo implementation (separate coding agent)
+
+### Redeploying app.alfrd.net (PIN pairing fix)
+
+From `alfred-home/web` after the AuthContext / PairingScreen changes:
+
+```bash
+npm run build
+wrangler pages deploy dist --project-name <your-pages-project> --commit-dirty=true
+```
+
+Then hard-refresh `https://app.alfrd.net` (clear site localStorage if the old password screen is cached). Flow: cloud claim → **Request pairing** → enter PIN from `http://127.0.0.1:3000/connect/claim`.
 
 ## Conflict note vs alfred-home
 

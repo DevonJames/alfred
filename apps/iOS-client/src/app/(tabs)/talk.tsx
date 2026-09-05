@@ -23,7 +23,7 @@ import Animated, {
 } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AgentWaveform } from "@/components/AgentWaveform";
-import { Backdrop, BRASS, ConnectionPill, Display, Label, Notice } from "@/components/ui";
+import { Backdrop, BRASS, ConnectionPill, Display, Notice } from "@/components/ui";
 import { cn } from "@/lib/cn";
 import { useConnection } from "@/lib/connection";
 import { rediscover } from "@/lib/discovery";
@@ -343,15 +343,10 @@ function VoiceStage({
   onStop: () => void;
 }) {
   const ghost = fullCaption.length > caption.length ? fullCaption.slice(caption.length) : "";
+  const hasTranscript = Boolean(caption || ghost || userFinal.length || userPartial);
 
   return (
-    <View className="mt-4 flex-1" testID="voice-stage">
-      {userPartial ? (
-        <Text className="mb-2 text-right text-sm leading-5 text-muted" testID="voice-user-partial">
-          {userPartial}
-        </Text>
-      ) : null}
-
+    <View style={{ marginTop: 12, flex: 1 }} testID="voice-stage">
       <AgentWaveform
         track={track}
         speaking={speaking}
@@ -359,50 +354,106 @@ function VoiceStage({
         onToggleCollapsed={onToggleWave}
       />
 
-      <ScrollView
-        ref={scrollerRef}
-        testID="voice-response-scroll"
-        className="mt-3 flex-1 rounded-2xl border border-line bg-ink-800/80 px-4 py-3"
-        contentContainerStyle={{ paddingBottom: 16, flexGrow: 1 }}
-        showsVerticalScrollIndicator={false}
+      <View
+        style={{
+          marginTop: 10,
+          flex: 1,
+          minHeight: 180,
+          borderRadius: 16,
+          borderWidth: 1,
+          borderColor: "#2E343D",
+          backgroundColor: "#111317",
+          overflow: "hidden",
+        }}
       >
-        {!caption && userFinal.length === 0 ? (
-          <Animated.View entering={FadeIn.delay(120)} className="mt-6">
-            <Display className="text-3xl leading-10">
-              I'm listening,{"\n"}whenever you are.
-            </Display>
-          </Animated.View>
-        ) : null}
-
-        {userFinal.map((line, i) => (
-          <Text key={`uf-${i}`} className="mt-3 text-right text-base leading-6 text-muted">
-            {line}
-          </Text>
-        ))}
-
-        {caption || ghost ? (
-          <Animated.View entering={FadeIn} className="mt-4" testID="voice-caption">
-            <Text className="font-display text-2xl leading-8 text-bone">
-              {caption}
-              {ghost ? <Text className="text-faint">{ghost}</Text> : null}
-              {speaking ? <Text className="text-brass">▍</Text> : null}
+        <ScrollView
+          ref={scrollerRef}
+          testID="voice-response-scroll"
+          style={{ flex: 1 }}
+          contentContainerStyle={{ paddingHorizontal: 16, paddingVertical: 14, paddingBottom: 20 }}
+          showsVerticalScrollIndicator
+        >
+          {!hasTranscript ? (
+            <Text
+              style={{
+                marginTop: 8,
+                fontFamily: "InstrumentSerif_400Regular",
+                fontSize: 28,
+                lineHeight: 36,
+                color: "#F4F1EA",
+              }}
+            >
+              I'm listening, whenever you are.
             </Text>
-          </Animated.View>
-        ) : null}
+          ) : null}
 
-        {connecting ? (
-          <Text className="mt-4 text-sm italic text-faint">Opening the line…</Text>
-        ) : null}
-      </ScrollView>
+          {userFinal.map((line, i) => (
+            <Text
+              key={`uf-${i}`}
+              style={{
+                marginTop: i === 0 ? 0 : 14,
+                textAlign: "right",
+                fontSize: 17,
+                lineHeight: 26,
+                color: "#D8A54A",
+              }}
+            >
+              {line}
+            </Text>
+          ))}
+
+          {userPartial ? (
+            <Text
+              testID="voice-user-partial"
+              style={{
+                marginTop: 14,
+                textAlign: "right",
+                fontSize: 17,
+                lineHeight: 26,
+                color: "#C4C8D0",
+              }}
+            >
+              {userPartial}
+            </Text>
+          ) : null}
+
+          {caption || ghost ? (
+            <Text
+              testID="voice-caption"
+              style={{
+                marginTop: 16,
+                fontFamily: "InstrumentSerif_400Regular",
+                fontSize: 22,
+                lineHeight: 32,
+                color: "#F4F1EA",
+              }}
+            >
+              {caption}
+              {ghost ? <Text style={{ color: "#8D939E" }}>{ghost}</Text> : null}
+              {speaking ? <Text style={{ color: BRASS }}>▍</Text> : null}
+            </Text>
+          ) : null}
+
+          {connecting ? (
+            <Text style={{ marginTop: 16, fontSize: 15, fontStyle: "italic", color: "#8D939E" }}>
+              Opening the line…
+            </Text>
+          ) : null}
+        </ScrollView>
+      </View>
 
       {sessionUnavailable ? null : (
-        <View className="mt-2 items-center">
-          <Pressable
-            testID="toggle-mic-mode"
-            onPress={onCycleMicMode}
-            className="mb-1 rounded-full px-3 py-1 active:opacity-70"
-          >
-            <Text className="text-xs text-muted">
+        <View
+          style={{
+            marginTop: 10,
+            flexDirection: "row",
+            alignItems: "center",
+            justifyContent: "space-between",
+            paddingVertical: 4,
+          }}
+        >
+          <Pressable testID="toggle-mic-mode" onPress={onCycleMicMode} hitSlop={8}>
+            <Text style={{ fontSize: 12, color: "#8D939E" }}>
               {micMode === "hold" ? "Hold to talk" : "Hands free"} · tap to switch
             </Text>
           </Pressable>
@@ -580,20 +631,28 @@ function MicOrb({
 
   useEffect(() => {
     pulse.value = listening
-      ? withRepeat(withTiming(1.12, { duration: 900, easing: Easing.inOut(Easing.quad) }), -1, true)
+      ? withRepeat(withTiming(1.08, { duration: 900, easing: Easing.inOut(Easing.quad) }), -1, true)
       : withTiming(1, { duration: 250 });
   }, [listening, pulse]);
 
-  const halo = useAnimatedStyle(() => ({ transform: [{ scale: pulse.value }] }));
+  const halo = useAnimatedStyle(() => ({
+    transform: [{ scale: pulse.value }],
+    opacity: listening ? 0.35 : 0.15,
+  }));
 
   return (
-    <View className="items-center pb-2 pt-1">
+    <View style={{ alignItems: "center", justifyContent: "center", width: 72, height: 72 }}>
       <Animated.View
-        style={halo}
-        className={cn(
-          "absolute h-[104px] w-[104px] rounded-full",
-          listening ? "bg-live/20" : "bg-brass/10"
-        )}
+        style={[
+          halo,
+          {
+            position: "absolute",
+            height: 64,
+            width: 64,
+            borderRadius: 32,
+            backgroundColor: listening ? "#E2574C" : BRASS,
+          },
+        ]}
       />
       <Pressable
         testID="mic-orb"
@@ -601,17 +660,20 @@ function MicOrb({
         onPressIn={continuous ? undefined : onStart}
         onPressOut={continuous ? undefined : onStop}
         onPress={continuous ? (listening ? onStop : onStart) : undefined}
-        className={cn(
-          "h-[88px] w-[88px] items-center justify-center rounded-full border-2",
-          listening ? "border-live bg-live/15" : "border-brass bg-brass/10",
-          busy && "opacity-40"
-        )}
+        style={{
+          height: 56,
+          width: 56,
+          borderRadius: 28,
+          borderWidth: 2,
+          borderColor: listening ? "#E2574C" : BRASS,
+          backgroundColor: listening ? "rgba(226,87,76,0.18)" : "rgba(216,165,74,0.12)",
+          alignItems: "center",
+          justifyContent: "center",
+          opacity: busy ? 0.4 : 1,
+        }}
       >
-        <Mic color={listening ? "#E2574C" : BRASS} size={28} />
+        <Mic color={listening ? "#E2574C" : BRASS} size={22} />
       </Pressable>
-      <Label className="mt-3">
-        {busy ? "Connecting" : listening ? "Listening" : continuous ? "Tap to start" : "Hold to speak"}
-      </Label>
     </View>
   );
 }

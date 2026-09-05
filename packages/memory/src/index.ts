@@ -6,6 +6,7 @@ export * from "./fact-extractor.js";
 export * from "./ingest-export.js";
 export * from "./knowledge-export-schema.js";
 export * from "./knowledge-ingest.js";
+export * from "./document-ingest.js";
 export * from "./local-provider.js";
 export * from "./oip-local/index.js";
 export * from "./persona.js";

@@ -56,14 +56,24 @@ function RootLayoutNav() {
 }
 
 export default function RootLayout() {
-  const [fontsLoaded] = useFonts({
+  const [fontsLoaded, fontError] = useFonts({
     InstrumentSerif_400Regular,
     InstrumentSerif_400Regular_Italic,
   });
 
   useEffect(() => {
-    if (fontsLoaded) SplashScreen.hideAsync();
-  }, [fontsLoaded]);
+    // Don't hold the splash forever if the font download fails — proceed with
+    // system fonts so the user isn't stuck on a black frame.
+    if (fontsLoaded || fontError) SplashScreen.hideAsync();
+  }, [fontsLoaded, fontError]);
+
+  // Absolute fallback: if fonts hang, still show the app after a few seconds.
+  useEffect(() => {
+    const t = setTimeout(() => {
+      SplashScreen.hideAsync().catch(() => {});
+    }, 5_000);
+    return () => clearTimeout(t);
+  }, []);
 
   // Captures made while the Mac was unreachable are held on this phone and go
   // up the moment a path appears (§11.3).
@@ -91,11 +101,11 @@ export default function RootLayout() {
     };
   }, []);
 
-  if (!fontsLoaded) return null;
-
+  // Always mount the navigator. Waiting on fonts with a blank ink view looked
+  // like a hang; Instrument Serif swaps in when ready.
   return (
     <QueryClientProvider client={queryClient}>
-      <GestureHandlerRootView style={{ flex: 1 }}>
+      <GestureHandlerRootView style={{ flex: 1, backgroundColor: INK }}>
         <KeyboardProvider>
           <StatusBar style="light" />
           <RootLayoutNav />

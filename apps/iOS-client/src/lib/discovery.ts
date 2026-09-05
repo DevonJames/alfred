@@ -60,7 +60,7 @@ async function probe(candidate: Candidate, cloudToken: string | null): Promise<b
   const timer = setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS);
   try {
     const headers: Record<string, string> = {};
-    // Relay candidates are unreachable without the account token — the hub
+    // Relay candidates need the link JWT — the hub consumes X-Cloud-Token.
     // rejects them at the edge before the desktop ever sees the request.
     if (candidate.type === "relay" && cloudToken) headers["X-Cloud-Token"] = `Bearer ${cloudToken}`;
 

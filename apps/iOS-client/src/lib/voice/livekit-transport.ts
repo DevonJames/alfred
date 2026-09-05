@@ -186,7 +186,8 @@ export async function startVoiceSession(
   }
 
   const publishControl = async (command: UiCommand) => {
-    await room.localParticipant.publishData?.(encodeControlCommand(command), {
+    const payload = encodeControlCommand(command);
+    await room.localParticipant.publishData?.(payload as Uint8Array<ArrayBuffer>, {
       reliable: true,
       topic: CONTROL_TOPIC,
     });

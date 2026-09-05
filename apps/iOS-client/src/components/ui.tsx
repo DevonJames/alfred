@@ -1,6 +1,10 @@
 /**
  * Alfred's shared surface. A private study at night: ink, brass, bone.
  * Restrained on purpose — this is a butler, not a dashboard.
+ *
+ * Base layout/colors use StyleSheet so screens stay visible even when
+ * NativeWind CssInterop fails (className-only flex/text → blank ink frame).
+ * className remains for optional NativeWind polish when it works.
  */
 import * as Haptics from "expo-haptics";
 import { LinearGradient } from "expo-linear-gradient";
@@ -11,26 +15,37 @@ import {
   Modal,
   Pressable,
   ScrollView,
+  StyleSheet,
   Text,
   TextInput,
   View,
   type TextInputProps,
+  type TextStyle,
+  type ViewStyle,
 } from "react-native";
-import Animated, { FadeIn, FadeInDown, FadeOut } from "react-native-reanimated";
 import { cn } from "@/lib/cn";
 import type { Confidence, ConnectionMode } from "@/lib/types";
 
 export const INK = "#0A0B0D";
+export const INK_800 = "#111317";
+export const INK_700 = "#171A1F";
+export const LINE = "#2E343D";
+export const BONE = "#F4F1EA";
+export const MUTED = "#8D939E";
+export const FAINT = "#5F656F";
 export const BRASS = "#D8A54A";
+export const LIVE = "#E2574C";
+export const OK = "#5AA97C";
+export const WARN = "#E0A458";
 
 /** Warm vignette that sits behind every screen. */
 export function Backdrop({ children }: { children: React.ReactNode }) {
   return (
-    <View className="flex-1 bg-ink">
+    <View style={styles.backdrop} className="flex-1 bg-ink">
       <LinearGradient
         colors={["#15120C", "#0A0B0D", "#0A0B0D"]}
         locations={[0, 0.45, 1]}
-        style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0 }}
+        style={StyleSheet.absoluteFill}
       />
       {children}
     </View>
@@ -40,14 +55,20 @@ export function Backdrop({ children }: { children: React.ReactNode }) {
 export function Display({
   children,
   className,
+  style,
   testID,
 }: {
   children: React.ReactNode;
   className?: string;
+  style?: TextStyle;
   testID?: string;
 }) {
   return (
-    <Text testID={testID} className={cn("font-display text-bone text-4xl leading-[46px]", className)}>
+    <Text
+      testID={testID}
+      className={cn("font-display text-bone text-4xl leading-[46px]", className)}
+      style={[styles.display, style]}
+    >
       {children}
     </Text>
   );
@@ -66,7 +87,7 @@ export function Label({
     <Text
       testID={testID}
       className={cn("text-faint text-xs uppercase", className)}
-      style={{ letterSpacing: 1.6 }}
+      style={styles.label}
     >
       {children}
     </Text>
@@ -89,6 +110,7 @@ export function Body({
       testID={testID}
       numberOfLines={numberOfLines}
       className={cn("text-bone text-base leading-[22px]", className)}
+      style={styles.body}
     >
       {children}
     </Text>
@@ -98,14 +120,20 @@ export function Body({
 export function Card({
   children,
   className,
+  style,
   testID,
 }: {
   children: React.ReactNode;
   className?: string;
+  style?: ViewStyle;
   testID?: string;
 }) {
   return (
-    <View testID={testID} className={cn("rounded-2xl border border-line bg-ink-800 p-4", className)}>
+    <View
+      testID={testID}
+      className={cn("rounded-2xl border border-line bg-ink-800 p-4", className)}
+      style={[styles.card, style]}
+    >
       {children}
     </View>
   );
@@ -129,6 +157,15 @@ export function Button({
   testID?: string;
 }) {
   const inert = disabled || loading;
+  const variantStyle =
+    variant === "primary" ? styles.btnPrimary : variant === "danger" ? styles.btnDanger : styles.btnGhost;
+  const labelStyle =
+    variant === "primary"
+      ? styles.btnLabelPrimary
+      : variant === "danger"
+        ? styles.btnLabelDanger
+        : styles.btnLabelGhost;
+
   return (
     <Pressable
       testID={testID}
@@ -145,6 +182,7 @@ export function Button({
         inert && "opacity-40",
         className
       )}
+      style={[styles.btn, variantStyle, inert ? styles.btnInert : null]}
     >
       {loading ? (
         <ActivityIndicator color={variant === "primary" ? INK : BRASS} />
@@ -156,6 +194,7 @@ export function Button({
             variant === "ghost" && "text-bone",
             variant === "danger" && "text-live"
           )}
+          style={labelStyle}
         >
           {label}
         </Text>
@@ -167,19 +206,21 @@ export function Button({
 export function Field({
   label,
   className,
+  style,
   testID,
   ...props
 }: TextInputProps & { label?: string; testID?: string }) {
   return (
-    <View className="space-y-2">
+    <View style={styles.fieldWrap} className="space-y-2">
       {label ? <Label>{label}</Label> : null}
       <TextInput
         testID={testID}
-        placeholderTextColor="#5F656F"
+        placeholderTextColor={FAINT}
         className={cn(
           "h-14 rounded-2xl border border-line bg-ink-700 px-4 text-base text-bone",
           className
         )}
+        style={[styles.field, style]}
         {...props}
       />
     </View>
@@ -197,27 +238,29 @@ export function Notice({
   testID?: string;
 }) {
   return (
-    <Animated.View
+    <View
       testID={testID}
-      entering={FadeInDown.duration(180)}
-      exiting={FadeOut}
       className={cn(
         "rounded-xl border px-4 py-3",
         tone === "error" ? "border-live/40 bg-live/10" : "border-line bg-ink-700"
       )}
+      style={[styles.notice, tone === "error" ? styles.noticeError : styles.noticeInfo]}
     >
-      <Text className={cn("text-sm", tone === "error" ? "text-live" : "text-muted")}>
+      <Text
+        className={cn("text-sm", tone === "error" ? "text-live" : "text-muted")}
+        style={tone === "error" ? styles.noticeTextError : styles.noticeTextInfo}
+      >
         {children}
       </Text>
-    </Animated.View>
+    </View>
   );
 }
 
-const MODE_COPY: Record<ConnectionMode, { label: string; dot: string; text: string }> = {
-  local: { label: "On your network", dot: "bg-ok", text: "text-ok" },
-  direct: { label: "Direct", dot: "bg-ok", text: "text-ok" },
-  relay: { label: "Via relay", dot: "bg-warn", text: "text-warn" },
-  offline: { label: "Mac unreachable", dot: "bg-live", text: "text-live" },
+const MODE_COPY: Record<ConnectionMode, { label: string; color: string }> = {
+  local: { label: "On your network", color: OK },
+  direct: { label: "Direct", color: OK },
+  relay: { label: "Via relay", color: WARN },
+  offline: { label: "Mac unreachable", color: LIVE },
 };
 
 /** §8.6: the path is always visible, never guessed at. */
@@ -238,13 +281,16 @@ export function ConnectionPill({
       testID={testID}
       onPress={onPress}
       className="flex-row items-center space-x-2 self-start rounded-full border border-line bg-ink-700 px-3 py-1.5 active:opacity-70"
+      style={styles.pill}
     >
       {busy ? (
         <ActivityIndicator size="small" color={BRASS} />
       ) : (
-        <View className={cn("h-1.5 w-1.5 rounded-full", copy.dot)} />
+        <View style={[styles.pillDot, { backgroundColor: copy.color }]} />
       )}
-      <Text className={cn("text-xs", copy.text)}>{busy ? "Finding your Mac…" : copy.label}</Text>
+      <Text style={{ color: busy ? MUTED : copy.color, fontSize: 12 }}>
+        {busy ? "Finding your Mac…" : copy.label}
+      </Text>
     </Pressable>
   );
 }
@@ -263,28 +309,26 @@ export function FromPhone({
   testID?: string;
 }) {
   return (
-    <Animated.View
-      testID={testID}
-      entering={FadeIn.duration(180)}
-      className="rounded-xl border border-line bg-ink-700 px-3.5 py-2.5"
-    >
-      <View className="flex-row items-start space-x-2">
-        <View className="pt-0.5">
-          <Smartphone color="#8D939E" size={13} />
+    <View testID={testID} style={styles.fromPhone} className="rounded-xl border border-line bg-ink-700 px-3.5 py-2.5">
+      <View style={styles.fromPhoneRow} className="flex-row items-start space-x-2">
+        <View style={{ paddingTop: 2 }}>
+          <Smartphone color={MUTED} size={13} />
         </View>
-        <Text className="flex-1 text-xs leading-5 text-muted">{detail}</Text>
+        <Text style={styles.fromPhoneText} className="flex-1 text-xs leading-5 text-muted">
+          {detail}
+        </Text>
       </View>
       {children}
-    </Animated.View>
+    </View>
   );
 }
 
-const CONFIDENCE_COPY: Record<Confidence, { label: string; className: string }> = {
-  remembered: { label: "Remembered", className: "text-ok border-ok/30" },
-  likely: { label: "Likely", className: "text-brass border-brass/30" },
-  ambiguous: { label: "Ambiguous", className: "text-warn border-warn/30" },
-  inferred: { label: "Inferred", className: "text-muted border-line" },
-  unknown: { label: "Unknown", className: "text-faint border-line" },
+const CONFIDENCE_COPY: Record<Confidence, { label: string; color: string }> = {
+  remembered: { label: "Remembered", color: OK },
+  likely: { label: "Likely", color: BRASS },
+  ambiguous: { label: "Ambiguous", color: WARN },
+  inferred: { label: "Inferred", color: MUTED },
+  unknown: { label: "Unknown", color: FAINT },
 };
 
 /**
@@ -296,9 +340,9 @@ export function ConfidenceTag({ value, testID }: { value: Confidence; testID?: s
   return (
     <View
       testID={testID ?? `confidence-${value}`}
-      className={cn("self-start rounded-full border px-2 py-0.5", copy.className)}
+      style={[styles.confidence, { borderColor: `${copy.color}55` }]}
     >
-      <Text className={cn("text-xs", copy.className.split(" ")[0])}>{copy.label}</Text>
+      <Text style={{ color: copy.color, fontSize: 12 }}>{copy.label}</Text>
     </View>
   );
 }
@@ -318,12 +362,13 @@ export function Chip({
     <Pressable
       testID={testID}
       onPress={onPress}
+      style={[styles.chip, active ? styles.chipActive : styles.chipIdle]}
       className={cn(
         "rounded-full border px-3 py-1.5 active:opacity-70",
         active ? "border-brass bg-brass/15" : "border-line bg-ink-700"
       )}
     >
-      <Text className={cn("text-sm", active ? "text-brass" : "text-muted")}>{label}</Text>
+      <Text style={{ color: active ? BRASS : MUTED, fontSize: 14 }}>{label}</Text>
     </Pressable>
   );
 }
@@ -338,18 +383,18 @@ export function Empty({
   testID?: string;
 }) {
   return (
-    <Animated.View entering={FadeIn} testID={testID} className="items-center px-8 py-16">
-      <Text className="font-display text-2xl text-bone">{title}</Text>
-      <Text className="mt-2 text-center text-sm leading-5 text-faint">{detail}</Text>
-    </Animated.View>
+    <View testID={testID} style={styles.empty}>
+      <Text style={styles.emptyTitle}>{title}</Text>
+      <Text style={styles.emptyDetail}>{detail}</Text>
+    </View>
   );
 }
 
 export function Loading({ label, testID = "loading-indicator" }: { label?: string; testID?: string }) {
   return (
-    <View testID={testID} className="items-center py-12">
+    <View testID={testID} style={styles.loading} className="items-center py-12">
       <ActivityIndicator color={BRASS} />
-      {label ? <Text className="mt-3 text-sm text-faint">{label}</Text> : null}
+      {label ? <Text style={styles.loadingLabel}>{label}</Text> : null}
     </View>
   );
 }
@@ -373,16 +418,18 @@ export function Sheet({
       <Pressable
         testID={`${testID}-scrim`}
         onPress={onClose}
+        style={styles.sheetScrim}
         className="flex-1 justify-end bg-black/70"
       >
         <Pressable
           testID={testID}
           onPress={(e) => e.stopPropagation()}
+          style={styles.sheet}
           className="max-h-[80%] rounded-t-3xl border-t border-line bg-ink-800 px-5 pb-10 pt-3"
         >
-          <View className="mb-4 h-1 w-10 self-center rounded-full bg-line" />
-          <Text className="font-display text-2xl text-bone">{title}</Text>
-          <ScrollView className="mt-4" keyboardShouldPersistTaps="handled">
+          <View style={styles.sheetHandle} className="mb-4 h-1 w-10 self-center rounded-full bg-line" />
+          <Text style={styles.sheetTitle}>{title}</Text>
+          <ScrollView style={{ marginTop: 16 }} keyboardShouldPersistTaps="handled">
             {children}
           </ScrollView>
         </Pressable>
@@ -390,3 +437,217 @@ export function Sheet({
     </Modal>
   );
 }
+
+const styles = StyleSheet.create({
+  backdrop: {
+    flex: 1,
+    backgroundColor: INK,
+  },
+  display: {
+    color: BONE,
+    fontSize: 40,
+    lineHeight: 46,
+  },
+  label: {
+    color: FAINT,
+    fontSize: 10,
+    letterSpacing: 1.6,
+    textTransform: "uppercase",
+  },
+  body: {
+    color: BONE,
+    fontSize: 14,
+    lineHeight: 22,
+  },
+  card: {
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: LINE,
+    backgroundColor: INK_800,
+    padding: 16,
+  },
+  btn: {
+    height: 56,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 16,
+    paddingHorizontal: 24,
+  },
+  btnPrimary: {
+    backgroundColor: BRASS,
+  },
+  btnGhost: {
+    borderWidth: 1,
+    borderColor: LINE,
+    backgroundColor: INK_700,
+  },
+  btnDanger: {
+    borderWidth: 1,
+    borderColor: `${LIVE}66`,
+    backgroundColor: `${LIVE}1A`,
+  },
+  btnInert: {
+    opacity: 0.4,
+  },
+  btnLabelPrimary: {
+    color: INK,
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  btnLabelGhost: {
+    color: BONE,
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  btnLabelDanger: {
+    color: LIVE,
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  fieldWrap: {
+    gap: 8,
+  },
+  field: {
+    height: 56,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: LINE,
+    backgroundColor: INK_700,
+    paddingHorizontal: 16,
+    fontSize: 14,
+    color: BONE,
+  },
+  notice: {
+    borderRadius: 12,
+    borderWidth: 1,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+  },
+  noticeError: {
+    borderColor: `${LIVE}66`,
+    backgroundColor: `${LIVE}1A`,
+  },
+  noticeInfo: {
+    borderColor: LINE,
+    backgroundColor: INK_700,
+  },
+  noticeTextError: {
+    color: LIVE,
+    fontSize: 14,
+  },
+  noticeTextInfo: {
+    color: MUTED,
+    fontSize: 14,
+  },
+  pill: {
+    flexDirection: "row",
+    alignItems: "center",
+    alignSelf: "flex-start",
+    gap: 8,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: LINE,
+    backgroundColor: INK_700,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  pillDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+  },
+  fromPhone: {
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: LINE,
+    backgroundColor: INK_700,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  fromPhoneRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 8,
+  },
+  fromPhoneText: {
+    flex: 1,
+    color: MUTED,
+    fontSize: 12,
+    lineHeight: 20,
+  },
+  confidence: {
+    alignSelf: "flex-start",
+    borderRadius: 999,
+    borderWidth: 1,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+  },
+  chip: {
+    borderRadius: 999,
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  chipActive: {
+    borderColor: BRASS,
+    backgroundColor: `${BRASS}26`,
+  },
+  chipIdle: {
+    borderColor: LINE,
+    backgroundColor: INK_700,
+  },
+  empty: {
+    alignItems: "center",
+    paddingHorizontal: 32,
+    paddingVertical: 64,
+  },
+  emptyTitle: {
+    color: BONE,
+    fontSize: 24,
+  },
+  emptyDetail: {
+    marginTop: 8,
+    color: FAINT,
+    fontSize: 14,
+    lineHeight: 20,
+    textAlign: "center",
+  },
+  loading: {
+    alignItems: "center",
+    paddingVertical: 48,
+  },
+  loadingLabel: {
+    marginTop: 12,
+    color: FAINT,
+    fontSize: 14,
+  },
+  sheetScrim: {
+    flex: 1,
+    justifyContent: "flex-end",
+    backgroundColor: "rgba(0,0,0,0.7)",
+  },
+  sheet: {
+    maxHeight: "80%",
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    borderTopWidth: 1,
+    borderColor: LINE,
+    backgroundColor: INK_800,
+    paddingHorizontal: 20,
+    paddingBottom: 40,
+    paddingTop: 12,
+  },
+  sheetHandle: {
+    height: 4,
+    width: 40,
+    borderRadius: 999,
+    backgroundColor: LINE,
+    alignSelf: "center",
+    marginBottom: 16,
+  },
+  sheetTitle: {
+    color: BONE,
+    fontSize: 24,
+  },
+});

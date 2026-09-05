@@ -502,9 +502,13 @@ function buildSearchText(r: MemoryRevision): string {
     if (prov.sourceType === "docs_folder") {
       parts.push("docs", "documentation", "markdown", "docs_folder");
     }
+    if (prov.sourceType === "document_upload") {
+      parts.push("pdf", "document", "uploaded document", "document_upload");
+    }
   }
   if (typeof prov.sourcePath === "string") parts.push(prov.sourcePath);
   if (typeof prov.relPath === "string") parts.push(prov.relPath);
+  if (typeof prov.originalFilename === "string") parts.push(prov.originalFilename);
   if (typeof prov.folderLabel === "string") parts.push(prov.folderLabel);
   if (typeof prov.noteName === "string") parts.push(prov.noteName, "note");
   if (typeof prov.noteFolder === "string") parts.push(prov.noteFolder);

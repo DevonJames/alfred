@@ -27,7 +27,7 @@ import { defaultPersonaDir, ensurePersonaFiles } from "./persona.js";
 import { SCHEMA_ORG } from "./oip-local/schema-org.js";
 
 export interface KnowledgeIngestResult {
-  mode: "json" | "markdown";
+  mode: "json" | "markdown" | "document";
   providerId: string;
   filename: string;
   userMdUpdated: boolean;
@@ -44,6 +44,8 @@ export interface KnowledgeIngestResult {
   root: string;
   userMdPath?: string;
   errors: string[];
+  pages?: number;
+  sections?: number;
 }
 
 function confidenceToScore(c: ExportConfidence): number {

@@ -38,7 +38,7 @@ interface ConnectionState {
   discovering: boolean;
 
   hydrate: () => Promise<void>;
-  setCloudSession: (token: string, email: string) => Promise<void>;
+  setCloudSession: (token: string) => Promise<void>;
   setServer: (serverId: string) => Promise<void>;
   setServerUrl: (url: string, mode: ConnectionMode) => Promise<void>;
   setDevice: (deviceId: string, deviceToken: string, profileId: string) => Promise<void>;
@@ -90,14 +90,13 @@ export const useConnection = create<ConnectionState>((set, get) => ({
       deviceToken,
       deviceId,
       profileId,
-      // A stored URL is a guess until a probe confirms it — start offline.
       mode: "offline",
     });
   },
 
-  setCloudSession: async (token, email) => {
+  setCloudSession: async (token) => {
     await setItem(KEYS.cloudToken, token);
-    set({ cloudToken: token, email });
+    set({ cloudToken: token });
   },
 
   setServer: async (serverId) => {
@@ -124,9 +123,7 @@ export const useConnection = create<ConnectionState>((set, get) => ({
   setDiscovering: (discovering) => set({ discovering }),
 
   /**
-   * Keep the account and the claim; drop only this phone's desktop credential —
-   * and, with it, the copy of memory this phone was holding. A device that no
-   * longer has access must not keep a readable mirror behind (§11.3).
+   * Keep the link to the Mac; drop only this phone's desktop device credential.
    */
   unpairDevice: async () => {
     await clearMirror().catch(() => {});

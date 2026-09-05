@@ -112,6 +112,15 @@ export async function retrieveMemories(
     }
   }
 
+  if (isDocumentUploadQuery(query.text)) {
+    for (const row of deps.sqlite.findBySearchSubstring("document_upload", 40)) {
+      bump(row.id, (scores.get(row.id) ?? 0) + 0.3);
+    }
+    for (const row of deps.sqlite.findBySearchSubstring("pdf", 40)) {
+      bump(row.id, (scores.get(row.id) ?? 0) + 0.15);
+    }
+  }
+
   const noteHint = extractNoteHint(query.text);
   if (noteHint) {
     for (const row of deps.sqlite.findBySearchSubstring(noteHint, 40)) {
@@ -196,6 +205,13 @@ function formatContent(rev: MemoryRevision): string {
     const folderLabel = rev.provenance?.folderLabel;
     if (typeof folderLabel === "string" && folderLabel) meta.push(`folder=${folderLabel}`);
   }
+  if (srcType === "document_upload") {
+    meta.push("source=document");
+    const filename =
+      (typeof rev.provenance?.originalFilename === "string" && rev.provenance.originalFilename) ||
+      (typeof rev.provenance?.relPath === "string" && rev.provenance.relPath);
+    if (filename) meta.push(`file=${filename}`);
+  }
   if (rev.validFrom) meta.push(`published=${rev.validFrom}`);
   if (rev.learnedAt) meta.push(`learned=${rev.learnedAt}`);
   const suffix = meta.length ? ` [${meta.join("; ")}]` : "";
@@ -220,6 +236,12 @@ function isDocsSourceQuery(text: string): boolean {
     /\bdocumentation\b|\barchitecture\b|\bmarkdown\b|\bthe docs\b|\bdocs folder\b|\bproject docs\b/i.test(
       text,
     ) || /\bdocs\b/i.test(text)
+  );
+}
+
+function isDocumentUploadQuery(text: string): boolean {
+  return /\bpdf\b|\buploaded document\b|\bthis document\b|\bthe document\b|\buploaded pdf\b/i.test(
+    text,
   );
 }
 

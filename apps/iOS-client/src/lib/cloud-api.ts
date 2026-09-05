@@ -1,16 +1,12 @@
 /**
- * alfrd.net control plane client (PRD §8.3).
+ * alfrd.net control plane client.
  *
- * This layer only ever carries the *cloud* token. Device bearers belong to
- * desktop-api.ts and must never be sent here.
+ * Accountless: prove Desktop Client ID + claim secret → scoped link JWT.
+ * That JWT is used for candidates + X-Cloud-Token on the relay.
+ * Device bearers belong to desktop-api.ts and must never be sent here.
  */
-import type { Candidate, CloudUser, DesktopSummary } from "./types";
+import type { Candidate, DesktopSummary } from "./types";
 
-/**
- * The control plane is already deployed at api.alfrd.net. It is not this
- * project's backend and nothing about the phone's own state is stored there —
- * it exists only to hold the account, the desktop claim, and the relay tunnel.
- */
 export const CLOUD_BASE = (
   process.env.EXPO_PUBLIC_CLOUD_URL ??
   process.env.EXPO_PUBLIC_ALFRD_CLOUD_URL ??
@@ -33,12 +29,6 @@ interface ZodIssue {
   message: string;
 }
 
-/**
- * The control plane speaks three dialects of failure: a Zod envelope
- * (`{success:false,error:{issues}}`), a bare `{error:"code"}`, and plain text
- * ("Invalid email or password"). All three carry something worth showing the
- * user, so none of them get flattened into "request failed".
- */
 export function describeFailure(parsed: unknown, raw: string, status: number): [string, string] {
   const body = parsed as
     | { error?: unknown; message?: string; detail?: unknown; success?: boolean }
@@ -58,7 +48,6 @@ export function describeFailure(parsed: unknown, raw: string, status: number): [
 
   if (typeof error === "string") return [error, body?.message ?? error];
   if (body?.message) return ["request_failed", body.message];
-  // The desktop's pairing routes speak FastAPI's dialect: `{ detail: "…" }`.
   const detail = (body as { detail?: unknown } | null)?.detail;
   if (typeof detail === "string" && detail) return ["request_failed", detail];
 
@@ -67,7 +56,6 @@ export function describeFailure(parsed: unknown, raw: string, status: number): [
   return ["request_failed", `Request failed (${status})`];
 }
 
-/** Turn any failure — HTTP, network, or malformed body — into one ApiError shape. */
 async function request<T>(
   path: string,
   init: RequestInit & { token?: string | null } = {}
@@ -102,97 +90,55 @@ async function request<T>(
 
   if (response.status === 204 || !raw) return undefined as T;
 
-  // Some routes wrap in `{ data }`, some answer with the object directly.
   const body = parsed as { data?: unknown } | null;
   return ((body && typeof body === "object" && "data" in body ? body.data : parsed) ?? null) as T;
 }
 
-// --- account ---------------------------------------------------------------
-
-export interface AuthResult {
-  token: string;
-  user: CloudUser;
-}
-
-/**
- * The token field isn't documented anywhere we can read, so accept the three
- * names it plausibly has rather than crashing on a successful sign-in.
- */
-function normalizeAuth(raw: unknown, email: string): AuthResult {
-  const body = (raw ?? {}) as Record<string, unknown>;
-  const user = (body.user ?? {}) as Record<string, unknown>;
-  const token = (body.token ?? body.accessToken ?? body.jwt ?? user.token) as string | undefined;
-
-  if (!token) {
-    throw new ApiError(
-      "no_token",
-      "alfrd.net accepted the sign-in but didn't return a token.",
-      200
-    );
-  }
-
-  return {
-    token,
-    user: {
-      id: (user.id as string) ?? "",
-      email: (user.email as string) ?? email,
-      displayName: (user.displayName as string) ?? null,
-    },
-  };
-}
-
-export async function register(email: string, password: string, displayName: string) {
-  const raw = await request<unknown>("/auth/register", {
-    method: "POST",
-    body: JSON.stringify({ email: email.trim(), password, displayName: displayName.trim() }),
-  });
-  return normalizeAuth(raw, email.trim());
-}
-
-export async function login(email: string, password: string) {
-  const raw = await request<unknown>("/auth/login", {
-    method: "POST",
-    body: JSON.stringify({ email: email.trim(), password }),
-  });
-  return normalizeAuth(raw, email.trim());
-}
-
-export function me(token: string) {
-  return request<{ user: CloudUser }>("/auth/me", { token });
-}
-
-export function logout(token: string) {
-  return request<void>("/auth/logout", { method: "POST", token });
-}
-
-// --- desktops --------------------------------------------------------------
-
-export function claimDesktop(token: string, serverId: string, claimSecret: string) {
-  return request<{ serverId: string; name: string; claimedAt: string }>("/servers/claim", {
-    method: "POST",
-    token,
-    // The desktop prints the secret in mixed case; the host compares case-insensitively.
-    body: JSON.stringify({ serverId: serverId.trim(), claimSecret: claimSecret.trim() }),
-  });
-}
-
-/** Both routes may answer with a bare array or a named wrapper; accept either. */
 function listFrom<T>(raw: unknown, key: string): T[] {
   if (Array.isArray(raw)) return raw as T[];
   const wrapped = (raw as Record<string, unknown> | null)?.[key];
   return Array.isArray(wrapped) ? (wrapped as T[]) : [];
 }
 
-export async function listDesktops(token: string): Promise<{ servers: DesktopSummary[] }> {
-  const raw = await request<unknown>("/servers", { token });
-  const servers = listFrom<Record<string, unknown>>(raw, "servers").map((server) => ({
-    serverId: (server.serverId ?? server.id ?? server.desktopClientId) as string,
-    name: (server.name ?? server.serverName ?? server.desktopClientName ?? "Alfred") as string,
-    claimedAt: (server.claimedAt as string) ?? null,
-    lastSeenAt: (server.lastSeenAt as string) ?? "",
-    online: Boolean(server.online ?? server.relayConnected),
-  }));
-  return { servers: servers.filter((server) => Boolean(server.serverId)) };
+export interface LinkResult {
+  token: string;
+  expiresAt?: string;
+  serverId: string;
+  name: string;
+  connectionCandidates: Candidate[];
+  lastSeen: string | null;
+}
+
+/** Prove claim secret → link JWT. No user account. */
+export async function linkDesktop(serverId: string, claimSecret: string): Promise<LinkResult> {
+  const raw = await request<Record<string, unknown>>("/servers/link", {
+    method: "POST",
+    body: JSON.stringify({
+      serverId: serverId.trim(),
+      claimSecret: claimSecret.trim().toUpperCase(),
+    }),
+  });
+
+  const token = (raw.token as string) ?? "";
+  if (!token) {
+    throw new ApiError("no_token", "alfrd.net linked the Mac but didn't return a token.", 200);
+  }
+
+  const candidates = listFrom<Candidate>(raw.connectionCandidates ?? raw.candidates, "candidates");
+
+  return {
+    token,
+    expiresAt: raw.expiresAt as string | undefined,
+    serverId: (raw.serverId as string) ?? serverId.trim(),
+    name: (raw.name as string) ?? "Alfred",
+    connectionCandidates: candidates,
+    lastSeen: (raw.lastSeen as string) ?? null,
+  };
+}
+
+/** @deprecated use linkDesktop */
+export function claimDesktop(_token: string, serverId: string, claimSecret: string) {
+  return linkDesktop(serverId, claimSecret);
 }
 
 export async function getCandidates(
@@ -202,9 +148,33 @@ export async function getCandidates(
   const raw = await request<unknown>(`/servers/${encodeURIComponent(serverId)}/candidates`, {
     token,
   });
-  return { serverId, candidates: listFrom<Candidate>(raw, "candidates") };
+  const body = (raw ?? {}) as Record<string, unknown>;
+  const candidates = listFrom<Candidate>(
+    body.candidates ?? body.connectionCandidates,
+    "candidates"
+  );
+  return { serverId, candidates };
 }
 
 export function unlinkDesktop(token: string, serverId: string) {
   return request<void>(`/servers/${encodeURIComponent(serverId)}`, { method: "DELETE", token });
+}
+
+/** Best-effort single-desktop summary from a live link token. */
+export async function linkedDesktop(
+  token: string,
+  serverId: string
+): Promise<DesktopSummary | null> {
+  try {
+    const { candidates } = await getCandidates(token, serverId);
+    return {
+      serverId,
+      name: "Alfred",
+      claimedAt: null,
+      lastSeenAt: "",
+      online: candidates.length > 0,
+    };
+  } catch {
+    return null;
+  }
 }

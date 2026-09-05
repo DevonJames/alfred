@@ -162,6 +162,21 @@ Voice: “ingest my X notes” starts the batch in the background; “go pull th
 
 **Reminders in conversation:** with `pnpm voice` running, Alfred can complete, dismiss, or snooze due daily-brief reminders in natural language (e.g. “I signed the offer letter, thanks”). That updates the OIP reminder status and invalidates today’s briefing cache so the next brief won’t repeat it. HTTP `/api/memory/due` and `/api/memory/:id/reminder/status` remain available for debugging.
 
+**Merge memory between machines:** export a single Alfred Memory File on node A, then merge it on node B (union merge — keeps local-only records; preserves both revision histories when the same record diverged):
+
+```bash
+# On node A
+pnpm memory -- oip-bundle-export ./from-a.alfred-memory.zip
+
+# On node B (CLI)
+pnpm memory -- oip-bundle-merge ./from-a.alfred-memory.zip
+
+# Or upload via desktop UI: http://127.0.0.1:3000/memory/ingest
+# → “Alfred Memory File from Another Node”
+```
+
+The zip contains OIP packages + artifacts (not indexes; those rebuild after merge). Persona / briefing / X ledgers are not included in v1.
+
 **Live recall check:** with `pnpm voice` running, say “My name is Devon.” After the reply, stop the agent, start `pnpm voice` again, and ask “What’s my name?” — it should recall from the JSONL file. Confirm startup logs show `Memory: memory.local path=...` and `Persona: .../SOUL=yes`.
 
 ## Documentation

@@ -1,8 +1,8 @@
 /**
- * Extract plain text from .txt / .md / .rtf uploads.
+ * Extract plain text from .txt / .md / .rtf uploads, or PDF page text.
  */
 
-export type IngestTextKind = "txt" | "md" | "rtf" | "json" | "unknown";
+export type IngestTextKind = "txt" | "md" | "rtf" | "json" | "pdf" | "unknown";
 
 export function kindFromFilename(filename: string): IngestTextKind {
   const ext = filename.toLowerCase().split(".").pop() ?? "";
@@ -10,6 +10,7 @@ export function kindFromFilename(filename: string): IngestTextKind {
   if (ext === "md" || ext === "markdown" || ext === "mdown") return "md";
   if (ext === "rtf") return "rtf";
   if (ext === "json") return "json";
+  if (ext === "pdf") return "pdf";
   return "unknown";
 }
 
@@ -23,6 +24,8 @@ export function mimeForKind(kind: IngestTextKind): string {
       return "text/plain";
     case "json":
       return "application/json";
+    case "pdf":
+      return "application/pdf";
     default:
       return "application/octet-stream";
   }
@@ -30,6 +33,9 @@ export function mimeForKind(kind: IngestTextKind): string {
 
 export function extractPlainText(bytes: Buffer, filename: string): { text: string; kind: IngestTextKind } {
   const kind = kindFromFilename(filename);
+  if (kind === "pdf") {
+    throw new Error(`PDF files require Document ingest mode: ${filename}`);
+  }
   if (kind === "unknown") {
     throw new Error(`Unsupported file type (use .txt, .md, .rtf, or .json): ${filename}`);
   }
@@ -78,4 +84,41 @@ export function rtfToPlainText(rtf: string): string {
     .join("\n")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+}
+
+export async function extractPdfText(bytes: Buffer): Promise<{
+  text: string;
+  pages: string[];
+  pageCount: number;
+  kind: "pdf";
+}> {
+  let extractText: typeof import("unpdf").extractText;
+  let getDocumentProxy: typeof import("unpdf").getDocumentProxy;
+  try {
+    ({ extractText, getDocumentProxy } = await import("unpdf"));
+  } catch {
+    throw new Error("PDF extraction is unavailable (unpdf failed to load)");
+  }
+
+  let pdf;
+  try {
+    pdf = await getDocumentProxy(new Uint8Array(bytes));
+  } catch {
+    throw new Error("Could not read this PDF. The file may be damaged or password-protected.");
+  }
+
+  const { totalPages, text } = await extractText(pdf, { mergePages: false });
+  const pages = (Array.isArray(text) ? text : [text]).map((page) =>
+    page.replace(/\u0000/g, "").trim(),
+  );
+  if (!pages.some(Boolean)) {
+    throw new Error("PDF contained no extractable text (it may be scanned images only)");
+  }
+
+  const combined = pages
+    .map((page, i) => (page ? `# Page ${i + 1}\n\n${page}` : ""))
+    .filter(Boolean)
+    .join("\n\n");
+
+  return { text: combined, pages, pageCount: totalPages, kind: "pdf" };
 }

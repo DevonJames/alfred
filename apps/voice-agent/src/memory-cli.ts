@@ -13,6 +13,8 @@
  *   pnpm memory -- oip-rebuild
  *   pnpm memory -- oip-export [file]
  *   pnpm memory -- oip-import <file>
+ *   pnpm memory -- oip-bundle-export <file.alfred-memory.zip>
+ *   pnpm memory -- oip-bundle-merge <file.alfred-memory.zip>
  *   pnpm memory -- erase --yes [--all]
  *   pnpm memory -- ingest-knowledge <file.json|.md> [--dry-run]
  *   pnpm memory -- ingest-x-source add --folder "Folder" --note "Note"
@@ -219,6 +221,56 @@ async function main(): Promise<void> {
       .map((line) => JSON.parse(line) as CanonicalMemoryRecord);
     await p.importCanonical(records);
     console.log(`Imported ${records.length} OIP records → ${oipRoot}`);
+    return;
+  }
+
+  if (cmd === "oip-bundle-export") {
+    const out = args[1];
+    if (!out) {
+      console.error("Usage: pnpm memory -- oip-bundle-export <file.alfred-memory.zip>");
+      process.exitCode = 1;
+      return;
+    }
+    const { exportAlfredMemoryBundle } = await import("@alfred/memory");
+    const result = await exportAlfredMemoryBundle({
+      rootDir: oipRoot,
+      outPath: resolve(out),
+      profileId,
+    });
+    console.log(
+      `Exported Alfred Memory File → ${result.outPath} (${result.packageCount} packages, ${result.artifactFileCount} artifact files, ${result.byteSize} bytes)`,
+    );
+    return;
+  }
+
+  if (cmd === "oip-bundle-merge") {
+    const src = args[1];
+    if (!src) {
+      console.error("Usage: pnpm memory -- oip-bundle-merge <file.alfred-memory.zip>");
+      process.exitCode = 1;
+      return;
+    }
+    const { mergeAlfredMemoryBundle } = await import("@alfred/memory");
+    const report = await mergeAlfredMemoryBundle({
+      localRoot: oipRoot,
+      zipPath: resolveInputPath(src),
+      rebuildIndexes: true,
+    });
+    console.log(`Merged Alfred Memory File into ${report.root}`);
+    console.log(
+      `  packages added=${report.packagesAdded} merged=${report.packagesMerged} unchanged=${report.packagesUnchanged}`,
+    );
+    console.log(
+      `  revisions added=${report.revisionsAdded} head updates=${report.currentHeadUpdates}`,
+    );
+    console.log(
+      `  artifacts added=${report.artifactsAdded} skipped=${report.artifactsSkipped}`,
+    );
+    if (report.errors.length) {
+      console.log(`  errors (${report.errors.length}):`);
+      for (const e of report.errors) console.log(`    - ${e}`);
+      process.exitCode = 1;
+    }
     return;
   }
 
@@ -654,7 +706,7 @@ async function main(): Promise<void> {
 
   console.error(`Unknown command: ${cmd}`);
   console.error(
-    "Usage: pnpm memory -- inspect|persona|export|import|ingest-export|ingest-knowledge|ingest-x-source|ingest-x-login|ingest-x|ingest-docs-source|ingest-docs|dedupe-user|cleanup-user|erase|oip-inspect|oip-verify|oip-rebuild|oip-export|oip-import|seed-reminder",
+    "Usage: pnpm memory -- inspect|persona|export|import|ingest-export|ingest-knowledge|ingest-x-source|ingest-x-login|ingest-x|ingest-docs-source|ingest-docs|dedupe-user|cleanup-user|erase|oip-inspect|oip-verify|oip-rebuild|oip-export|oip-import|oip-bundle-export|oip-bundle-merge|seed-reminder",
   );
   process.exitCode = 1;
 }

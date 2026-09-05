@@ -1,13 +1,11 @@
 /**
- * "Let's find your Mac" (§7 Screen 3, §4 Claim via QR).
+ * "Let's find your Mac".
  *
- * The first thing the user does is point the phone at the code on the Mac, or
- * type the eight characters the desktop prints. Nothing is asked of them that
- * isn't already on the screen in front of them — the alfrd.net account this
- * claim needs is made for the device, silently, at the moment of claiming
- * (see cloud-identity.ts).
+ * Point the phone at the claim QR on the Mac, or type the Desktop Client ID
+ * and eight-character secret. No alfrd.net account — linking proves the secret
+ * and stores a scoped relay token.
  */
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation } from "@tanstack/react-query";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import * as Haptics from "expo-haptics";
 import * as Linking from "expo-linking";
@@ -15,11 +13,9 @@ import { router } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { KeyboardAwareScrollView } from "react-native-keyboard-controller";
-import Animated, { FadeIn, FadeInDown } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Backdrop, Button, Card, Display, Field, Label, Loading, Notice } from "@/components/ui";
-import { ApiError, claimDesktop, listDesktops } from "@/lib/cloud-api";
-import { restoreCloudSession, ensureCloudSession } from "@/lib/cloud-identity";
+import { ApiError, linkDesktop } from "@/lib/cloud-api";
 import {
   isCompleteSecret,
   isUuid,
@@ -38,7 +34,6 @@ function normalizeAddress(input: string): string {
   return /:\d+$/.test(withScheme) ? withScheme : `${withScheme}:3000`;
 }
 
-/** The desktop's answer to a claim, in words the user can act on. */
 function claimMessage(error: unknown): string {
   if (!(error instanceof ApiError)) return "Could not link that Mac.";
   if (error.status === 0) return "I couldn't reach alfrd.net. Check this phone's connection.";
@@ -46,15 +41,15 @@ function claimMessage(error: unknown): string {
     return "No Mac is registered with that ID right now. Make sure Alfred is running on your Mac, then try again.";
   }
   if (error.status === 401) return "That secret doesn't match the one your Mac is showing.";
-  if (error.status === 409) return "This Mac is already linked to another Alfred account.";
   return error.message;
 }
 
 export default function FindYourMac() {
   const insets = useSafeAreaInsets();
   const setServer = useConnection((s) => s.setServer);
+  const setCloudSession = useConnection((s) => s.setCloudSession);
 
-  const [mode, setMode] = useState<"scan" | "manual">("scan");
+  const [mode, setMode] = useState<"scan" | "manual">("manual");
   const [serverId, setServerId] = useState("");
   const [secret, setSecret] = useState("");
   const [address, setAddress] = useState("");
@@ -63,29 +58,11 @@ export default function FindYourMac() {
   /** One scan per screen: the camera fires this callback many times a second. */
   const handled = useRef(false);
 
-  /**
-   * Only *restore* a session here — never create one. A user who opens this
-   * screen and walks away should leave nothing behind on the control plane.
-   */
-  const session = useQuery({
-    queryKey: ["cloud", "session"],
-    queryFn: restoreCloudSession,
-    staleTime: 60_000,
-  });
-
-  // A reinstall or a second attempt often has the Mac already claimed; offering
-  // it back beats making someone re-read a UUID.
-  const existing = useQuery({
-    queryKey: ["cloud", "servers", session.data],
-    queryFn: () => listDesktops(session.data!),
-    enabled: Boolean(session.data),
-  });
-
   const claim = useMutation({
     mutationFn: async (input: ClaimPayload) => {
-      const token = await ensureCloudSession();
-      const result = await claimDesktop(token, input.serverId, input.claimSecret);
-      await setServer(result?.serverId ?? input.serverId);
+      const result = await linkDesktop(input.serverId, input.claimSecret);
+      await setCloudSession(result.token);
+      await setServer(result.serverId);
       return result;
     },
     onSuccess: () => {
@@ -96,11 +73,6 @@ export default function FindYourMac() {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       handled.current = false;
     },
-  });
-
-  const useExisting = useMutation({
-    mutationFn: (id: string) => setServer(id),
-    onSuccess: () => router.replace("/(onboarding)/discovering"),
   });
 
   // If the Mac is on this Wi-Fi it can hand over both values itself, which
@@ -137,10 +109,8 @@ export default function FindYourMac() {
     if (payload) accept(payload);
   }, [incoming, accept]);
 
-  const claimed = existing.data?.servers ?? [];
   const suspect = suspectCharacters(secret);
   const canSubmit = isUuid(serverId) && isCompleteSecret(secret);
-  const alreadyLinkedElsewhere = claim.error instanceof ApiError && claim.error.status === 409;
 
   return (
     <Backdrop>
@@ -154,24 +124,31 @@ export default function FindYourMac() {
         keyboardShouldPersistTaps="handled"
         bottomOffset={24}
       >
-        <Animated.View entering={FadeInDown.duration(400)}>
+        <View>
           <Label>Step 1 of 3</Label>
-          <Display className="mt-3">Let's find your Mac.</Display>
-          <Text className="mt-4 text-base leading-[22px] text-muted">
+          <Display style={{ marginTop: 12 }}>Let's find your Mac.</Display>
+          <Text
+            style={{
+              marginTop: 16,
+              fontSize: 16,
+              lineHeight: 22,
+              color: "#8D939E",
+            }}
+          >
             Alfred is running on your Mac and showing a code. Scan it, or type the eight characters
             underneath it. Your memory never leaves that machine — this only tells the phone where
             to knock.
           </Text>
-        </Animated.View>
+        </View>
 
         {claim.isPending ? (
-          <Animated.View entering={FadeIn} className="mt-8">
+          <View className="mt-8">
             <Card testID="claiming-card" className="items-center py-8">
               <Loading label={foundName ? `Linking to ${foundName}` : "Linking this phone"} />
             </Card>
-          </Animated.View>
+          </View>
         ) : mode === "scan" ? (
-          <Animated.View entering={FadeInDown.delay(100)} className="mt-8">
+          <View className="mt-8">
             <Scanner
               onScan={(data) => {
                 const payload = parseClaimPayload(data);
@@ -179,9 +156,9 @@ export default function FindYourMac() {
               }}
               onGiveUp={() => setMode("manual")}
             />
-          </Animated.View>
+          </View>
         ) : (
-          <Animated.View entering={FadeInDown.delay(100)} className="mt-8 space-y-4">
+          <View className="mt-8 space-y-4">
             <Field
               testID="claim-secret-input"
               label="Claim secret"
@@ -289,20 +266,12 @@ export default function FindYourMac() {
               disabled={!canSubmit}
               onPress={() => accept({ serverId: serverId.trim(), claimSecret: secret })}
             />
-          </Animated.View>
+          </View>
         )}
 
         {claim.isError ? (
           <View className="mt-6 space-y-3">
             <Notice testID="claim-error">{claimMessage(claim.error)}</Notice>
-            {alreadyLinkedElsewhere ? (
-              <Button
-                testID="use-account-instead"
-                variant="ghost"
-                label="Sign in to that account"
-                onPress={() => router.push("/(onboarding)/login")}
-              />
-            ) : null}
           </View>
         ) : null}
 
@@ -320,32 +289,6 @@ export default function FindYourMac() {
               {mode === "scan" ? "Type the code instead" : "Scan the code instead"}
             </Text>
           </Pressable>
-        ) : null}
-
-        {existing.isLoading ? <Loading label="Checking for Macs you've linked before" /> : null}
-
-        {claimed.length > 0 && !claim.isPending ? (
-          <Animated.View entering={FadeInDown.delay(160)} className="mt-4 space-y-3">
-            <Label>Linked before</Label>
-            {claimed.map((server) => (
-              <Pressable
-                key={server.serverId}
-                testID={`claimed-server-${server.serverId}`}
-                onPress={() => useExisting.mutate(server.serverId)}
-                className="active:opacity-70"
-              >
-                <Card className="flex-row items-center justify-between">
-                  <View className="flex-1 pr-3">
-                    <Text className="text-base text-bone">{server.name}</Text>
-                    <Text className="mt-1 text-xs text-faint">
-                      {server.online ? "Reachable a moment ago" : "Not seen recently"}
-                    </Text>
-                  </View>
-                  <Text className="text-sm text-brass">Use</Text>
-                </Card>
-              </Pressable>
-            ))}
-          </Animated.View>
         ) : null}
       </KeyboardAwareScrollView>
     </Backdrop>

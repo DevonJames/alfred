@@ -10,14 +10,10 @@ import * as SecureStore from "expo-secure-store";
 import { Platform } from "react-native";
 
 export const KEYS = {
+  /** Scoped link JWT from POST /servers/link (not a user account). */
   cloudToken: "alfred_cloud_token",
   cloudServerId: "alfred_cloud_server_id",
-  /**
-   * The control plane only issues claim tokens to an account, so the app makes
-   * one for this phone and keeps the credentials here. The user never types
-   * them — see cloud-identity.ts. `cloudAccountKind` records whether the
-   * session came from that device account or from a real alfrd.net sign-in.
-   */
+  /** @deprecated leftover account fields — cleared on sign-out */
   cloudEmail: "alfred_cloud_email",
   cloudPassword: "alfred_cloud_password",
   cloudAccountKind: "alfred_cloud_account_kind",
@@ -25,10 +21,8 @@ export const KEYS = {
   deviceToken: "alfred_device_token",
   deviceId: "alfred_device_id",
   profileId: "alfred_profile_id",
-  /** Local UX preferences — not credentials. */
   inputMode: "alfred_input_mode",
   permissionPrimerSeen: "alfred_permission_primer_seen",
-  /** Set when the desktop's build has no PIN pairing yet (see §8.5 follow-ons). */
   pairingDeferred: "alfred_pairing_deferred",
 } as const;
 
@@ -62,18 +56,14 @@ export async function removeItem(key: StorageKey): Promise<void> {
   }
 }
 
-/**
- * Wipe the session on sign out / unpair (§10.5).
- *
- * The device account itself survives on purpose: it is the only thing that can
- * re-claim a Mac this phone already claimed, and regenerating it would earn a
- * `409 already claimed` from the control plane. Use `clearDeviceAccount` for a
- * genuine reset.
- */
+/** Wipe link + device credentials on sign out / reset. */
 export async function clearCredentials(): Promise<void> {
   await Promise.all([
     removeItem(KEYS.cloudToken),
     removeItem(KEYS.cloudServerId),
+    removeItem(KEYS.cloudEmail),
+    removeItem(KEYS.cloudPassword),
+    removeItem(KEYS.cloudAccountKind),
     removeItem(KEYS.serverUrl),
     removeItem(KEYS.deviceToken),
     removeItem(KEYS.deviceId),
@@ -82,7 +72,7 @@ export async function clearCredentials(): Promise<void> {
   ]);
 }
 
-/** A true reset: forget the phone's own alfrd.net identity as well. */
+/** @deprecated use clearCredentials — no separate device account anymore */
 export async function clearDeviceAccount(): Promise<void> {
   await Promise.all([
     removeItem(KEYS.cloudEmail),
