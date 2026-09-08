@@ -41,7 +41,7 @@ async function loadClaimContext() {
     persisted,
     cloudDesktopToken,
     payload,
-    relayConnected: !!(cloudDesktopToken || persisted.cloudDesktopToken),
+    relayConnected: isRelayConnected(),
   };
 }
 
