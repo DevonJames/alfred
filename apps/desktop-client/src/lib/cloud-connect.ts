@@ -24,7 +24,7 @@ const CLOUD_URL = process.env.ALFRD_CLOUD_URL ?? "https://api.alfrd.net";
 const RELAY_WS_URL = process.env.ALFRD_RELAY_URL ?? "wss://api.alfrd.net";
 
 // Reconnect delay schedule (ms): 5s, 10s, 30s, 60s, 120s cap
-const RECONNECT_DELAYS = [5_000, 10_000, 30_000, 60_000, 120_000];
+const RECONNECT_DELAYS = [1_000, 5_000, 10_000, 30_000, 60_000, 120_000];
 /** App-level ping so idle proxies do not silently drop the relay tunnel. */
 const RELAY_PING_MS = 25_000;
 /** Refresh LAN/WAN candidates + desktop token periodically. */
@@ -38,8 +38,10 @@ let currentCloudDesktopToken: string | null = null;
 let relayListenPort = 3000;
 let pingTimer: ReturnType<typeof setInterval> | null = null;
 let reregisterTimer: ReturnType<typeof setInterval> | null = null;
+let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let claimSecretCached: string | null = null;
 let displayNameCached = "Alfred";
+/** Last time we received any relay message (incl. hub traffic). */
 
 function generateClaimSecret(): string {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no ambiguous chars
@@ -277,7 +279,7 @@ function connectRelayTunnel(serverId: string, serverToken: string) {
   ws.addEventListener("close", (event) => {
     console.log(`[CloudConnect] Relay tunnel closed (code: ${event.code})`);
     clearPingTimer();
-    currentSocket = null;
+    if (currentSocket === ws) currentSocket = null;
     if (!isShuttingDown) {
       scheduleReconnect(serverId, serverToken);
     }
@@ -345,14 +347,18 @@ async function handleRelayRequest(
 }
 
 function scheduleReconnect(serverId: string, serverToken: string) {
+  if (isShuttingDown) return;
+  // Don't stack timers — Mac wake can fire multiple close events.
+  if (reconnectTimer) return;
   const delay = RECONNECT_DELAYS[Math.min(reconnectAttempt, RECONNECT_DELAYS.length - 1)]!;
   reconnectAttempt++;
   console.log(`[CloudConnect] Reconnecting in ${delay / 1000}s (attempt ${reconnectAttempt})...`);
-  setTimeout(() => {
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
     void (async () => {
-      // After repeated drops (or overnight sleep), refresh token + LAN candidates
-      // before opening the socket again — stale tokens never recover without restart.
-      if (reconnectAttempt >= 2 && claimSecretCached) {
+      // Always refresh token + LAN candidates after a drop — overnight sleep
+      // often leaves a dead token or stale LAN IP.
+      if (claimSecretCached) {
         const fresh = await registerWithControlPlane(
           serverId,
           claimSecretCached,
@@ -431,6 +437,10 @@ export async function startCloudConnect(serverPort = 3000) {
 export function stopCloudConnect() {
   isShuttingDown = true;
   clearPingTimer();
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
   if (reregisterTimer) {
     clearInterval(reregisterTimer);
     reregisterTimer = null;

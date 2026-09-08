@@ -20,10 +20,10 @@ import { createLiveKitToken } from "./tokens.js";
 import { LiveKitMediaBridge } from "./media-bridge.js";
 import { EnergyVad } from "./energy-vad.js";
 import { int16ToUint8, uint8ToInt16 } from "./pcm.js";
-import { nextReconnectDelayMs } from "./reconnect.js";
+import { LIVEKIT_NATIVE_RECONNECT_GRACE_MS, nextReconnectDelayMs } from "./reconnect.js";
 
 /** How often to notice a zombie room that never fired Disconnected (e.g. after Mac wake). */
-const CONNECTION_WATCHDOG_MS = 15_000;
+const CONNECTION_WATCHDOG_MS = 8_000;
 
 export interface LiveKitRoomSessionOptions {
   url: string;
@@ -68,7 +68,10 @@ export class LiveKitRoomSession {
   private handlingDisconnect = false;
   private reconnectAttempt = 0;
   private reconnectTimer?: ReturnType<typeof setTimeout>;
+  private nativeReconnectTimer?: ReturnType<typeof setTimeout>;
   private watchdogTimer?: ReturnType<typeof setInterval>;
+  /** True while LiveKit reports CONN_RECONNECTING — defer our remint. */
+  private nativeReconnecting = false;
   /** Bumped on every stopPlayback so in-flight captureFrame results are discarded. */
   private playbackEpoch = 0;
   private readonly vad = new EnergyVad();
@@ -106,6 +109,7 @@ export class LiveKitRoomSession {
   async stop(): Promise<void> {
     this.closed = true;
     this.clearReconnectTimer();
+    this.clearNativeReconnectTimer();
     this.clearWatchdog();
     await this.teardownRoom({ disposeNative: true });
   }
@@ -139,15 +143,43 @@ export class LiveKitRoomSession {
       );
       room.on(RoomEvent.Disconnected, () => {
         this.log.warn("[livekit] disconnected from room");
+        this.nativeReconnecting = false;
+        this.clearNativeReconnectTimer();
         void this.onUnexpectedDisconnect();
       });
       room.on(RoomEvent.ConnectionStateChanged, (state: ConnectionState) => {
+        if (state === ConnectionState.CONN_RECONNECTING) {
+          this.nativeReconnecting = true;
+          this.log.warn("[livekit] connection state → reconnecting (LiveKit native)");
+          // If native recovery stalls (common after long Mac sleep), remint ourselves.
+          this.clearNativeReconnectTimer();
+          this.nativeReconnectTimer = setTimeout(() => {
+            this.nativeReconnectTimer = undefined;
+            if (this.closed || !this.nativeReconnecting) return;
+            this.log.warn("[livekit] native reconnect grace expired — forcing remint");
+            this.nativeReconnecting = false;
+            void this.onUnexpectedDisconnect();
+          }, LIVEKIT_NATIVE_RECONNECT_GRACE_MS);
+          return;
+        }
+        if (state === ConnectionState.CONN_CONNECTED) {
+          this.nativeReconnecting = false;
+          this.clearNativeReconnectTimer();
+          this.reconnectAttempt = 0;
+          return;
+        }
         if (state === ConnectionState.CONN_DISCONNECTED) {
           this.log.warn("[livekit] connection state → disconnected");
+          this.nativeReconnecting = false;
+          this.clearNativeReconnectTimer();
           void this.onUnexpectedDisconnect();
-        } else if (state === ConnectionState.CONN_RECONNECTING) {
-          this.log.warn("[livekit] connection state → reconnecting (LiveKit native)");
         }
+      });
+      room.on(RoomEvent.Reconnected, () => {
+        this.log.log("[livekit] native reconnected");
+        this.nativeReconnecting = false;
+        this.clearNativeReconnectTimer();
+        this.reconnectAttempt = 0;
       });
       room.on(RoomEvent.ParticipantConnected, (p: RemoteParticipant) => {
         this.log.log(`[livekit] participant connected: ${p.identity}`);
@@ -237,7 +269,7 @@ export class LiveKitRoomSession {
   private startWatchdog(): void {
     this.clearWatchdog();
     this.watchdogTimer = setInterval(() => {
-      if (this.closed || this.connecting || this.reconnectTimer) return;
+      if (this.closed || this.connecting || this.reconnectTimer || this.nativeReconnecting) return;
       const room = this.room;
       if (!room) {
         this.log.warn("[livekit] watchdog: no room — scheduling reconnect");
@@ -259,11 +291,24 @@ export class LiveKitRoomSession {
     }
   }
 
+  private clearNativeReconnectTimer(): void {
+    if (this.nativeReconnectTimer) {
+      clearTimeout(this.nativeReconnectTimer);
+      this.nativeReconnectTimer = undefined;
+    }
+  }
+
   private async onUnexpectedDisconnect(): Promise<void> {
-    if (this.closed || this.connecting) return;
-    // Drop dead room handles but keep the process alive for rejoin.
-    await this.teardownRoom({ disposeNative: false });
-    this.scheduleReconnect();
+    if (this.closed || this.connecting || this.handlingDisconnect) return;
+    // Let LiveKit finish a short native reconnect before we tear the room down.
+    if (this.nativeReconnecting && this.nativeReconnectTimer) return;
+    this.handlingDisconnect = true;
+    try {
+      await this.teardownRoom({ disposeNative: false });
+      this.scheduleReconnect();
+    } finally {
+      this.handlingDisconnect = false;
+    }
   }
 
   private scheduleReconnect(): void {
