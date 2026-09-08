@@ -443,6 +443,11 @@ export function getDesktopIdentity() {
   };
 }
 
+/** True only when the outbound relay WebSocket is actually open. */
+export function isRelayConnected(): boolean {
+  return currentSocket?.readyState === WebSocket.OPEN;
+}
+
 export async function readPersistedIdentity(): Promise<DesktopClientIdentity | null> {
   return loadIdentity();
 }

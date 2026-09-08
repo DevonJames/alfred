@@ -16,7 +16,7 @@ import { readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildClaimPayload } from "../lib/claim-payload.js";
-import { getDesktopIdentity, readPersistedIdentity } from "../lib/cloud-connect.js";
+import { getDesktopIdentity, isRelayConnected, readPersistedIdentity } from "../lib/cloud-connect.js";
 
 export const connectRouter = new Hono();
 
