@@ -39,10 +39,21 @@ Canonical memories stay on the user’s Mac. The phone keeps credentials
 ## Listing checklist
 
 - [ ] Screenshots (Talk text, Speak, Memory, Settings) for required device sizes
-- [ ] Subtitle / description mention companion Mac
-- [ ] Support URL (e.g. https://alfrd.net)
-- [ ] Privacy policy URL covering mic → desktop vendors
-- [ ] Category: Productivity / Lifestyle as appropriate
+- [x] Subtitle / description mention companion Mac (draft below)
+- [x] Support URL: https://alfrd.net
+- [ ] Privacy policy URL covering mic → desktop vendors (host on alfrd.net before submit)
+- [x] Category: Productivity
+
+### Draft App Store text
+
+**Subtitle:** Your Mac’s conversational companion on iPhone
+
+**Description (excerpt):**
+Alfred on iPhone talks to the Alfred app on your Mac. Claim and pair over
+alfrd.net, then use Talk (text) or Speak (LiveKit voice). Memories and
+conversation stay on your computer — the phone is a client, not a cloud brain.
+
+**Keywords:** alfred, assistant, voice, memory, livekit, mac companion
 
 ## EAS
 

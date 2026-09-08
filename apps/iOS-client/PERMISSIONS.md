@@ -25,13 +25,15 @@ changing plugins or Info.plist strings — Expo Go cannot load LiveKit / WebRTC.
 }
 ```
 
-Do **not** add `NSAllowsArbitraryLoads`. LAN may be HTTP; WAN/relay stay HTTPS.
+Do **not** add `NSAllowsArbitraryLoads` or Tailscale/host-specific ATS exceptions. LAN may be HTTP via `NSAllowsLocalNetworking`; WAN/relay stay HTTPS (`EXPO_PUBLIC_CLOUD_URL`).
 
 ## Background modes
 
 ```json
-"UIBackgroundModes": ["audio"]
+"UIBackgroundModes": ["audio", "voip"]
 ```
+
+`voip` supports CallKit keep-alive for Continuous Speak while locked (see `src/lib/voice/call-service.ts`).
 
 ## Plugins
 

@@ -5,10 +5,12 @@ import {
 } from "@expo-google-fonts/instrument-serif";
 import { DarkTheme, ThemeProvider } from "@react-navigation/native";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { Stack } from "expo-router";
+import { Stack, useRouter } from "expo-router";
+import * as Linking from "expo-linking";
 import * as SplashScreen from "expo-splash-screen";
 import { StatusBar } from "expo-status-bar";
 import { useEffect } from "react";
+import { parseClaimPayload } from "@/lib/claim-qr";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { INK } from "@/components/ui";
@@ -59,10 +61,22 @@ function RootLayoutNav() {
 }
 
 export default function RootLayout() {
+  const router = useRouter();
   const [fontsLoaded, fontError] = useFonts({
     InstrumentSerif_400Regular,
     InstrumentSerif_400Regular_Italic,
   });
+
+  // Warm/cold alfred://claim → onboarding claim screen (QR deep link).
+  useEffect(() => {
+    const go = (url: string | null) => {
+      if (!url || !parseClaimPayload(url)) return;
+      router.push("/(onboarding)/claim");
+    };
+    void Linking.getInitialURL().then(go);
+    const sub = Linking.addEventListener("url", ({ url }) => go(url));
+    return () => sub.remove();
+  }, [router]);
 
   useEffect(() => {
     // Don't hold the splash forever if the font download fails — proceed with

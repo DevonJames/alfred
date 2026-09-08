@@ -25,16 +25,12 @@
         "NSCameraUsageDescription": "Scan the claim QR code shown on your Mac to link this phone to Alfred.",
         "NSLocalNetworkUsageDescription": "Alfred looks for your Mac on your local network first, so your conversation never leaves the house when it doesn't have to.",
         "NSAppTransportSecurity": {
-          "NSAllowsLocalNetworking": true,
-          "NSExceptionDomains": {
-            "tail8cc8e2.ts.net": {
-              "NSIncludesSubdomains": true,
-              "NSExceptionAllowsInsecureHTTPLoads": true,
-              "NSExceptionMinimumTLSVersion": "TLSv1.0"
-            }
-          }
+          "NSAllowsLocalNetworking": true
         },
-        "UIBackgroundModes": ["audio", "voip"],
+        "UIBackgroundModes": [
+          "audio",
+          "voip"
+        ],
         "ITSAppUsesNonExemptEncryption": false
       }
     },

@@ -100,13 +100,23 @@ export default function FindYourMac() {
     [runClaim, claiming]
   );
 
-  // Deep links: the iOS Camera app or Safari can hand the desktop's QR straight
-  // to the app, cold start included.
+  // Deep links: Camera / Safari can hand the desktop QR to the app (cold + warm).
   const incoming = Linking.useURL();
   useEffect(() => {
-    if (!incoming) return;
-    const payload = parseClaimPayload(incoming);
-    if (payload) accept(payload);
+    let cancelled = false;
+    const tryUrl = (url: string | null) => {
+      if (cancelled || !url) return;
+      const payload = parseClaimPayload(url);
+      if (payload) accept(payload);
+    };
+    tryUrl(incoming);
+    // useURL can miss the very first cold-start URL on some iOS versions.
+    void Linking.getInitialURL().then(tryUrl);
+    const sub = Linking.addEventListener("url", ({ url }) => tryUrl(url));
+    return () => {
+      cancelled = true;
+      sub.remove();
+    };
   }, [incoming, accept]);
 
   const suspect = suspectCharacters(secret);

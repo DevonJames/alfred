@@ -16,7 +16,10 @@ done
 
 APP="${ALFRED_APP_PATH:-}"
 if [[ -z "$APP" ]]; then
-  APP="$(find "$HOME/Library/Developer/Xcode/DerivedData" -name 'Alfred.app' -path '*iphonesimulator*' 2>/dev/null | head -1 || true)"
+  # Prefer real Build/Products; Index.noindex stubs omit Frameworks.
+  APP="$(find "$HOME/Library/Developer/Xcode/DerivedData" -name 'Alfred.app' \
+    -path '*Build/Products/*iphonesimulator*' \
+    ! -path '*/Index.noindex/*' 2>/dev/null | head -1 || true)"
 fi
 
 echo "== App bundle =="
