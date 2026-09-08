@@ -8,6 +8,16 @@ export {
 } from "./sources.js";
 export { loadDocsLedger, saveDocsLedger, upsertDocsLedgerEntry } from "./ledger.js";
 export { walkMarkdownFiles, isDirectory } from "./walk.js";
+export {
+  docsFileKindFromPath,
+  extractDocsFileText,
+  extractPdfPages,
+  ingestMimeFromFilename,
+  mimeForDocsFileKind,
+  pagesToMarkdown,
+  rtfToPlainText,
+  type DocsFileKind,
+} from "./text.js";
 export { chunkMarkdown, slugHeading, type DocsChunk } from "./chunk.js";
 export {
   asString,

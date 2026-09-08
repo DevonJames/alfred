@@ -18,6 +18,7 @@
     "@alfred/browser": "workspace:*",
     "@alfred/contracts": "workspace:*",
     "@alfred/core": "workspace:*",
+    "@alfred/elgato": "workspace:*",
     "@alfred/livekit": "workspace:*",
     "@alfred/memory": "workspace:*",
     "@alfred/persistence": "workspace:*",

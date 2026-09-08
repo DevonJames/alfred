@@ -11,7 +11,8 @@ export function normalizeForEcho(text: string): string {
   return text
     .toLowerCase()
     .replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, " ")
-    .replace(/[^a-z0-9\s']/g, " ")
+    .replace(/'/g, "")
+    .replace(/[^a-z0-9\s]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -313,6 +314,65 @@ function sliceAfterTokens(original: string, skipTokens: number): string {
   return "";
 }
 
+/** Function words that inflate short-utterance echo ratios against long replies. */
+const ECHO_STOPWORDS = new Set([
+  "the",
+  "a",
+  "an",
+  "and",
+  "or",
+  "to",
+  "of",
+  "in",
+  "on",
+  "for",
+  "is",
+  "are",
+  "was",
+  "were",
+  "be",
+  "been",
+  "am",
+  "i",
+  "you",
+  "he",
+  "she",
+  "it",
+  "we",
+  "they",
+  "my",
+  "your",
+  "our",
+  "me",
+  "with",
+  "about",
+  "from",
+  "that",
+  "this",
+  "what",
+  "whats",
+  "who",
+  "how",
+  "when",
+  "where",
+  "why",
+  "do",
+  "does",
+  "did",
+  "can",
+  "could",
+  "would",
+  "should",
+  "will",
+  "just",
+  "so",
+  "if",
+  "but",
+  "not",
+  "no",
+  "yes",
+]);
+
 function matchesReference(h: string, hTokens: string[], s: string): boolean {
   if (!s) return false;
   if (s.includes(h)) return true;
@@ -323,25 +383,33 @@ function matchesReference(h: string, hTokens: string[], s: string): boolean {
   if (hTokens.length === 0) return true;
   if (sTokens.length === 0) return false;
 
-  const hits = hTokens.filter((t) => sTokens.some((st) => tokensEchoClose(t, st))).length;
-  const ratio = hits / hTokens.length;
+  // Ignore function words so "what's the weather" doesn't echo-match a prior
+  // "what is in my notes about…" via what/the alone.
+  const hContent = hTokens.filter((t) => !ECHO_STOPWORDS.has(t));
+  const sContent = sTokens.filter((t) => !ECHO_STOPWORDS.has(t));
+  if (hContent.length === 0) {
+    // Pure stopword fragment during echo window — treat as echo.
+    return true;
+  }
+
+  const hits = hContent.filter((t) => sContent.some((st) => tokensEchoClose(t, st))).length;
+  const ratio = hits / hContent.length;
 
   // High overlap = echo even with a trailing STT garbage tail.
-  // But require the remainder after a long echo prefix to also be thin — handled by isConfidentBargeIn first.
   if (hits >= 5 && ratio >= 0.5) return true;
-  if (ratio >= 0.65 && hTokens.length <= sTokens.length + 6) return true;
+  if (ratio >= 0.65 && hContent.length <= sContent.length + 6) return true;
 
-  if (longestFuzzyContiguous(hTokens, sTokens) >= 4) return true;
-  if (longestFuzzyContiguous(sTokens, hTokens) >= 5) return true;
+  if (longestFuzzyContiguous(hContent, sContent) >= 4) return true;
+  if (longestFuzzyContiguous(sContent, hContent) >= 5) return true;
 
-  const spokenHits = sTokens.filter((st) => hTokens.some((t) => tokensEchoClose(t, st))).length;
-  if (sTokens.length >= 6 && spokenHits / sTokens.length >= 0.4 && hits >= 5) return true;
+  const spokenHits = sContent.filter((st) => hContent.some((t) => tokensEchoClose(t, st))).length;
+  if (sContent.length >= 6 && spokenHits / sContent.length >= 0.4 && hits >= 5) return true;
 
-  if (hTokens.length <= 3) {
-    const content = hTokens.filter((t) => t.length >= 4);
+  if (hContent.length <= 3) {
+    const content = hContent.filter((t) => t.length >= 4);
     if (
       content.length > 0 &&
-      content.every((t) => sTokens.some((st) => tokensEchoClose(t, st)))
+      content.every((t) => sContent.some((st) => tokensEchoClose(t, st)))
     ) {
       return true;
     }
@@ -356,13 +424,14 @@ function tokenize(text: string): string[] {
 
 function tokensFuzzyEqual(a: string, b: string): boolean {
   if (a === b) return true;
+  // Both sides need real content — "the"/"three" must not fuzzy-match.
+  if (Math.min(a.length, b.length) < 4) return false;
   if (a.length >= 4 && b.length >= 4) {
     if (a.startsWith(b.slice(0, 4)) || b.startsWith(a.slice(0, 4))) {
       if (Math.abs(a.length - b.length) <= 3) return true;
     }
   }
   const maxLen = Math.max(a.length, b.length);
-  if (maxLen < 4) return false;
   const dist = levenshtein(a, b);
   if (maxLen <= 5) return dist <= 1;
   // Names like alfred/albert often garble at distance 3.
@@ -380,20 +449,31 @@ function tokensEchoClose(a: string, b: string): boolean {
   if (tokensFuzzyEqual(a, b)) return true;
   const maxLen = Math.max(a.length, b.length);
   if (maxLen < 4) {
-    // you're / you / you'd
-    if (a.startsWith(b) || b.startsWith(a)) return Math.min(a.length, b.length) >= 3;
+    // you're / you / you'd — exact prefix only for short tokens, not "the"/"three".
+    if (a === b) return true;
+    if ((a.startsWith(b) || b.startsWith(a)) && Math.min(a.length, b.length) >= 3) {
+      // Avoid stopword→longer-word matches (the→three, a→and).
+      return Math.abs(a.length - b.length) <= 1;
+    }
     return false;
   }
   const dist = levenshtein(a, b);
-  // devon/debit: shared "de", edit distance 3
-  if (a.slice(0, 2) === b.slice(0, 2) && Math.abs(a.length - b.length) <= 2 && dist <= 3) {
+  // devon/debit: shared "de", edit distance 3 — both sides must be real words.
+  if (
+    Math.min(a.length, b.length) >= 4 &&
+    a.slice(0, 2) === b.slice(0, 2) &&
+    Math.abs(a.length - b.length) <= 2 &&
+    dist <= 3
+  ) {
     return true;
   }
-  const sk = (w: string) => w.replace(/[aeiou]/g, "");
+  const sk = (w: string) => w.replace(/[aeiou']/g, "");
   const sa = sk(a);
   const sb = sk(b);
+  // Exact consonant skeleton (alfred/albert → lfrd/lbrt still needs fuzzy below).
   if (sa.length >= 3 && sa === sb) return true;
-  if (sa.length >= 3 && sb.length >= 3 && levenshtein(sa, sb) <= 1) return true;
+  // One-edit skeleton only when lengths match — otherwise weather(wthr)≈with(wth).
+  if (sa.length >= 4 && sa.length === sb.length && levenshtein(sa, sb) <= 1) return true;
   return false;
 }
 

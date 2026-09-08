@@ -7,13 +7,19 @@ export const briefingRouter = new Hono();
 
 briefingRouter.use("*", requireDevice);
 
-/** GET /api/briefing?refresh=1 */
+/** GET /api/briefing?refresh=1&launches=1 — launches are opt-in only. */
 briefingRouter.get("/briefing", async (c) => {
   const refresh = c.req.query("refresh") === "1" || c.req.query("refresh") === "true";
+  const includeLaunches =
+    c.req.query("launches") === "1" || c.req.query("launches") === "true";
   const memory = oipForProfile();
   const controller = createBriefingController({ memory });
   try {
-    const payload = await controller.generate({ refresh, markSurfaced: false });
+    const payload = await controller.generate({
+      refresh,
+      markSurfaced: false,
+      includeLaunches,
+    });
     return c.json(payload);
   } catch (err) {
     return c.json(

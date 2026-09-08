@@ -1,6 +1,9 @@
 import {
   createId,
+  CONTROL_STUDIO_LIGHTS_TOOL,
   DELEGATE_TASK_TOOL,
+  GET_WEATHER_FORECAST_TOOL,
+  REMEMBER_MEMORY_TOOL,
   UPDATE_REMINDER_TOOL,
   type AudioFrame,
   type LatencyMarkName,
@@ -24,6 +27,9 @@ import type {
   MemoryControllerPort,
   ProviderRegistryPort,
   ReminderPort,
+  StudioLightsPort,
+  StructuredMemoryPort,
+  WeatherForecastPort,
 } from "./ports.js";
 import { PromptAssembler } from "./prompt-assembler.js";
 import { resolveReminderMatch } from "./reminder-match.js";
@@ -35,10 +41,14 @@ import {
   isConfidentBargeIn,
   isEchoTranscript,
   looksIncompleteInterrupt,
+  normalizeForEcho,
 } from "./echo-filter.js";
+import { revealMarkdownBySpeechProgress, stripMarkdownForSpeech } from "./speech-text.js";
 import { SelfVoiceGate } from "./self-voice.js";
 import { looksLikeDocsIngestTask } from "./docs-ingest-intent.js";
 import { looksLikeXIngestTask } from "./x-ingest-intent.js";
+import { looksLikeStudioLightsTask, parseStudioLightIntent } from "./studio-lights-intent.js";
+import { looksLikeWeatherTask, parseWeatherIntent } from "./weather-intent.js";
 
 /** Structural port for Daily Briefing (implemented by @alfred/briefing). */
 export type BriefingVoiceDecision =
@@ -69,6 +79,12 @@ export interface VoiceSessionDeps {
   briefing?: BriefingVoicePort;
   /** Optional due-reminder complete/dismiss/snooze from conversation. */
   reminders?: ReminderPort;
+  /** Optional structured Entity/Assertion writes from conversation. */
+  structuredMemory?: StructuredMemoryPort;
+  /** Optional live weather forecast for conversational asks. */
+  weather?: WeatherForecastPort;
+  /** Optional local Elgato Key Light control. */
+  lights?: StudioLightsPort;
   backchannelClassifier?: BackchannelClassifier;
   interruptionArbiter?: InterruptionArbiter;
   /** Injected streaming STT for tests; otherwise opened from registry. */
@@ -95,6 +111,8 @@ export class VoiceSessionController {
   private uiLayout: UiLayout = "voice";
   /** Chat-layout hold-to-transcribe into the composer (never commits). */
   private dictating = false;
+  /** Client muted mic — drop inbound audio and ignore STT commits. */
+  private micMuted = false;
   /** Whether the in-flight / pending user turn should be spoken. */
   private pendingUserSpeak?: boolean;
   private pendingUserSource?: "stt.end_of_turn" | "text";
@@ -104,11 +122,22 @@ export class VoiceSessionController {
   private partialText = "";
   private provisionalResponseId?: string;
   private provisionalAbort?: AbortController;
+  /** User text the in-flight provisional was started for (reuse only if EOT matches). */
+  private provisionalForText = "";
+  /** Whether that provisional retrieve already included durable facts/notes. */
+  private provisionalHadDurableMemory = false;
+  /** Settles when the EagerEOT LLM stream finishes (or is aborted). */
+  private provisionalStream?: Promise<void>;
+  /** Cached Elgato inventory line — discovery is too slow to run every turn. */
+  private lightsHintCache?: { atMs: number; text?: string };
+  private readonly lightsHintTtlMs = 60_000;
   private activeContextId?: string;
   private activeResponseId?: string;
   private isSpeaking = false;
   /** True while a committed turn is generating/speaking — serialize turns. */
   private turnInFlight = false;
+  /** Client pressed Stop — skip speaking the in-flight reply (no barge-in turn). */
+  private suppressSpeak = false;
   /** Latest non-echo user text waiting while a turn is in flight. */
   private pendingUserText?: string;
   /** Cut TTS on partial interrupt; wait for EOT before committing the ask. */
@@ -148,9 +177,7 @@ export class VoiceSessionController {
     if (this.running) return;
     this.running = true;
 
-    this.sttSession = this.deps.sttSessionFactory
-      ? await this.deps.sttSessionFactory()
-      : await this.openSttFromRegistry();
+    this.sttSession = await this.openSttSession();
 
     this.ttsSession = this.deps.ttsSessionFactory
       ? await this.deps.ttsSessionFactory()
@@ -217,7 +244,7 @@ export class VoiceSessionController {
     }
   }
 
-  /** Client layout / dictate / text commands from the media port. */
+  /** Client layout / dictate / text / stop / mute commands from the media port. */
   handleUiCommand(command: UiCommand): void {
     if (command.type === "layout") {
       this.uiLayout = command.layout;
@@ -228,11 +255,49 @@ export class VoiceSessionController {
       this.dictating = command.active && this.uiLayout === "chat";
       return;
     }
+    if (command.type === "mute") {
+      this.micMuted = command.muted;
+      if (command.muted) {
+        this.partialText = "";
+        this.bargeInListening = false;
+        this.bargeInDraft = undefined;
+      }
+      return;
+    }
+    if (command.type === "stop") {
+      void this.handleClientStop();
+      return;
+    }
     void this.handleUserText(command.text);
+  }
+
+  /** Immediate silence from the UI — cut TTS, do not queue a barge-in ask. */
+  private async handleClientStop(): Promise<void> {
+    this.provisionalAbort?.abort({ reason: "user_interruption" });
+    this.provisionalResponseId = undefined;
+    this.bargeInListening = false;
+    this.bargeInDraft = undefined;
+    // Snapshot before stopAssistantPlayback clears isSpeaking — otherwise Shhh
+    // mid-speech wrongly sets suppressSpeak and poisons the *next* user turn.
+    const wasSpeaking = this.isSpeaking || Boolean(this.activeContextId);
+    if (wasSpeaking) {
+      await this.stopAssistantPlayback("ui_stop");
+    }
+    // Only suppress deliver if we cut generation before TTS started.
+    if (this.turnInFlight && !wasSpeaking) {
+      this.suppressSpeak = true;
+    }
   }
 
   getLatencyMarks(): ReadonlyMap<LatencyMarkName, number> {
     return this.latencyMarks;
+  }
+
+  private async openSttSession(): Promise<StreamingSTTSession> {
+    if (this.deps.sttSessionFactory) {
+      return this.deps.sttSessionFactory();
+    }
+    return this.openSttFromRegistry();
   }
 
   private async openSttFromRegistry(): Promise<StreamingSTTSession> {
@@ -301,12 +366,43 @@ export class VoiceSessionController {
     return isConfidentBargeIn(this.echoInput(text));
   }
 
+  /**
+   * Substantial new user speech while we are busy — not assistant echo, not a
+   * backchannel. Used so follow-ups like answering "let's hear it" are queued
+   * instead of dropped for lacking "hold on"/"stop" interrupt cues.
+   */
+  private isNovelUserTurn(text: string | undefined): boolean {
+    if (!text?.trim()) return false;
+    if (
+      isEchoTranscript({
+        heard: text,
+        assistantSpeech: this.lastAssistantSpeech,
+        userTurn: this.lastUserTurn,
+        aggressiveShort: true,
+      })
+    ) {
+      return false;
+    }
+    const tokens = normalizeForEcho(text)
+      .split(/\s+/)
+      .filter((t) => t.length >= 3);
+    const content = tokens.filter((t) => !NOVEL_TURN_STOPWORDS.has(t));
+    return content.length >= 3;
+  }
+
+  /** Accept barge-in / follow-up while generating or speaking. */
+  private shouldAcceptBusyTurn(text: string | undefined): boolean {
+    return this.isRealBargeIn(text) || this.isNovelUserTurn(text);
+  }
+
   /** Strip leading assistant-echo glued onto an interrupt before committing it. */
   private cleanBargeInText(text: string): string {
     return extractBargeInText(this.echoInput(text));
   }
 
   private async onAudioFrame(frame: AudioFrame): Promise<void> {
+    // Client Mute (or a stuck LiveKit publish) must not keep feeding STT.
+    if (this.micMuted) return;
     // Drop mic frames that look like speaker echo of our own TTS (before STT).
     // Uncorrelated barge-ins still reach Deepgram for transcript interrupt cues.
     if (this.selfVoice.isSelfEcho(frame)) {
@@ -363,7 +459,7 @@ export class VoiceSessionController {
    * (eager/EOT) — partials like "Um, can you" must not become their own turns.
    */
   private async handleBargeIn(text: string, source: string): Promise<void> {
-    if (!this.isRealBargeIn(text)) return;
+    if (!this.shouldAcceptBusyTurn(text)) return;
     const cleaned = this.cleanBargeInText(text);
     this.bargeInListening = true;
     this.bargeInDraft = this.pickRicherUtterance(cleaned, this.bargeInDraft);
@@ -435,17 +531,55 @@ export class VoiceSessionController {
   }
 
   private async consumeSttEvents(): Promise<void> {
-    if (!this.sttSession) return;
-    for await (const event of this.sttSession.events()) {
-      if (!this.running) break;
-      await this.onSttEvent(event);
+    // Deepgram (and other streaming STTs) close after idle / client disconnect.
+    // Keep reopening while the voice agent is still running so a second ENGAGE /
+    // Speak session is not silently deaf.
+    while (this.running) {
+      let session = this.sttSession;
+      if (!session) {
+        try {
+          session = await this.openSttSession();
+          this.sttSession = session;
+          console.log("[voice] STT session open");
+        } catch (err) {
+          console.error("[voice] STT open failed; retrying…", err);
+          await this.delay(500);
+          continue;
+        }
+      }
+
+      try {
+        for await (const event of session.events()) {
+          if (!this.running) return;
+          await this.onSttEvent(event);
+        }
+      } catch (err) {
+        if (this.running) {
+          console.error("[voice] STT event loop error:", err);
+        }
+      }
+
+      if (!this.running) return;
+
+      console.warn("[voice] STT session ended; reconnecting…");
+      if (this.sttSession === session) {
+        await session.close().catch(() => undefined);
+        this.sttSession = undefined;
+      }
+      await this.delay(250);
     }
+  }
+
+  private delay(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
   private async onSttEvent(event: SttTurnEvent): Promise<void> {
     if (process.env.ALFRED_LOG_VOICE === "1" || process.env.ALFRED_LOG_STT === "1") {
       console.log(`[voice] stt ${event.type}${event.text ? `: ${event.text.slice(0, 100)}` : ""}`);
     }
+
+    if (this.micMuted) return;
 
     if (this.uiLayout === "chat") {
       await this.onChatLayoutStt(event);
@@ -461,14 +595,14 @@ export class VoiceSessionController {
         ? (event.text ?? this.partialText)
         : undefined;
 
-    // Barge-in BEFORE echo-ignore — STT often glues echo + interrupt into one string.
+    // Barge-in / follow-up BEFORE echo-ignore — STT often glues echo + interrupt.
     if (
       (this.isSpeaking || this.turnInFlight) &&
       (event.type === "eager_end_of_turn" ||
         event.type === "end_of_turn" ||
         event.type === "turn_resumed" ||
         event.type === "partial_transcript") &&
-      this.isRealBargeIn(eventText)
+      this.shouldAcceptBusyTurn(eventText)
     ) {
       await this.handleBargeIn(eventText ?? this.partialText, event.type);
       if (event.type !== "end_of_turn") {
@@ -492,16 +626,6 @@ export class VoiceSessionController {
       if (process.env.ALFRED_LOG_VOICE === "1" || process.env.ALFRED_LOG_STT === "1") {
         console.log(`[voice] ignoring echo stt ${event.type}: "${(eventText ?? "").slice(0, 80)}"`);
       }
-      return;
-    }
-
-    if (
-      this.isSpeaking &&
-      (event.type === "eager_end_of_turn" ||
-        event.type === "end_of_turn" ||
-        event.type === "turn_resumed")
-    ) {
-      // Weak / echo-like while speaking — ignore.
       return;
     }
 
@@ -542,7 +666,7 @@ export class VoiceSessionController {
         this.partialText = event.text ?? this.partialText;
         if (this.turnInFlight) {
           // Generating or speaking — don't start a second provisional reply.
-          if (this.isRealBargeIn(this.partialText)) {
+          if (this.shouldAcceptBusyTurn(this.partialText)) {
             this.pendingUserText = this.partialText;
             await this.publishUserTranscriptUi(this.partialText, "partial");
           }
@@ -559,13 +683,23 @@ export class VoiceSessionController {
             confidence: event.eagerEotConfidence ?? event.confidence,
           },
         });
+        if (this.deps.lights && looksLikeStudioLightsTask(this.partialText)) {
+          // Light commands execute on EndOfTurn; a tool-less provisional draft
+          // would get spoken as "I don't have that action."
+          break;
+        }
+        if (this.deps.weather && looksLikeWeatherTask(this.partialText)) {
+          // Weather executes on EndOfTurn via short-circuit; provisional has no tools
+          // and invents "which location?" instead of using home BRIEFING_*.
+          break;
+        }
         await this.beginProvisionalGeneration(this.partialText);
         break;
 
       case "turn_resumed":
         this.partialText = event.text ?? this.partialText;
         if (this.turnInFlight) {
-          if (this.isRealBargeIn(this.partialText)) {
+          if (this.shouldAcceptBusyTurn(this.partialText)) {
             this.pendingUserText = this.partialText;
             await this.publishUserTranscriptUi(this.partialText, "partial");
           }
@@ -625,6 +759,8 @@ export class VoiceSessionController {
 
   private async beginProvisionalGeneration(text: string): Promise<void> {
     if (!text.trim()) return;
+    if (this.deps.lights && looksLikeStudioLightsTask(text)) return;
+    if (this.deps.weather && looksLikeWeatherTask(text)) return;
     // Do not commit user turn yet — provisional segment only.
     this.provisionalAbort?.abort({ reason: "superseded_generation" });
     this.provisionalAbort = new AbortController();
@@ -633,6 +769,9 @@ export class VoiceSessionController {
       createId("turn_prov"),
     );
     this.provisionalResponseId = responseId;
+    this.provisionalForText = text.trim();
+    this.provisionalHadDurableMemory = false;
+    this.provisionalStream = undefined;
 
     await this.deps.events.emit({
       sessionId: this.deps.sessionId,
@@ -647,11 +786,21 @@ export class VoiceSessionController {
       await this.deps.fsm.force("GeneratingResponse", "stt.eager_eot");
     }
 
-    const memory = await this.deps.memory.retrieve({
-      text,
-      profileId: this.deps.profileId,
-      sessionId: this.deps.sessionId,
-      limit: 8,
+    // Same context as the committed path so EagerEOT drafts are reusable —
+    // regenerating after every durable-memory hit was killing first-audio latency.
+    const [memory, dueReminders, extraSystem] = await Promise.all([
+      this.deps.memory.retrieve({
+        text,
+        profileId: this.deps.profileId,
+        sessionId: this.deps.sessionId,
+        limit: 8,
+      }),
+      this.loadDueReminders(),
+      this.studioLightsHint(),
+    ]);
+    this.provisionalHadDurableMemory = memory.items.some((m) => {
+      const kind = m.provenance?.kind;
+      return kind === "fact" || kind === "note";
     });
 
     const prompt = this.promptAssembler.assemble({
@@ -663,8 +812,9 @@ export class VoiceSessionController {
       mode: "initial",
       lateAddenda: [],
       agentResults: [],
-      availableCapabilities: ["delegate_task"],
-      dueReminders: [],
+      availableCapabilities: this.voiceCapabilities(),
+      extraSystem,
+      dueReminders,
       existingResponseState: {
         spokenText: "",
         unspokenText: "",
@@ -674,7 +824,11 @@ export class VoiceSessionController {
       },
     });
 
-    void this.streamProvisionalLlm(prompt.messages, responseId, this.provisionalAbort.signal);
+    this.provisionalStream = this.streamProvisionalLlm(
+      prompt.messages,
+      responseId,
+      this.provisionalAbort.signal,
+    );
   }
 
   private async streamProvisionalLlm(
@@ -723,6 +877,9 @@ export class VoiceSessionController {
       }
     }
     this.provisionalResponseId = undefined;
+    this.provisionalForText = "";
+    this.provisionalHadDurableMemory = false;
+    this.provisionalStream = undefined;
     this.partialText = text;
     await this.deps.events.emit({
       sessionId: this.deps.sessionId,
@@ -735,15 +892,13 @@ export class VoiceSessionController {
     text: string,
     opts?: { /** Drain a queued barge-in after the prior turn ends. */ force?: boolean },
   ): Promise<void> {
-    // While a turn is actively generating/speaking: queue real barge-ins, drop echo.
+    // While a turn is actively generating/speaking: queue real follow-ups, drop echo.
     if (!opts?.force && (this.turnInFlight || this.isSpeaking)) {
-      if (!this.isRealBargeIn(text) && !this.bargeInListening) {
-        if (process.env.ALFRED_LOG_VOICE === "1") {
-          console.log(`[voice] skip commit (echo/weak): "${text.slice(0, 100)}"`);
-        }
+      if (!this.shouldAcceptBusyTurn(text) && !this.bargeInListening) {
+        console.log(`[voice] skip commit (busy): "${text.slice(0, 100)}"`);
         return;
       }
-      if (this.isRealBargeIn(text) || this.bargeInListening) {
+      if (this.shouldAcceptBusyTurn(text) || this.bargeInListening) {
         await this.handleBargeIn(text, "end_of_turn");
         // If the interrupt is now complete, pendingUserText is set for finally/drain.
         // If still incomplete, keep bargeInListening until a richer EOT.
@@ -766,14 +921,9 @@ export class VoiceSessionController {
       return;
     }
 
-    // Idle but still in post-TTS echo cooldown: ignore echo, allow novel speech through.
-    if (!opts?.force && this.inEchoWindow() && !this.isRealBargeIn(text)) {
-      if (process.env.ALFRED_LOG_VOICE === "1") {
-        console.log(`[voice] skip commit (echo cooldown): "${text.slice(0, 100)}"`);
-      }
-      return;
-    }
-
+    // Idle after TTS: drop only transcripts that look like echo — not every
+    // utterance that fails mid-speech barge-in heuristics. Longer memory-grounded
+    // replies made that gate drop most short follow-ups for ~2.5s (every-other turn).
     if (!opts?.force && this.shouldIgnoreAsEcho(text)) {
       if (process.env.ALFRED_LOG_VOICE === "1") {
         console.log(`[voice] skip commit (echo): "${text.slice(0, 80)}"`);
@@ -809,25 +959,34 @@ export class VoiceSessionController {
       payload: { text, source },
     });
 
-    await this.deps.memory.commitTurn({
-      profileId: this.deps.profileId,
-      sessionId: this.deps.sessionId,
-      turnId,
-      role: "user",
-      text,
-      metadata: {},
-    });
+    // Journal the user turn without blocking first-audio; retrieve/briefing below matter more.
+    void this.deps.memory
+      .commitTurn({
+        profileId: this.deps.profileId,
+        sessionId: this.deps.sessionId,
+        turnId,
+        role: "user",
+        text,
+        metadata: {},
+      })
+      .catch((err) => console.error("[voice] commitTurn (user) failed:", err));
     this.pushRecentTurn("user", text);
 
-    // Daily briefing: play / decline may short-circuit the normal LLM path.
-    let briefingDecision: BriefingVoiceDecision | undefined;
-    if (this.deps.briefing) {
-      try {
-        briefingDecision = await this.deps.briefing.handleUserTurn(text);
-      } catch (err) {
-        console.error("[voice] briefing handleUserTurn failed:", err);
-      }
-    }
+    // Briefing + memory in parallel — both were sequential on the hot path.
+    const [briefingDecision, memory] = await Promise.all([
+      this.deps.briefing
+        ? this.deps.briefing.handleUserTurn(text).catch((err) => {
+            console.error("[voice] briefing handleUserTurn failed:", err);
+            return undefined;
+          })
+        : Promise.resolve(undefined),
+      this.deps.memory.retrieve({
+        text,
+        profileId: this.deps.profileId,
+        sessionId: this.deps.sessionId,
+        limit: 8,
+      }),
+    ]);
 
     if (briefingDecision?.action === "play" || briefingDecision?.action === "decline") {
       try {
@@ -835,7 +994,8 @@ export class VoiceSessionController {
         const responseId = this.deps.responseLedger.beginResponse(this.deps.sessionId, turnId);
         this.provisionalResponseId = responseId;
         const assistantText = briefingDecision.speech;
-        if (this.pendingUserText || this.bargeInListening) {
+        if (this.pendingUserText || this.bargeInListening || this.suppressSpeak) {
+          if (this.suppressSpeak) this.suppressSpeak = false;
           console.log("[voice] skip briefing speak; barge-in pending");
           return;
         }
@@ -871,6 +1031,86 @@ export class VoiceSessionController {
       return;
     }
 
+    if (this.deps.lights) {
+      const lightsCommand = parseStudioLightIntent(text);
+      if (lightsCommand) {
+        try {
+          this.provisionalAbort?.abort({ reason: "studio_lights_short_circuit" });
+          const responseId = this.deps.responseLedger.beginResponse(this.deps.sessionId, turnId);
+          this.provisionalResponseId = responseId;
+          const assistantText = await this.deps.lights.control(lightsCommand);
+          if (this.pendingUserText || this.bargeInListening || this.suppressSpeak) {
+            if (this.suppressSpeak) this.suppressSpeak = false;
+            console.log("[voice] skip lights speak; barge-in pending");
+            return;
+          }
+          await this.deps.responseLedger.commit(responseId, assistantText);
+          this.activeResponseId = responseId;
+          console.log(`[voice] studio lights ${lightsCommand.action}: "${assistantText.slice(0, 160)}"`);
+          await this.deliverAssistant(responseId, assistantText, speak);
+          await this.deps.memory.commitTurn({
+            profileId: this.deps.profileId,
+            sessionId: this.deps.sessionId,
+            turnId: createId("turn"),
+            role: "assistant",
+            text: assistantText,
+            metadata: { responseId, studioLights: lightsCommand.action },
+          });
+          this.pushRecentTurn("assistant", assistantText);
+          this.provisionalResponseId = undefined;
+        } catch (err) {
+          console.error("[voice] studio lights failed:", err);
+        } finally {
+          await this.finishTurn({ speak });
+        }
+        return;
+      }
+    }
+
+    if (this.deps.weather) {
+      const weatherIntent = parseWeatherIntent(text);
+      if (weatherIntent) {
+        try {
+          this.provisionalAbort?.abort({ reason: "weather_short_circuit" });
+          const responseId = this.deps.responseLedger.beginResponse(this.deps.sessionId, turnId);
+          this.provisionalResponseId = responseId;
+          const assistantText = await this.deps.weather.getForecast({
+            location: weatherIntent.location,
+            days: weatherIntent.days,
+          });
+          if (this.pendingUserText || this.bargeInListening || this.suppressSpeak) {
+            if (this.suppressSpeak) this.suppressSpeak = false;
+            console.log("[voice] skip weather speak; barge-in pending");
+            return;
+          }
+          await this.deps.responseLedger.commit(responseId, assistantText);
+          this.activeResponseId = responseId;
+          console.log(
+            `[voice] weather${weatherIntent.location ? ` (${weatherIntent.location})` : " (home)"}: "${assistantText.slice(0, 160)}"`,
+          );
+          await this.deliverAssistant(responseId, assistantText, speak);
+          await this.deps.memory.commitTurn({
+            profileId: this.deps.profileId,
+            sessionId: this.deps.sessionId,
+            turnId: createId("turn"),
+            role: "assistant",
+            text: assistantText,
+            metadata: {
+              responseId,
+              weather: weatherIntent.location ? "named" : "home",
+            },
+          });
+          this.pushRecentTurn("assistant", assistantText);
+          this.provisionalResponseId = undefined;
+        } catch (err) {
+          console.error("[voice] weather short-circuit failed:", err);
+        } finally {
+          await this.finishTurn({ speak });
+        }
+        return;
+      }
+    }
+
     if (looksLikeDocsIngestTask(text)) {
       try {
         this.provisionalAbort?.abort({ reason: "docs_ingest_short_circuit" });
@@ -889,7 +1129,8 @@ export class VoiceSessionController {
             timeoutMs: 600_000,
           })
           .catch((err) => console.error("[voice] background docs ingest failed:", err));
-        if (this.pendingUserText || this.bargeInListening) {
+        if (this.pendingUserText || this.bargeInListening || this.suppressSpeak) {
+          if (this.suppressSpeak) this.suppressSpeak = false;
           console.log("[voice] skip docs ingest speak; barge-in pending");
           return;
         }
@@ -952,7 +1193,8 @@ export class VoiceSessionController {
               ? result.error || result.output || "I couldn't ingest that X link."
               : result.output || "Saved that X link to memory.";
         }
-        if (this.pendingUserText || this.bargeInListening) {
+        if (this.pendingUserText || this.bargeInListening || this.suppressSpeak) {
+          if (this.suppressSpeak) this.suppressSpeak = false;
           console.log("[voice] skip X ingest speak; barge-in pending");
           return;
         }
@@ -977,12 +1219,7 @@ export class VoiceSessionController {
       return;
     }
 
-    const memory = await this.deps.memory.retrieve({
-      text,
-      profileId: this.deps.profileId,
-      sessionId: this.deps.sessionId,
-      limit: 8,
-    });
+    // Memory already retrieved in parallel with briefing above.
     const hasDurableMemory = memory.items.some((m) => {
       const kind = m.provenance?.kind;
       return kind === "fact" || kind === "note";
@@ -996,22 +1233,61 @@ export class VoiceSessionController {
       let assistantText = responseId ? this.deps.responseLedger.getProposedText(responseId) : "";
       let streamedCaptions = false;
 
-      // Soft-offer turns always regenerate so the system hint applies (skip provisional).
-      // Always regenerate when durable memory is available — provisional EagerEOT
-      // often raced before facts were relevant, or reused a no-memory draft.
-      if (!responseId || !assistantText.trim() || hasDurableMemory || appendOffer) {
+      // EagerEOT may still be awaiting first token when EndOfTurn arrives — wait
+      // briefly before deciding the provisional is empty and regenerating.
+      if (
+        responseId &&
+        this.sameUtterance(text, this.provisionalForText) &&
+        !assistantText.trim()
+      ) {
+        assistantText = await this.waitForProposedText(responseId, 1_200);
+      }
+
+      const provisionalMatches = this.sameUtterance(text, this.provisionalForText);
+      const memoryMissedInProvisional = hasDurableMemory && !this.provisionalHadDurableMemory;
+      let shouldRegenerate =
+        !responseId ||
+        !assistantText.trim() ||
+        !provisionalMatches ||
+        memoryMissedInProvisional ||
+        appendOffer ||
+        (this.deps.lights && looksLikeStudioLightsTask(text)) ||
+        (this.deps.weather && looksLikeWeatherTask(text));
+
+      if (!shouldRegenerate && responseId) {
+        // Wait for the EagerEOT stream to finish — aborting early spoke truncated
+        // replies ("Exactly—the last quiet", "Do you mean").
+        assistantText = await this.waitForProvisionalComplete(responseId, 8_000);
+        if (looksTruncatedAssistantReply(assistantText)) {
+          shouldRegenerate = true;
+          if (process.env.ALFRED_LOG_VOICE === "1") {
+            console.log(
+              `[voice] provisional still truncated after wait; regenerating: "${assistantText.slice(0, 80)}"`,
+            );
+          }
+        } else if (process.env.ALFRED_LOG_VOICE === "1") {
+          console.log(
+            `[voice] reusing provisional draft (${assistantText.length} chars, durableMem=${hasDurableMemory})`,
+          );
+        }
+      }
+
+      if (shouldRegenerate) {
         this.provisionalAbort?.abort({ reason: "superseded_generation" });
         responseId = this.deps.responseLedger.beginResponse(this.deps.sessionId, turnId);
         this.provisionalResponseId = responseId;
-        if (hasDurableMemory && process.env.ALFRED_LOG_VOICE === "1") {
+        if (process.env.ALFRED_LOG_VOICE === "1") {
           console.log(
-            `[voice] regenerating with ${memory.items.length} memory item(s) (durable facts/notes)`,
+            `[voice] regenerating reply (provMatch=${provisionalMatches} memMiss=${memoryMissedInProvisional} offer=${Boolean(appendOffer)})`,
           );
         }
         const systemInstructions = offerHint
           ? `${this.deps.config.systemInstructions}\n\n${offerHint}`
           : this.deps.config.systemInstructions;
-        const dueReminders = await this.loadDueReminders();
+        const [dueReminders, extraSystem] = await Promise.all([
+          this.loadDueReminders(),
+          this.studioLightsHint(),
+        ]);
         const availableCapabilities = this.voiceCapabilities();
         const prompt = this.promptAssembler.assemble({
           systemInstructions,
@@ -1023,6 +1299,7 @@ export class VoiceSessionController {
           lateAddenda: [],
           agentResults: [],
           availableCapabilities,
+          extraSystem,
           dueReminders,
         });
         assistantText = await this.generateCommitted(prompt.messages, responseId, dueReminders, {
@@ -1039,12 +1316,17 @@ export class VoiceSessionController {
       }
 
       // Barge-in arrived while we were generating — skip speaking this reply.
-      if (this.pendingUserText || this.bargeInListening) {
-        console.log(
-          this.pendingUserText
-            ? "[voice] skip speak; pending barge-in"
-            : "[voice] skip speak; waiting for complete interrupt",
-        );
+      if (this.pendingUserText || this.bargeInListening || this.suppressSpeak) {
+        if (this.suppressSpeak) {
+          this.suppressSpeak = false;
+          console.log("[voice] skip speak; client stop");
+        } else {
+          console.log(
+            this.pendingUserText
+              ? "[voice] skip speak; pending barge-in"
+              : "[voice] skip speak; waiting for complete interrupt",
+          );
+        }
         return;
       }
 
@@ -1064,6 +1346,9 @@ export class VoiceSessionController {
       });
       this.pushRecentTurn("assistant", assistantText);
       this.provisionalResponseId = undefined;
+      this.provisionalForText = "";
+      this.provisionalHadDurableMemory = false;
+      this.provisionalStream = undefined;
       console.log("[voice] turn playback complete");
     } catch (err) {
       console.error("[voice] commitEndOfTurn failed:", err);
@@ -1081,10 +1366,53 @@ export class VoiceSessionController {
     }
   }
 
+  private async waitForProposedText(responseId: string, budgetMs: number): Promise<string> {
+    // Wall clock — FakeClock used in tests does not advance with setTimeout.
+    const started = Date.now();
+    while (Date.now() - started < budgetMs) {
+      const text = this.deps.responseLedger.getProposedText(responseId);
+      if (text.trim()) return text;
+      await this.delay(40);
+    }
+    return this.deps.responseLedger.getProposedText(responseId);
+  }
+
+  /** Await the EagerEOT LLM stream (or budget) so we speak a finished reply. */
+  private async waitForProvisionalComplete(responseId: string, budgetMs: number): Promise<string> {
+    const stream = this.provisionalStream;
+    if (stream) {
+      await Promise.race([stream, this.delay(budgetMs)]);
+    } else {
+      await this.delay(Math.min(budgetMs, 200));
+    }
+    return this.deps.responseLedger.getProposedText(responseId);
+  }
+
   private voiceCapabilities(): string[] {
     const caps = ["delegate_task"];
     if (this.deps.reminders) caps.push("update_reminder");
+    if (this.deps.structuredMemory) caps.push("remember_memory");
+    if (this.deps.weather) caps.push("get_weather_forecast");
+    if (this.deps.lights) caps.push("control_studio_lights");
     return caps;
+  }
+
+  private async studioLightsHint(): Promise<string | undefined> {
+    if (!this.deps.lights?.inventorySpeech) return undefined;
+    const now = this.deps.clock.now();
+    if (this.lightsHintCache && now - this.lightsHintCache.atMs < this.lightsHintTtlMs) {
+      return this.lightsHintCache.text;
+    }
+    try {
+      const hint = (await this.deps.lights.inventorySpeech()).trim();
+      const text = hint || undefined;
+      this.lightsHintCache = { atMs: now, text };
+      return text;
+    } catch (err) {
+      console.warn("[voice] studio lights inventory failed:", err);
+      this.lightsHintCache = { atMs: now, text: undefined };
+      return undefined;
+    }
   }
 
   private async loadDueReminders(): Promise<DueReminderSummary[]> {
@@ -1095,6 +1423,23 @@ export class VoiceSessionController {
       console.warn("[voice] listDue reminders failed:", err);
       return [];
     }
+  }
+
+  private committedTools(): Array<{
+    name: string;
+    description: string;
+    parameters: Record<string, unknown>;
+  }> {
+    const tools: Array<{
+      name: string;
+      description: string;
+      parameters: Record<string, unknown>;
+    }> = [DELEGATE_TASK_TOOL];
+    if (this.deps.reminders) tools.push(UPDATE_REMINDER_TOOL);
+    if (this.deps.structuredMemory) tools.push(REMEMBER_MEMORY_TOOL);
+    if (this.deps.weather) tools.push(GET_WEATHER_FORECAST_TOOL);
+    if (this.deps.lights) tools.push(CONTROL_STUDIO_LIGHTS_TOOL);
+    return tools;
   }
 
   private async generateCommitted(
@@ -1109,9 +1454,7 @@ export class VoiceSessionController {
     let text = "";
     let first = true;
     let toolCall: { toolName?: string; toolArgs?: Record<string, unknown> } | undefined;
-    const tools = this.deps.reminders
-      ? [DELEGATE_TASK_TOOL, UPDATE_REMINDER_TOOL]
-      : [DELEGATE_TASK_TOOL];
+    const tools = this.committedTools();
     if (opts?.streamCaptions) {
       this.lastCaptionRevealMs = 0;
       this.pendingCaptionReveal = undefined;
@@ -1166,8 +1509,139 @@ export class VoiceSessionController {
       if (opts?.streamCaptions) await this.publishCaptionReveal(out, true);
       return out;
     }
+    if (toolCall?.toolName === "remember_memory" && this.deps.structuredMemory) {
+      const ack = await this.applyRememberMemory(toolCall.toolArgs ?? {});
+      const spoken = text.trim();
+      const out = spoken || ack;
+      if (opts?.streamCaptions) await this.publishCaptionReveal(out, true);
+      return out;
+    }
+    if (toolCall?.toolName === "get_weather_forecast" && this.deps.weather) {
+      const forecast = await this.applyWeatherForecast(toolCall.toolArgs ?? {});
+      if (opts?.streamCaptions) await this.publishCaptionReveal(forecast, true);
+      return forecast;
+    }
+    if (toolCall?.toolName === "control_studio_lights" && this.deps.lights) {
+      const speech = await this.applyStudioLights(toolCall.toolArgs ?? {});
+      if (opts?.streamCaptions) await this.publishCaptionReveal(speech, true);
+      return speech;
+    }
     if (opts?.streamCaptions) await this.publishCaptionReveal(text, true);
     return text;
+  }
+
+  private async applyStudioLights(args: Record<string, unknown>): Promise<string> {
+    const port = this.deps.lights;
+    if (!port) return "I couldn't control the lights right now.";
+    const actionRaw = String(args.action ?? "").trim().toLowerCase();
+    const action = actionRaw as
+      | "on"
+      | "off"
+      | "brighter"
+      | "dimmer"
+      | "warmer"
+      | "cooler"
+      | "set"
+      | "status";
+    const allowed = new Set([
+      "on",
+      "off",
+      "brighter",
+      "dimmer",
+      "warmer",
+      "cooler",
+      "set",
+      "status",
+    ]);
+    if (!allowed.has(action)) return "I wasn't sure what to do with the lights.";
+    const target =
+      typeof args.target === "string" && args.target.trim() ? args.target.trim() : undefined;
+    const brightnessRaw = args.brightness;
+    const brightness =
+      typeof brightnessRaw === "number" && Number.isFinite(brightnessRaw)
+        ? brightnessRaw
+        : typeof brightnessRaw === "string" &&
+            brightnessRaw.trim() &&
+            Number.isFinite(Number(brightnessRaw))
+          ? Number(brightnessRaw)
+          : undefined;
+    const temperature =
+      typeof args.temperature === "number" || typeof args.temperature === "string"
+        ? args.temperature
+        : undefined;
+    try {
+      return await port.control({ action, target, brightness, temperature });
+    } catch (err) {
+      console.error("[voice] control_studio_lights failed:", err);
+      return "I couldn't reach the lights just now.";
+    }
+  }
+
+  private async applyWeatherForecast(args: Record<string, unknown>): Promise<string> {
+    const port = this.deps.weather;
+    if (!port) return "I couldn't look up the weather right now.";
+    const location =
+      typeof args.location === "string" && args.location.trim()
+        ? args.location.trim()
+        : undefined;
+    const daysRaw = args.days;
+    const days =
+      typeof daysRaw === "number" && Number.isFinite(daysRaw)
+        ? daysRaw
+        : typeof daysRaw === "string" && daysRaw.trim() && Number.isFinite(Number(daysRaw))
+          ? Number(daysRaw)
+          : undefined;
+    try {
+      return await port.getForecast({ location, days });
+    } catch (err) {
+      console.error("[voice] get_weather_forecast failed:", err);
+      return "I couldn't get the weather forecast just now.";
+    }
+  }
+
+  private async applyRememberMemory(args: Record<string, unknown>): Promise<string> {
+    const port = this.deps.structuredMemory;
+    if (!port) return "I couldn't store that memory right now.";
+    const entities = Array.isArray(args.entities)
+      ? (args.entities as Array<Record<string, unknown>>)
+          .map((e) => ({
+            name: String(e.name ?? "").trim(),
+            entityClass: typeof e.entityClass === "string" ? e.entityClass : undefined,
+            summary: typeof e.summary === "string" ? e.summary : undefined,
+            email: typeof e.email === "string" ? e.email.trim() : undefined,
+            telephone: typeof e.telephone === "string" ? e.telephone.trim() : undefined,
+          }))
+          .filter((e) => e.name)
+      : [];
+    const assertions = Array.isArray(args.assertions)
+      ? (args.assertions as Array<Record<string, unknown>>)
+          .map((a) => ({
+            subjectName: String(a.subjectName ?? "").trim(),
+            predicate: String(a.predicate ?? "").trim(),
+            objectName: String(a.objectName ?? "").trim(),
+            text: typeof a.text === "string" ? a.text : undefined,
+          }))
+          .filter((a) => a.subjectName && a.predicate && a.objectName)
+      : [];
+    const notes = Array.isArray(args.notes)
+      ? (args.notes as unknown[]).map((n) => String(n).trim()).filter(Boolean)
+      : [];
+    if (!entities.length && !assertions.length && !notes.length) {
+      return "I need something concrete to remember.";
+    }
+    try {
+      const result = await port.remember({ entities, assertions, notes });
+      const parts: string[] = [];
+      if (result.entitiesUpserted) parts.push(`${result.entitiesUpserted} people or things`);
+      if (result.assertionsCreated) parts.push(`${result.assertionsCreated} relationships`);
+      if (result.notesCreated) parts.push(`${result.notesCreated} notes`);
+      return parts.length
+        ? `Got it — I've stored that in memory (${parts.join(", ")}).`
+        : "Got it — I've noted that.";
+    } catch (err) {
+      console.error("[voice] remember_memory failed:", err);
+      return "I couldn't store that memory just now.";
+    }
   }
 
   private async applyReminderUpdate(
@@ -1226,6 +1700,8 @@ export class VoiceSessionController {
 
   private async finishTurn(opts?: { speak?: boolean }): Promise<void> {
     this.turnInFlight = false;
+    // Never leave Shhh residue for the following utterance.
+    this.suppressSpeak = false;
     const pending = this.pendingUserText;
     this.pendingUserText = undefined;
     if (pending) {
@@ -1306,11 +1782,20 @@ export class VoiceSessionController {
   ): Promise<void> {
     if (!this.ttsSession || !text.trim()) return;
 
+    // Captions keep markdown for the HUD; TTS gets a sync plain-text strip so
+    // markers never reach the synthesizer (and never delay first audio).
+    const displayText = text;
+    const speechText = stripMarkdownForSpeech(text);
+    if (!speechText.trim()) {
+      await this.deliverTextCaption(responseId, displayText);
+      return;
+    }
+
     const contextId = `${kind}_${createId("ctx")}`;
     this.activeContextId = contextId;
-    const segment = await this.deps.responseLedger.addSegment(responseId, kind, text);
+    const segment = await this.deps.responseLedger.addSegment(responseId, kind, displayText);
     await this.ttsSession.openContext(contextId, segment.id);
-    await this.deps.responseLedger.submitToTts(responseId, text);
+    await this.deps.responseLedger.submitToTts(responseId, speechText);
 
     if (this.deps.fsm.canTransition("SynthesizingSpeech")) {
       await this.deps.fsm.transition("SynthesizingSpeech", "tts.multi_context");
@@ -1329,11 +1814,11 @@ export class VoiceSessionController {
     const signal = this.speakAbort.signal;
 
     this.isSpeaking = true;
-    this.lastAssistantSpeech = text;
+    this.lastAssistantSpeech = speechText;
     this.partialText = "";
     this.selfVoice.clear();
     this.selfVoice.arm();
-    await this.media.publishCaption({ type: "start", text });
+    await this.media.publishCaption({ type: "start", text: displayText });
 
     // One flush for the full reply — sentence chunking caused mid-answer skips when
     // the next flush started before ElevenLabs finished the previous audio.
@@ -1346,7 +1831,7 @@ export class VoiceSessionController {
     let lastReveal = "";
 
     this.mark("first_speakable_chunk_at");
-    for await (const ev of this.ttsSession.synthesizeToContext(contextId, text, {
+    for await (const ev of this.ttsSession.synthesizeToContext(contextId, speechText, {
       flush: true,
       signal,
     })) {
@@ -1364,7 +1849,7 @@ export class VoiceSessionController {
           firstBuffered = false;
         }
         if (firstSpeakable) firstSpeakable = false;
-        await this.deps.responseLedger.bufferAudio(responseId, text);
+        await this.deps.responseLedger.bufferAudio(responseId, speechText);
         await this.deps.events.emit({
           sessionId: this.deps.sessionId,
           type: "tts.audio_buffered",
@@ -1372,6 +1857,11 @@ export class VoiceSessionController {
           payload: { ...ev },
         });
         if (ev.pcm) {
+          // Stop may land between events — never queue another frame after abort.
+          if (signal.aborted || !this.isSpeaking || this.activeContextId !== contextId) {
+            bargedIn = true;
+            break;
+          }
           const pcmFrame = {
             data: ev.pcm,
             sampleRate: ev.sampleRate ?? 24_000,
@@ -1396,11 +1886,11 @@ export class VoiceSessionController {
           responseId,
           payload: { ...ev },
         });
-        const slice = text.slice(ev.characterStart, ev.characterEnd);
+        const slice = speechText.slice(ev.characterStart, ev.characterEnd);
         if (slice) {
           await this.deps.responseLedger.markDelivered(responseId, slice);
           charCursor = Math.max(charCursor, ev.characterEnd);
-          const revealed = text.slice(0, charCursor);
+          const revealed = revealMarkdownBySpeechProgress(displayText, speechText, charCursor);
           if (revealed !== lastReveal) {
             lastReveal = revealed;
             await this.media.publishCaption({ type: "reveal", text: revealed });
@@ -1430,10 +1920,10 @@ export class VoiceSessionController {
 
     // If no alignment events, mark full text delivered after playback.
     if (!this.deps.responseLedger.getDeliveredText(responseId)) {
-      await this.deps.responseLedger.markDelivered(responseId, text);
+      await this.deps.responseLedger.markDelivered(responseId, speechText);
     }
-    if (lastReveal !== text) {
-      await this.media.publishCaption({ type: "reveal", text });
+    if (lastReveal !== displayText) {
+      await this.media.publishCaption({ type: "reveal", text: displayText });
     }
 
     await this.ttsSession.closeContext(contextId, "complete");
@@ -1481,3 +1971,68 @@ export class VoiceSessionController {
     });
   }
 }
+
+/** True when a reused EagerEOT draft looks cut off mid-thought. */
+export function looksTruncatedAssistantReply(text: string): boolean {
+  const t = text.trim();
+  if (!t) return true;
+  if (t.length < 8) return true;
+  // Finished sentence / question / ellipsis.
+  if (/[.!?…]["')\]]*\s*$/.test(t)) return false;
+  // Em-dash / hyphen cutoffs are the classic truncated stream symptom.
+  if (/[—–-]\s*$/.test(t)) return true;
+  // Hanging function word / article ("Exactly—the last quiet" without period is
+  // caught above only if punctuated; also catch "Do you mean").
+  if (/\b(the|a|an|and|or|to|of|in|on|for|with|exactly|mean|about)\s*$/i.test(t)) {
+    return true;
+  }
+  // No terminal punctuation and short → almost certainly incomplete for voice.
+  if (t.length < 48) return true;
+  return false;
+}
+
+/** Stopwords ignored when judging whether busy-turn speech is a real follow-up. */
+const NOVEL_TURN_STOPWORDS = new Set([
+  "the",
+  "a",
+  "an",
+  "and",
+  "or",
+  "to",
+  "of",
+  "in",
+  "on",
+  "for",
+  "is",
+  "are",
+  "was",
+  "were",
+  "be",
+  "am",
+  "i",
+  "you",
+  "he",
+  "she",
+  "it",
+  "we",
+  "they",
+  "my",
+  "your",
+  "me",
+  "with",
+  "that",
+  "this",
+  "just",
+  "so",
+  "but",
+  "not",
+  "no",
+  "yes",
+  "ok",
+  "okay",
+  "uh",
+  "um",
+  "hey",
+  "hi",
+  "oh",
+]);

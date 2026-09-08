@@ -1,0 +1,369 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Alfred // notes</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Syne:wght@700;800&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg: #0b0f14;
+        --fg: #e8eef5;
+        --muted: #8b9bb0;
+        --line: #1c2733;
+        --accent: #7ee0c3;
+        --mint: #3dffc4;
+        --warn: #e0c07e;
+        --card: rgba(12, 18, 26, 0.55);
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family: "IBM Plex Mono", ui-monospace, monospace;
+        background:
+          radial-gradient(1200px 600px at 20% -10%, #163049 0%, transparent 55%),
+          radial-gradient(900px 500px at 100% 20%, #1a2a22 0%, transparent 50%), var(--bg);
+        color: var(--fg);
+        padding: 2rem 1.25rem 3rem;
+      }
+      main { width: min(58rem, 100%); margin: 0 auto; }
+      .brand {
+        font-family: Syne, sans-serif;
+        font-weight: 800;
+        font-size: clamp(1.75rem, 5vw, 2.25rem);
+        letter-spacing: 0.04em;
+        line-height: 1;
+        margin: 0 0 0.35rem;
+      }
+      .sub {
+        color: var(--muted);
+        font-size: 0.72rem;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        margin: 0 0 1.75rem;
+      }
+      section {
+        border: 1px solid var(--line);
+        background: var(--card);
+        padding: 1.1rem 1.15rem 1.2rem;
+        margin-bottom: 1rem;
+      }
+      h2 {
+        margin: 0 0 0.85rem;
+        font-size: 0.7rem;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        color: var(--accent);
+        font-weight: 600;
+      }
+      .hint { color: var(--muted); font-size: 0.75rem; line-height: 1.45; margin: 0 0 0.9rem; }
+      .row { display: flex; flex-wrap: wrap; gap: 0.55rem; margin-bottom: 0.75rem; align-items: center; }
+      label { font-size: 0.75rem; color: var(--muted); }
+      input[type="text"], select, input[type="file"] {
+        background: #0a121a;
+        border: 1px solid var(--line);
+        color: var(--fg);
+        font: inherit;
+        padding: 0.45rem 0.55rem;
+      }
+      .seg { display: flex; gap: 0.35rem; }
+      .seg button, button.action {
+        appearance: none;
+        border: 1px solid var(--line);
+        background: transparent;
+        color: var(--muted);
+        font: inherit;
+        font-size: 0.68rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        padding: 0.4rem 0.7rem;
+        cursor: pointer;
+      }
+      .seg button.active, button.action.primary {
+        color: var(--mint);
+        border-color: rgba(61, 255, 196, 0.35);
+      }
+      button.action:disabled { opacity: 0.5; cursor: default; }
+      #status { font-size: 0.75rem; color: var(--muted); }
+      #status.error { color: #e07a7a; }
+      #status.ok { color: var(--mint); }
+      .note-list { display: grid; gap: 0.65rem; }
+      .note-card {
+        border: 1px solid var(--line);
+        background: rgba(8, 12, 18, 0.45);
+        padding: 0.85rem 1rem;
+        cursor: pointer;
+        text-align: left;
+        width: 100%;
+        color: inherit;
+        font: inherit;
+      }
+      .note-card.active { border-color: rgba(61, 255, 196, 0.35); }
+      .note-card h3 { margin: 0 0 0.25rem; font-size: 0.95rem; }
+      .meta { color: var(--muted); font-size: 0.7rem; letter-spacing: 0.06em; text-transform: uppercase; }
+      .boxes { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; }
+      .box { border: 1px solid var(--line); background: rgba(10, 16, 22, 0.7); padding: 0.85rem 0.95rem; }
+      .box h4 {
+        margin: 0 0 0.55rem;
+        font-size: 0.68rem;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: var(--accent);
+      }
+      .box p, .box li { font-size: 0.82rem; line-height: 1.45; margin: 0 0 0.4rem; }
+      .box ul { margin: 0; padding-left: 1.1rem; }
+      .wide { grid-column: 1 / -1; }
+      audio { width: 100%; margin: 0.5rem 0 0; }
+      .empty { color: var(--muted); font-size: 0.8rem; }
+      @media (max-width: 720px) { .boxes { grid-template-columns: 1fr; } }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1 class="brand">Notes</h1>
+      <p class="sub">Recordings · transcripts · action items</p>
+
+      <section>
+        <h2>New recording</h2>
+        <p class="hint">Short notes transcribe immediately. Long recordings (tours, rentals, 60+ min) upload first, then the Mac splits them into 5-minute chunks so a 2-hour file does not hit the 25&nbsp;MB cloud STT limit.</p>
+        <div class="row">
+          <div class="seg" id="duration">
+            <button type="button" data-mode="short" class="active">Short (&lt;60 min)</button>
+            <button type="button" data-mode="long">Long (60+ min)</button>
+          </div>
+        </div>
+        <div class="row">
+          <label>Template
+            <select id="template">
+              <option value="meeting">Meeting</option>
+              <option value="brainstorm">Brainstorm</option>
+              <option value="checkin">Check-in</option>
+              <option value="freeform">Freeform</option>
+            </select>
+          </label>
+          <label>Title
+            <input id="title" type="text" placeholder="Optional title" />
+          </label>
+          <label>Attendees
+            <input id="attendees" type="text" placeholder="Comma-separated names" />
+          </label>
+        </div>
+        <div class="row">
+          <input id="file" type="file" accept="audio/*" />
+          <button type="button" class="action primary" id="upload">Upload</button>
+          <span id="status"></span>
+        </div>
+      </section>
+
+      <section>
+        <h2>Library</h2>
+        <div id="list" class="note-list"><p class="empty">No audio notes yet.</p></div>
+      </section>
+
+      <section id="detail-wrap" hidden>
+        <h2 id="detail-title">Note</h2>
+        <p class="meta" id="detail-meta"></p>
+        <audio id="player" controls></audio>
+        <div class="row" style="margin-top: 0.8rem">
+          <button type="button" class="action" id="retry-details">Retry details</button>
+          <button type="button" class="action" id="retry-transcript">Retry transcript</button>
+        </div>
+        <div class="boxes" id="boxes"></div>
+      </section>
+    </main>
+    <script src="/alfred-base.js"></script>
+    <script src="/embed-bridge.js"></script>
+    <script>
+      const api = (path) => (typeof alfredUrl === "function" ? alfredUrl(path) : path);
+      let durationMode = "short";
+      let notes = [];
+      let selectedId = null;
+      let pollTimer = null;
+      let listPoll = null;
+
+      const statusEl = document.getElementById("status");
+      function setStatus(msg, kind) {
+        statusEl.textContent = msg || "";
+        statusEl.className = kind || "";
+      }
+
+      document.querySelectorAll("#duration button").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          durationMode = btn.dataset.mode;
+          document.querySelectorAll("#duration button").forEach((b) => b.classList.toggle("active", b === btn));
+        });
+      });
+
+      function box(title, body) {
+        return `<article class="box"><h4>${title}</h4>${body}</article>`;
+      }
+      function listItems(items, empty) {
+        if (!items?.length) return `<p class="empty">${empty}</p>`;
+        return `<ul>${items.map((i) => `<li>${escapeHtml(i)}</li>`).join("")}</ul>`;
+      }
+      function escapeHtml(value) {
+        return String(value ?? "")
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;");
+      }
+
+      function renderList() {
+        const el = document.getElementById("list");
+        if (!notes.length) {
+          el.innerHTML = `<p class="empty">No audio notes yet.</p>`;
+          return;
+        }
+        el.innerHTML = notes.map((n) => `
+          <button type="button" class="note-card ${n.id === selectedId ? "active" : ""}" data-id="${escapeHtml(n.id)}">
+            <h3>${escapeHtml(n.title)}</h3>
+            <div class="meta">${escapeHtml(n.template)}${n.location ? ` · ${escapeHtml(n.location)}` : ""} · ${escapeHtml(n.processingStatus)}${
+              n.processingStatus === "processing" && n.job
+                ? ` · ${escapeHtml(n.job.message)} (${n.job.progress}%)`
+                : ""
+            } · ${escapeHtml(new Date(n.createdAt).toLocaleString())}</div>
+          </button>
+        `).join("");
+        el.querySelectorAll(".note-card").forEach((btn) => {
+          btn.addEventListener("click", () => selectNote(btn.dataset.id));
+        });
+      }
+
+      function renderDetail(note) {
+        const wrap = document.getElementById("detail-wrap");
+        wrap.hidden = !note;
+        if (!note) return;
+        document.getElementById("detail-title").textContent = note.title;
+        document.getElementById("detail-meta").textContent =
+          `${note.template} · ${note.processingStatus}${
+            note.location ? ` · ${note.location}` : ""
+          }${
+            note.processingStatus === "processing" && note.job
+              ? ` · ${note.job.message} (${note.job.progress}%)`
+              : ""
+          } · ${new Date(note.createdAt).toLocaleString()}`;
+        const player = document.getElementById("player");
+        player.src = api(`/notes/${encodeURIComponent(note.id)}/audio`);
+        const nextSteps = (note.nextSteps || []).map((s) => {
+          const extra = [s.assignee && `→ ${s.assignee}`, s.dueDate && s.dueDate].filter(Boolean).join("  ");
+          return extra ? `${s.text}  ${extra}` : s.text;
+        });
+        document.getElementById("boxes").innerHTML =
+          box("Summary", note.summary ? `<p>${escapeHtml(note.summary)}</p>` : `<p class="empty">No summary yet.</p>`) +
+          box("Key Takeaways", listItems(note.takeaways, "None")) +
+          box("Action Items", listItems(nextSteps, "None")) +
+          box("Open Questions", listItems(note.openQuestions, "None")) +
+          box("Place", note.location ? `<p>${escapeHtml(note.location)}</p>` : `<p class="empty">None</p>`) +
+          box("Attendees", listItems((note.attendees || []).map((a) => a.name || a), "None")) +
+          `<article class="box wide"><h4>Transcript</h4>${
+            note.transcript ? `<p>${escapeHtml(note.transcript)}</p>` : `<p class="empty">No transcript yet.</p>`
+          }</article>`;
+      }
+
+      async function loadNotes() {
+        const res = await fetch(api("/notes/list"));
+        const data = await res.json();
+        notes = data.notes || [];
+        renderList();
+        if (selectedId) {
+          const current = notes.find((n) => n.id === selectedId);
+          if (current) renderDetail(current);
+        }
+        const busy = notes.some((n) => n.processingStatus === "processing");
+        if (busy && !listPoll) {
+          listPoll = setInterval(() => { loadNotes().catch(() => {}); }, 4000);
+        }
+        if (!busy && listPoll) {
+          clearInterval(listPoll);
+          listPoll = null;
+        }
+      }
+
+      async function selectNote(id) {
+        selectedId = id;
+        const res = await fetch(api(`/notes/${encodeURIComponent(id)}`));
+        const data = await res.json();
+        renderList();
+        renderDetail(data.note);
+      }
+
+      async function pollJob(jobId) {
+        clearInterval(pollTimer);
+        pollTimer = setInterval(async () => {
+          const res = await fetch(api(`/notes/jobs/${encodeURIComponent(jobId)}`));
+          const data = await res.json();
+          const job = data.job;
+          if (!job) return;
+          setStatus(`${job.message} (${job.progress}%)`);
+          if (job.status === "completed" || job.status === "failed") {
+            clearInterval(pollTimer);
+            setStatus(job.status === "completed" ? "Ready" : job.error || "Failed", job.status === "completed" ? "ok" : "error");
+            await loadNotes();
+            if (job.noteId) selectNote(job.noteId);
+          }
+        }, 2500);
+      }
+
+      document.getElementById("upload").addEventListener("click", async () => {
+        const file = document.getElementById("file").files[0];
+        if (!file) {
+          setStatus("Choose an audio file first.", "error");
+          return;
+        }
+        const form = new FormData();
+        form.append("audio", file);
+        form.append("template", document.getElementById("template").value);
+        const title = document.getElementById("title").value.trim();
+        if (title) form.append("title", title);
+        const attendees = document.getElementById("attendees").value.trim();
+        if (attendees) form.append("attendees", attendees);
+        setStatus(durationMode === "short" ? "Transcribing…" : "Uploading…");
+        const path = durationMode === "short" ? "/notes/from-audio" : "/notes/from-audio-async";
+        const res = await fetch(api(path), { method: "POST", body: form });
+        const data = await res.json();
+        if (!res.ok) {
+          setStatus(data.error || "Upload failed", "error");
+          return;
+        }
+        if (data.job) {
+          selectedId = data.note?.id;
+          setStatus("Processing in the background…");
+          await loadNotes();
+          pollJob(data.job.id);
+        } else {
+          setStatus("Ready", "ok");
+          await loadNotes();
+          if (data.note?.id) selectNote(data.note.id);
+        }
+      });
+
+      document.getElementById("retry-details").addEventListener("click", async () => {
+        if (!selectedId) return;
+        setStatus("Re-analyzing…");
+        const res = await fetch(api(`/notes/${encodeURIComponent(selectedId)}/retry-details`), { method: "POST" });
+        const data = await res.json();
+        if (!res.ok) return setStatus(data.error || "Retry failed", "error");
+        setStatus("Updated", "ok");
+        await loadNotes();
+        renderDetail(data.note);
+      });
+
+      document.getElementById("retry-transcript").addEventListener("click", async () => {
+        if (!selectedId) return;
+        setStatus("Re-transcribing…");
+        const res = await fetch(api(`/notes/${encodeURIComponent(selectedId)}/retry-transcript`), { method: "POST" });
+        const data = await res.json();
+        if (!res.ok) return setStatus(data.error || "Retry failed", "error");
+        pollJob(data.job.id);
+      });
+
+      loadNotes().catch((err) => setStatus(err.message || String(err), "error"));
+    </script>
+  </body>
+</html>

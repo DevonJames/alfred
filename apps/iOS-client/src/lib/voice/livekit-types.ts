@@ -25,6 +25,8 @@ export type LKLocalParticipant = {
 export type LKRoom = {
   localParticipant: LKLocalParticipant;
   remoteParticipants: Map<string, LKParticipant>;
+  /** LiveKit ConnectionState when available (`connected`, `disconnected`, …). */
+  state?: string;
   on: (event: string, handler: (...args: never[]) => void) => LKRoom;
   connect: Room["connect"];
   disconnect: Room["disconnect"];
@@ -55,5 +57,8 @@ export interface LiveKitNativeModule {
     startAudioSession: typeof AudioSession.startAudioSession;
     stopAudioSession: typeof AudioSession.stopAudioSession;
     configureAudio?: typeof AudioSession.configureAudio;
+    setAppleAudioConfiguration?: typeof AudioSession.setAppleAudioConfiguration;
+    setDefaultRemoteAudioTrackVolume?: typeof AudioSession.setDefaultRemoteAudioTrackVolume;
+    selectAudioOutput?: typeof AudioSession.selectAudioOutput;
   };
 }

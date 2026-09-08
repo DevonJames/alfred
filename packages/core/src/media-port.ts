@@ -16,7 +16,11 @@ export type UiLayout = "voice" | "chat";
 export type UiCommand =
   | { type: "layout"; layout: UiLayout }
   | { type: "dictate"; active: boolean }
-  | { type: "text"; text: string };
+  | { type: "text"; text: string }
+  /** Cut assistant TTS / in-flight speak immediately (no new user turn). */
+  | { type: "stop" }
+  /** Client muted its mic — stop listening without ending the session. */
+  | { type: "mute"; muted: boolean };
 
 /**
  * Media transport boundary. LiveKit implements this; core never imports LiveKit.
@@ -69,6 +73,7 @@ export function parseUiCommand(data: Uint8Array, topic?: string | null): UiComma
       type?: string;
       layout?: string;
       active?: boolean;
+      muted?: boolean;
       text?: string;
     };
     if (raw.channel && raw.channel !== CONTROL_CHANNEL) return undefined;
@@ -77,6 +82,12 @@ export function parseUiCommand(data: Uint8Array, topic?: string | null): UiComma
     }
     if (raw.type === "dictate" && typeof raw.active === "boolean") {
       return { type: "dictate", active: raw.active };
+    }
+    if (raw.type === "stop") {
+      return { type: "stop" };
+    }
+    if (raw.type === "mute" && typeof raw.muted === "boolean") {
+      return { type: "mute", muted: raw.muted };
     }
     if (raw.type === "text" && typeof raw.text === "string") {
       return { type: "text", text: raw.text };

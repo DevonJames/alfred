@@ -12,6 +12,7 @@ import {
   emptyExtraction,
   type DocsExtractor,
 } from "./docs-ingest/extract.js";
+import { pagesToMarkdown } from "./docs-ingest/text.js";
 import type { KnowledgeIngestResult } from "./knowledge-ingest.js";
 import type { MemoryExtractionResult } from "./oip-local/extraction-contract.js";
 
@@ -21,19 +22,7 @@ export type DocumentIngestResult = KnowledgeIngestResult & {
   sections: number;
 };
 
-/**
- * Turn extracted PDF page texts into heading markdown so the docs chunker
- * can split on `# Page N` (and further on oversized pages).
- */
-export function pagesToMarkdown(pages: string[]): string {
-  return pages
-    .map((page, i) => {
-      const body = page.replace(/\u0000/g, "").trim();
-      return body ? `# Page ${i + 1}\n\n${body}` : "";
-    })
-    .filter(Boolean)
-    .join("\n\n");
-}
+export { pagesToMarkdown };
 
 function documentProvenance(opts: {
   filename: string;

@@ -207,12 +207,16 @@ class ElevenLabsMultiContextSession implements MultiContextTTSSession {
       flush: opts?.flush ?? true,
     });
 
-    // Yield audio as it arrives; do NOT finish until isFinal (or timeout).
-    // The old 200ms early-exit cut mid-sentence audio and started the next flush.
+    // ElevenLabs streams many small PCM chunks for one flush — keep yielding
+    // until isFinal / context-closed. A hard 30s wall-clock cap used to stop
+    // accepting chunks mid-story even while the socket was still feeding audio.
     const seen = new Set<TtsDeliveryEvent>();
     const start = Date.now();
-    // Bound wait by spoken length (~12 chars/sec) with floor/ceiling.
-    const maxWaitMs = Math.min(30_000, Math.max(4_000, text.length * 80));
+    // Absolute safety only (not “file duration”). Stream ends on isFinal or
+    // chunk idle below; this just bounds a wedged socket.
+    const maxWaitMs = 600_000;
+    // If isFinal never arrives, end after no audio chunk for this long.
+    const chunkIdleMs = 8_000;
     let lastAudioAt = start;
     let gotAudio = false;
 
@@ -228,22 +232,19 @@ class ElevenLabsMultiContextSession implements MultiContextTTSSession {
               lastAudioAt = Date.now();
             }
             yield ev;
+            if (opts?.signal?.aborted) break;
           }
         }
+
+        if (opts?.signal?.aborted) break;
 
         if (events.some((e) => e.type === "playback-confirmed" || e.type === "context-closed")) {
           break;
         }
 
-        // If ElevenLabs never sends isFinal, wait for a real gap after enough audio.
-        // A short gap early on caused mid-sentence skips when the next flush started.
-        const minAudioMs = Math.min(8_000, Math.max(800, text.length * 35));
-        const quietMs = 1_800;
-        if (
-          gotAudio &&
-          Date.now() - start >= minAudioMs &&
-          Date.now() - lastAudioAt > quietMs
-        ) {
+        // Fallback when ElevenLabs never sends isFinal: stream is done only
+        // after chunks have actually stopped, not after wall-clock speak time.
+        if (gotAudio && Date.now() - lastAudioAt > chunkIdleMs) {
           const confirmed: TtsDeliveryEvent = {
             type: "playback-confirmed",
             responseSegmentId,
@@ -261,7 +262,10 @@ class ElevenLabsMultiContextSession implements MultiContextTTSSession {
         await Promise.race([done, sleep(20)]);
       }
 
-      // Drain any trailing events.
+      // On abort, drop anything still buffered — do not drain trailing audio.
+      if (opts?.signal?.aborted) return;
+
+      // Drain any trailing events (normal completion only).
       for (const ev of events) {
         if (!seen.has(ev)) {
           seen.add(ev);

@@ -25,6 +25,16 @@ export {
   type EchoCheckInput,
 } from "./echo-filter.js";
 export * from "./self-voice.js";
+export * from "./speech-text.js";
 export * from "./voice-session.js";
 export { looksLikeXIngestTask } from "./x-ingest-intent.js";
 export { looksLikeDocsIngestTask } from "./docs-ingest-intent.js";
+export {
+  looksLikeStudioLightsTask,
+  parseStudioLightIntent,
+} from "./studio-lights-intent.js";
+export {
+  looksLikeWeatherTask,
+  parseWeatherIntent,
+  type WeatherIntent,
+} from "./weather-intent.js";

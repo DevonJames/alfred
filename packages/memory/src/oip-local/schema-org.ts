@@ -12,6 +12,8 @@ export const SCHEMA_ORG = {
   VideoObject: "https://schema.org/VideoObject",
   Collection: "https://schema.org/Collection",
   DigitalDocument: "https://schema.org/DigitalDocument",
+  ImageObject: "https://schema.org/ImageObject",
+  AudioObject: "https://schema.org/AudioObject",
   Thing: "https://schema.org/Thing",
 } as const;
 

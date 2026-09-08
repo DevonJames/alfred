@@ -1,165 +1,144 @@
 /**
- * Live Alfred waveform — port of apps/voice-client LiveWaveform for React Native.
+ * Alfred speech waveform — driven only by LiveKit native metering on the
+ * remote agent TTS track (same idea as the desktop AnalyserNode scope).
  *
- * Desktop uses Web Audio AnalyserNode (time-domain scope + FFT bars). Here we
- * drive the same visual recipe from LiveKit's native multiband + track volume
- * processors on the remote agent TTS track, drawn with Skia.
+ * No caption-tied sine “fake talk” animation. If levels aren’t attached yet,
+ * the panel stays near-flat with a status label rather than pretending.
  */
 import { useMultibandTrackVolume, useTrackVolume } from "@livekit/react-native";
 import type { RemoteAudioTrack } from "livekit-client";
-import {
-  Canvas,
-  DashPathEffect,
-  Line,
-  LinearGradient,
-  Path,
-  Rect,
-  Skia,
-  vec,
-} from "@shopify/react-native-skia";
 import { ChevronDown, ChevronUp } from "lucide-react-native";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { LayoutChangeEvent, Pressable, Text, View } from "react-native";
-import { useWindowDimensions } from "react-native";
+import {
+  LayoutChangeEvent,
+  Pressable,
+  Text,
+  useWindowDimensions,
+  View,
+} from "react-native";
+import Svg, { Line, Path as SvgPath } from "react-native-svg";
 
-const BAR_COUNT = 48;
-const SCOPE_POINTS = 96;
-const EXPANDED_FRACTION = 0.26;
-const COLLAPSED_FRACTION = 0.1;
-const MINT = "rgb(61, 255, 196)";
-const AMBER = "rgb(255, 179, 71)";
-const INK = "rgb(215, 246, 255)";
-const MUTED = "rgba(111, 143, 163, 0.45)";
+const BAR_COUNT = 32;
+const EXPANDED_FRACTION = 0.32;
+const COLLAPSED_FRACTION = 0.12;
+const MINT = "#3DFFC4";
+const AMBER = "#FFB347";
+const INK = "#E8FBFF";
 const PANEL = "#0A1220";
-const PANEL_BORDER = "rgba(61, 255, 196, 0.22)";
+const PANEL_BORDER = "rgba(61, 255, 196, 0.28)";
 
 export function AgentWaveform({
   track,
-  speaking,
   collapsed,
   onToggleCollapsed,
 }: {
   track: RemoteAudioTrack | null;
-  speaking: boolean;
   collapsed: boolean;
   onToggleCollapsed: () => void;
 }) {
   const { height: windowHeight, width: windowWidth } = useWindowDimensions();
   const targetHeight = Math.max(
-    64,
+    96,
     Math.round(windowHeight * (collapsed ? COLLAPSED_FRACTION : EXPANDED_FRACTION))
   );
 
-  const [size, setSize] = useState({ w: Math.max(280, windowWidth - 40), h: targetHeight });
+  const [width, setWidth] = useState(Math.max(280, windowWidth - 32));
 
-  const bands = useMultibandTrackVolume(track ?? undefined, {
+  // Official hooks do `instanceof Track`, which fails under Metro duplicates.
+  // Passing `{ publication: { track } }` uses the fallback path that still works.
+  const trackRef = useMemo(
+    () => (track ? { publication: { track } } : undefined),
+    [track]
+  );
+
+  const rawBands = useMultibandTrackVolume(trackRef as never, {
     bands: BAR_COUNT,
-    minFrequency: 80,
+    minFrequency: 120,
     maxFrequency: 8000,
-    updateInterval: 32,
+    updateInterval: 40,
   });
-  const volume = useTrackVolume(track ?? undefined);
+  const rawVolume = useTrackVolume(trackRef as never);
 
-  const historyRef = useRef<number[]>(Array.from({ length: SCOPE_POINTS }, () => 0));
-  const smoothedRef = useRef(0);
-  const phaseRef = useRef(0);
-  const [, setFrame] = useState(0);
+  const smoothRef = useRef<number[]>(Array.from({ length: BAR_COUNT }, () => 0));
+  const bandsRef = useRef(rawBands);
+  const volumeRef = useRef(rawVolume);
+  bandsRef.current = rawBands;
+  volumeRef.current = rawVolume;
 
+  const [levels, setLevels] = useState<number[]>(() => Array.from({ length: BAR_COUNT }, () => 0));
+  const [energy, setEnergy] = useState(0);
+
+  // Drive from rAF + refs. Depending on `rawBands` directly loops because the
+  // LiveKit hook returns a new array every render.
   useEffect(() => {
-    const id = setInterval(() => {
-      const live = Number.isFinite(volume) ? volume : 0;
-      const bandEnergy =
-        bands.length > 0 ? bands.reduce((a, b) => a + b, 0) / bands.length : 0;
-      // Prefer real track energy; while captions say speaking but FFT is quiet,
-      // lift a little so the scope still moves with the voice turn.
-      const raw = Math.max(live, bandEnergy, speaking ? 0.08 : 0);
-      smoothedRef.current = smoothedRef.current * 0.82 + raw * 0.18;
-      phaseRef.current += 0.02 + smoothedRef.current * 0.35;
+    let frame = 0;
+    let alive = true;
 
-      const next = historyRef.current.slice(1);
-      next.push(smoothedRef.current);
-      historyRef.current = next;
-      setFrame((n) => n + 1);
-    }, 32);
-    return () => clearInterval(id);
-  }, [bands, speaking, volume]);
+    const tick = () => {
+      if (!alive) return;
+      const bands = bandsRef.current;
+      const vol = Number.isFinite(volumeRef.current) ? volumeRef.current : 0;
+      const incoming =
+        bands.length > 0
+          ? Array.from({ length: BAR_COUNT }, (_, i) => {
+              const idx = Math.min(
+                bands.length - 1,
+                Math.floor((i / Math.max(1, BAR_COUNT - 1)) * bands.length)
+              );
+              const band = bands[idx] ?? 0;
+              return Math.min(1, Math.max(band, vol * 0.35));
+            })
+          : Array.from({ length: BAR_COUNT }, () => Math.min(1, vol));
+
+      const next = incoming.map((target, i) => {
+        const prev = smoothRef.current[i] ?? 0;
+        return prev * 0.35 + target * 0.65;
+      });
+      smoothRef.current = next;
+      const nextEnergy = next.reduce((a, b) => a + b, 0) / BAR_COUNT;
+
+      setLevels((prev) => {
+        if (
+          prev.length === next.length &&
+          prev.every((v, i) => Math.abs(v - (next[i] ?? 0)) < 0.004)
+        ) {
+          return prev;
+        }
+        return next;
+      });
+      setEnergy((prev) => (Math.abs(prev - nextEnergy) < 0.004 ? prev : nextEnergy));
+      frame = requestAnimationFrame(tick);
+    };
+
+    frame = requestAnimationFrame(tick);
+    return () => {
+      alive = false;
+      cancelAnimationFrame(frame);
+    };
+  }, [track]);
 
   const onLayout = (e: LayoutChangeEvent) => {
-    const { width, height } = e.nativeEvent.layout;
-    if (width > 0 && height > 0) setSize({ w: width, h: height });
+    const w = e.nativeEvent.layout.width;
+    if (w > 0) setWidth(w);
   };
 
-  const smoothed = smoothedRef.current;
-  const live = smoothed > 0.04 || speaking;
+  const live = energy > 0.04;
+  const innerH = Math.max(52, targetHeight - 30);
+  const mid = innerH / 2;
+  const barMax = mid - 4;
 
-  const { barRects, scopePath, ghostPath, midY } = useMemo(() => {
-    const w = size.w;
-    const h = size.h;
-    const mid = h / 2;
-    const barW = w / BAR_COUNT;
-    const mags =
-      bands.length >= BAR_COUNT / 2
-        ? Array.from({ length: BAR_COUNT }, (_, i) => {
-            const src = bands[Math.floor((i / BAR_COUNT) * bands.length)] ?? 0;
-            return src;
-          })
-        : Array.from({ length: BAR_COUNT }, () => 0);
+  let scope = "";
+  let ghost = "";
+  for (let i = 0; i < BAR_COUNT; i++) {
+    const mag = levels[i] ?? 0;
+    const x = (i / Math.max(1, BAR_COUNT - 1)) * width;
+    const yTop = mid - mag * barMax;
+    const yBot = mid + mag * barMax * 0.85;
+    scope += i === 0 ? `M ${x} ${yTop}` : ` L ${x} ${yTop}`;
+    ghost += i === 0 ? `M ${x} ${yBot}` : ` L ${x} ${yBot}`;
+  }
 
-    // Idle: almost flat — only a faint midline shimmer, not a fake equalizer.
-    const idle = smoothed < 0.035 && !speaking;
-    const rects: { x: number; y: number; bw: number; bh: number; top: boolean; alpha: number }[] =
-      [];
-    for (let i = 0; i < BAR_COUNT; i++) {
-      const mag = idle ? 0.02 : Math.min(1, Math.max(0, mags[i] ?? 0));
-      const bh = mag * h * 0.38;
-      const alpha = idle ? 0.08 : 0.12 + mag * 0.55;
-      const x = i * barW + 1;
-      rects.push({ x, y: mid - bh, bw: Math.max(1, barW - 2), bh, top: true, alpha });
-      rects.push({
-        x,
-        y: mid,
-        bw: Math.max(1, barW - 2),
-        bh: bh * 0.85,
-        top: false,
-        alpha: alpha * 0.75,
-      });
-    }
-
-    const scope = Skia.Path.Make();
-    const ghost = Skia.Path.Make();
-    const hist = historyRef.current;
-    if (idle) {
-      scope.moveTo(0, mid);
-      scope.lineTo(w, mid);
-      ghost.moveTo(0, mid);
-      ghost.lineTo(w, mid);
-    } else {
-      for (let x = 0; x < w; x++) {
-        const idx = Math.min(hist.length - 1, Math.floor((x / w) * hist.length));
-        const level = hist[idx] ?? 0;
-        const v =
-          (level - 0.02) *
-          Math.sin(phaseRef.current * 3 + x * 0.085) *
-          (0.35 + level * 2.2);
-        const y = mid + v * (h * 0.42);
-        const gy =
-          mid +
-          v * (h * 0.28) * 0.85 +
-          Math.sin(phaseRef.current + x * 0.02) * (2 + level * 8);
-        if (x === 0) {
-          scope.moveTo(x, y);
-          ghost.moveTo(x, gy);
-        } else {
-          scope.lineTo(x, y);
-          ghost.lineTo(x, gy);
-        }
-      }
-    }
-
-    return { barRects: rects, scopePath: scope, ghostPath: ghost, midY: mid };
-    // frame bump via smoothed/history is intentional — setFrame triggers recompute
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bands, size.h, size.w, smoothed, speaking]);
+  const label = !track ? "Standby" : live ? "Alfred // out" : "Linked · quiet";
 
   return (
     <View
@@ -167,61 +146,79 @@ export function AgentWaveform({
       onLayout={onLayout}
       style={{
         height: targetHeight,
-        borderRadius: 14,
+        borderRadius: 12,
         borderWidth: 1,
         borderColor: PANEL_BORDER,
         backgroundColor: PANEL,
         overflow: "hidden",
       }}
     >
-      <Canvas style={{ flex: 1 }}>
-        <Rect x={0} y={0} width={size.w} height={size.h}>
-          <LinearGradient
-            start={vec(size.w / 2, size.h / 2 - 20)}
-            end={vec(size.w / 2, size.h)}
-            colors={[
-              `rgba(61, 255, 196, ${0.04 + smoothed * 0.28})`,
-              "rgba(61, 255, 196, 0)",
-            ]}
-          />
-        </Rect>
+      <View
+        style={{
+          position: "absolute",
+          left: 10,
+          right: 10,
+          top: 28,
+          height: innerH,
+          flexDirection: "row",
+          alignItems: "center",
+          justifyContent: "space-between",
+        }}
+      >
+        {levels.map((level, i) => {
+          const h = Math.max(live ? 3 : 2, level * barMax);
+          return (
+            <View
+              key={i}
+              style={{
+                width: 4,
+                height: innerH,
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              <View
+                style={{
+                  width: 4,
+                  height: h,
+                  marginBottom: 1,
+                  borderRadius: 2,
+                  backgroundColor: AMBER,
+                  opacity: live ? 0.9 : 0.2,
+                }}
+              />
+              <View
+                style={{
+                  width: 4,
+                  height: Math.max(2, h * 0.9),
+                  borderRadius: 2,
+                  backgroundColor: MINT,
+                  opacity: live ? 0.8 : 0.18,
+                }}
+              />
+            </View>
+          );
+        })}
+      </View>
 
-        {barRects.map((b, i) => (
-          <Rect
-            key={i}
-            x={b.x}
-            y={b.y}
-            width={b.bw}
-            height={Math.max(0.5, b.bh)}
-            color={b.top ? AMBER : MINT}
-            opacity={b.alpha}
-          />
-        ))}
-
+      <Svg
+        width={width}
+        height={innerH}
+        style={{ position: "absolute", left: 0, top: 28 }}
+        pointerEvents="none"
+      >
         <Line
-          p1={vec(0, midY)}
-          p2={vec(size.w, midY)}
-          color={MUTED}
+          x1={0}
+          y1={mid}
+          x2={width}
+          y2={mid}
+          stroke="rgba(111, 143, 163, 0.4)"
           strokeWidth={1}
-        >
-          <DashPathEffect intervals={[4, 6]} />
-        </Line>
-
-        <Path
-          path={ghostPath}
-          color={MINT}
-          style="stroke"
-          strokeWidth={1.2}
-          opacity={0.2 + smoothed * 0.4}
+          strokeDasharray="4 6"
         />
-        <Path
-          path={scopePath}
-          color={INK}
-          style="stroke"
-          strokeWidth={2.2}
-          opacity={0.55 + Math.min(0.45, smoothed)}
-        />
-      </Canvas>
+        <SvgPath d={ghost} stroke={MINT} strokeWidth={1.6} fill="none" opacity={live ? 0.55 : 0.15} />
+        <SvgPath d={scope} stroke={INK} strokeWidth={2.6} fill="none" opacity={live ? 0.95 : 0.3} />
+      </Svg>
 
       <View
         pointerEvents="box-none"
@@ -230,12 +227,12 @@ export function AgentWaveform({
           left: 0,
           right: 0,
           top: 0,
-          bottom: 0,
-          paddingHorizontal: 12,
-          paddingTop: 8,
+          zIndex: 2,
+          paddingHorizontal: 10,
+          paddingTop: 6,
           flexDirection: "row",
           justifyContent: "space-between",
-          alignItems: "flex-start",
+          alignItems: "center",
         }}
       >
         <Text
@@ -244,10 +241,9 @@ export function AgentWaveform({
             fontSize: 10,
             letterSpacing: 1.6,
             textTransform: "uppercase",
-            fontVariant: ["small-caps"],
           }}
         >
-          {live ? "Alfred // out" : "Standby"}
+          {label}
         </Text>
         <Pressable
           testID="toggle-waveform-size"
@@ -255,17 +251,17 @@ export function AgentWaveform({
           hitSlop={10}
           accessibilityLabel={collapsed ? "Expand waveform" : "Shrink waveform"}
           style={{
-            height: 30,
-            width: 30,
-            borderRadius: 15,
+            height: 28,
+            width: 28,
+            borderRadius: 14,
             borderWidth: 1,
             borderColor: MINT,
             alignItems: "center",
             justifyContent: "center",
-            backgroundColor: "rgba(10, 18, 32, 0.85)",
+            backgroundColor: "rgba(10, 18, 32, 0.9)",
           }}
         >
-          {collapsed ? <ChevronDown color={MINT} size={15} /> : <ChevronUp color={MINT} size={15} />}
+          {collapsed ? <ChevronDown color={MINT} size={14} /> : <ChevronUp color={MINT} size={14} />}
         </Pressable>
       </View>
     </View>

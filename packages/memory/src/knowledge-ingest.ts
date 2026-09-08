@@ -25,9 +25,10 @@ import {
 } from "./oip-local/index.js";
 import { defaultPersonaDir, ensurePersonaFiles } from "./persona.js";
 import { SCHEMA_ORG } from "./oip-local/schema-org.js";
+import { ingestMimeFromFilename } from "./docs-ingest/text.js";
 
 export interface KnowledgeIngestResult {
-  mode: "json" | "markdown" | "document";
+  mode: "json" | "markdown" | "document" | "photo";
   providerId: string;
   filename: string;
   userMdUpdated: boolean;
@@ -563,14 +564,43 @@ async function ingestMarkdownExport(opts: {
     const provider = new OipLocalMemoryProvider(root);
     const now = new Date().toISOString();
     let artifactId: string | undefined;
+    let fileId: string | undefined;
+    const mimeType = ingestMimeFromFilename(opts.filename);
     if (opts.storeArtifact) {
       const artifact = await provider.putArtifactBytes(opts.bytes, {
-        mimeType: "text/markdown",
+        mimeType,
         originalFilename: opts.filename,
         name: opts.filename,
         reindex: false,
       });
       artifactId = artifact.id;
+      const file = await provider.createRecord(
+        "Entity",
+        {
+          name: opts.filename,
+          text: opts.filename,
+          schemaType: SCHEMA_ORG.DigitalDocument,
+          schema: {
+            "@type": "DigitalDocument",
+            name: opts.filename,
+            encodingFormat: mimeType,
+          },
+          alfred: { entityClass: "uploaded_document", visibility: "private" as const, confidence: 1 },
+          learnedAt: now,
+          originalFilename: opts.filename,
+          provenance: {
+            sourceType: "knowledge_export_markdown",
+            learnedAt: now,
+            source: artifactId,
+            extractionMethod: "knowledge_file",
+          },
+          drefs: { sourceArtifact: artifactId },
+        },
+        undefined,
+        { reindex: false },
+      );
+      fileId = file.id;
+      created.entities += 1;
     }
 
     for (const rec of planned.memoryRecords) {
@@ -591,7 +621,10 @@ async function ingestMarkdownExport(opts: {
             assertionType: "extracted",
             entityClass: "note",
           },
-          drefs: artifactId ? { sourceArtifact: artifactId } : {},
+          drefs: {
+            ...(artifactId ? { sourceArtifact: artifactId } : {}),
+            ...(fileId ? { isPartOf: fileId } : {}),
+          },
           learnedAt: now,
           provenance: {
             sourceType: "knowledge_export_markdown",

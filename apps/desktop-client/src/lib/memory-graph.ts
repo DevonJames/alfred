@@ -1,7 +1,14 @@
+import { readFile } from "node:fs/promises";
 import {
   defaultOipMemoryRoot,
+  dedupeMemoryGraph,
+  isPhotoFilename,
   OipLocalMemoryProvider,
+  photoMimeFromFilename,
+  setSelfPerson,
+  type DedupeProgressHandler,
   type MemoryRevision,
+  type TaggedHash,
 } from "@alfred/memory";
 
 export interface GraphNode {
@@ -40,16 +47,176 @@ function getProvider(profileId?: string): OipLocalMemoryProvider {
   return new OipLocalMemoryProvider(defaultOipMemoryRoot(id));
 }
 
+export type MemoryFileKind = "image" | "pdf" | "text" | "audio";
+
+export interface MemoryFilePreview {
+  artifactId: string;
+  mimeType: string;
+  filename: string;
+  url: string;
+  kind: MemoryFileKind;
+}
+
+/** @deprecated Use MemoryFilePreview */
+export type MemoryImagePreview = MemoryFilePreview;
+
+function asMemoryDid(id: string): string {
+  return id.startsWith("did:memory:") ? id : `did:memory:${id}`;
+}
+
+function firstRef(value: unknown): string | null {
+  if (typeof value === "string" && value.trim()) return value.trim();
+  if (Array.isArray(value)) {
+    const hit = value.find((item) => typeof item === "string" && item.trim());
+    return hit ? String(hit).trim() : null;
+  }
+  return null;
+}
+
+function revisionFilename(rev: MemoryRevision): string {
+  return rev.originalFilename || rev.name || "";
+}
+
+function revisionMime(rev: MemoryRevision): string {
+  const schema = (rev.schema ?? {}) as Record<string, unknown>;
+  const fromSchema = typeof schema.encodingFormat === "string" ? schema.encodingFormat : "";
+  const mime = (rev.mimeType || fromSchema).trim();
+  if (mime) return mime;
+  const filename = revisionFilename(rev);
+  if (isPhotoFilename(filename)) return photoMimeFromFilename(filename);
+  const ext = filename.toLowerCase().split(".").pop() ?? "";
+  if (ext === "pdf") return "application/pdf";
+  if (ext === "rtf") return "application/rtf";
+  if (ext === "txt" || ext === "text") return "text/plain";
+  if (ext === "md" || ext === "markdown" || ext === "mdown" || ext === "mdx") return "text/markdown";
+  if (ext === "json") return "application/json";
+  if (ext === "m4a" || ext === "aac") return "audio/mp4";
+  if (ext === "mp3") return "audio/mpeg";
+  if (ext === "wav") return "audio/wav";
+  if (ext === "webm") return "audio/webm";
+  if (ext === "ogg") return "audio/ogg";
+  if (ext === "flac") return "audio/flac";
+  if (ext === "caf") return "audio/x-caf";
+  return "";
+}
+
+function fileKindFromMime(mime: string, filename: string): MemoryFileKind | null {
+  const lower = mime.toLowerCase();
+  const name = filename.toLowerCase();
+  if (lower.startsWith("image/") || isPhotoFilename(filename)) return "image";
+  if (lower === "application/pdf" || name.endsWith(".pdf")) return "pdf";
+  if (
+    lower.startsWith("audio/") ||
+    /\.(m4a|mp3|wav|webm|aac|ogg|flac|caf)$/.test(name)
+  ) {
+    return "audio";
+  }
+  if (
+    lower.startsWith("text/") ||
+    lower === "application/rtf" ||
+    lower === "application/json" ||
+    /\.(md|markdown|mdown|mdx|txt|text|rtf|json)$/.test(name)
+  ) {
+    return "text";
+  }
+  return null;
+}
+
+function looksLikePreviewableFile(rev: MemoryRevision): boolean {
+  return fileKindFromMime(revisionMime(rev), revisionFilename(rev)) != null;
+}
+
+function artifactPreviewUrl(artifactId: string): string {
+  return `/memory/graph/artifact/${encodeURIComponent(artifactId)}`;
+}
+
+async function previewFromArtifactRevision(
+  artifactId: string,
+  rev: MemoryRevision,
+): Promise<MemoryFilePreview | null> {
+  if (rev.type !== "Artifact" || !rev.contentHash || !looksLikePreviewableFile(rev)) return null;
+  const filename = revisionFilename(rev) || "file";
+  const mimeType = revisionMime(rev) || "application/octet-stream";
+  const kind = fileKindFromMime(mimeType, filename);
+  if (!kind) return null;
+  return {
+    artifactId,
+    mimeType,
+    filename,
+    url: artifactPreviewUrl(artifactId),
+    kind,
+  };
+}
+
+/** Resolve a stored original file (image, PDF, markdown, text, RTF) for a graph node. */
+export async function resolveMemoryFilePreview(
+  id: string,
+  profileId?: string,
+): Promise<MemoryFilePreview | null> {
+  const provider = getProvider(profileId);
+  provider.sqlite.open();
+  const index = provider.sqlite.getRecord(id);
+  if (!index) return null;
+  const revision = await provider.packages.readCurrent(index.logical_id);
+  if (!revision) return null;
+
+  const self = await previewFromArtifactRevision(asMemoryDid(index.id), revision);
+  if (self) return self;
+
+  const linked =
+    firstRef(revision.drefs?.sourceArtifact) ||
+    firstRef(revision.sourceArtifact);
+  if (!linked) return null;
+  const artifactIndex = provider.sqlite.getRecord(linked) ?? provider.sqlite.getRecord(asMemoryDid(linked));
+  if (!artifactIndex) return null;
+  const artifactRev = await provider.packages.readCurrent(artifactIndex.logical_id);
+  if (!artifactRev) return null;
+  return previewFromArtifactRevision(asMemoryDid(artifactIndex.id), artifactRev);
+}
+
+/** Resolve a displayable image artifact for a graph node (self or sourceArtifact). */
+export async function resolveMemoryImagePreview(
+  id: string,
+  profileId?: string,
+): Promise<MemoryFilePreview | null> {
+  const preview = await resolveMemoryFilePreview(id, profileId);
+  return preview?.kind === "image" ? preview : null;
+}
+
+export async function readMemoryArtifactBytes(
+  id: string,
+  profileId?: string,
+): Promise<{ bytes: Buffer; mimeType: string; filename: string } | null> {
+  const preview = await resolveMemoryFilePreview(id, profileId);
+  if (!preview) return null;
+  const provider = getProvider(profileId);
+  provider.sqlite.open();
+  const index = provider.sqlite.getRecord(preview.artifactId);
+  if (!index) return null;
+  const revision = await provider.packages.readCurrent(index.logical_id);
+  if (!revision?.contentHash) return null;
+  const absolute = await provider.artifacts.findAbsolute(revision.contentHash as TaggedHash);
+  if (!absolute) return null;
+  return {
+    bytes: await readFile(absolute),
+    mimeType: preview.mimeType,
+    filename: preview.filename,
+  };
+}
+
 export async function loadMemoryGraph(opts?: {
   profileId?: string;
   /** Hide Artifact nodes (default true — they clutter the semantic graph). */
   hideArtifacts?: boolean;
+  /** Hide raw conversation-turn Observations (default true). */
+  hideConversationTurns?: boolean;
   /** Drop provenance/sourceArtifact edges (default true). */
   hideProvenanceEdges?: boolean;
   /** Force a full index rebuild from filesystem packages. */
   forceRebuild?: boolean;
 }): Promise<MemoryGraphSnapshot> {
   const hideArtifacts = opts?.hideArtifacts !== false;
+  const hideConversationTurns = opts?.hideConversationTurns !== false;
   const hideProvenance = opts?.hideProvenanceEdges !== false;
   const provider = getProvider(opts?.profileId);
   await provider.packages.ensureRoot();
@@ -77,10 +244,26 @@ export async function loadMemoryGraph(opts?: {
 
   for (const r of records) {
     if (hideArtifacts && r.record_type === "Artifact") continue;
+    const label = (r.name ?? "").trim();
+    // Hide soft-deleted / merged duplicates (legacy name prefix or index marker)
+    if (
+      /^\[superseded\]/i.test(label) ||
+      /^superseded\s*[-–—:]/i.test(label) ||
+      (r.search_text ?? "").includes("__alfred_superseded__")
+    ) {
+      continue;
+    }
+    if (
+      hideConversationTurns &&
+      (/^(user|assistant)\s+turn$/i.test(label) ||
+        /\b(user|assistant)\s+turn\b/i.test(r.search_text ?? ""))
+    ) {
+      continue;
+    }
     nodeIds.add(r.id);
     nodes.push({
       id: r.id,
-      label: r.name?.trim() || r.record_type,
+      label: label || r.record_type,
       type: r.record_type,
       schemaType: r.schema_type,
       searchText: r.search_text ?? "",
@@ -130,6 +313,8 @@ export async function loadMemoryRecordDetail(
   index: ReturnType<OipLocalMemoryProvider["sqlite"]["getRecord"]>;
   revision: MemoryRevision | null;
   neighbors: Array<{ predicate: string; direction: "out" | "in"; id: string; label: string; type: string }>;
+  file: MemoryFilePreview | null;
+  image: MemoryFilePreview | null;
 } | null> {
   const provider = getProvider(profileId);
   provider.sqlite.open();
@@ -138,6 +323,8 @@ export async function loadMemoryRecordDetail(
 
   const logicalId = index.logical_id;
   const revision = await provider.packages.readCurrent(logicalId);
+  const file = await resolveMemoryFilePreview(id, profileId);
+  const image = file?.kind === "image" ? file : null;
 
   const out = provider.sqlite.edgesFrom(index.id);
   const inbound = provider.sqlite.edgesTo(index.id);
@@ -164,5 +351,152 @@ export async function loadMemoryRecordDetail(
     });
   }
 
-  return { index, revision, neighbors };
+  return { index, revision, neighbors, file, image };
+}
+
+export async function updateMemoryRecord(
+  id: string,
+  patch: {
+    name?: string;
+    text?: string;
+    summary?: string;
+    email?: string | null;
+    telephone?: string | null;
+    birthDate?: string | null;
+  },
+  profileId?: string,
+): Promise<{
+  index: ReturnType<OipLocalMemoryProvider["sqlite"]["getRecord"]>;
+  revision: MemoryRevision | null;
+  neighbors: Array<{
+    predicate: string;
+    direction: "out" | "in";
+    id: string;
+    label: string;
+    type: string;
+  }>;
+  file: MemoryFilePreview | null;
+  image: MemoryFilePreview | null;
+} | null> {
+  const provider = getProvider(profileId);
+  provider.sqlite.open();
+  const index = provider.sqlite.getRecord(id);
+  if (!index) return null;
+
+  const logicalId = index.logical_id;
+  const current = await provider.packages.readCurrent(logicalId);
+  if (!current) return null;
+
+  const nextName = patch.name != null ? patch.name.trim() : undefined;
+  const nextBody =
+    patch.text != null
+      ? patch.text.trim()
+      : patch.summary != null
+        ? patch.summary.trim()
+        : undefined;
+
+  const schema = { ...(current.schema ?? {}) } as Record<string, unknown>;
+  if (nextName != null) {
+    schema.name = nextName;
+  }
+  if (nextBody != null) {
+    if ("description" in schema || current.type === "Entity") {
+      schema.description = nextBody;
+    } else {
+      schema.text = nextBody;
+    }
+  }
+  if (patch.email !== undefined) {
+    const email = patch.email?.trim() || "";
+    if (email) schema.email = email;
+    else delete schema.email;
+  }
+  if (patch.telephone !== undefined) {
+    const telephone = patch.telephone?.trim() || "";
+    if (telephone) schema.telephone = telephone;
+    else delete schema.telephone;
+  }
+  if (patch.birthDate !== undefined) {
+    const birthDate = patch.birthDate?.trim() || "";
+    if (birthDate) schema.birthDate = birthDate;
+    else delete schema.birthDate;
+  }
+
+  const contactBits = [
+    typeof schema.description === "string" ? schema.description : null,
+    typeof schema.email === "string" ? `email ${schema.email}` : null,
+    typeof schema.telephone === "string" ? `phone ${schema.telephone}` : null,
+    typeof schema.birthDate === "string" ? `birthday ${schema.birthDate}` : null,
+  ].filter(Boolean);
+
+  await provider.updateRecord(logicalId, {
+    ...(nextName != null ? { name: nextName } : {}),
+    ...(nextBody != null ||
+    patch.email !== undefined ||
+    patch.telephone !== undefined ||
+    patch.birthDate !== undefined
+      ? {
+          text:
+            nextBody != null
+              ? nextBody
+              : contactBits.length
+                ? contactBits.join("; ")
+                : current.text,
+        }
+      : {}),
+    schema,
+    updatedAt: new Date().toISOString(),
+    provenance: {
+      ...(current.provenance ?? {}),
+      sourceType: current.provenance?.sourceType ?? "manual_edit",
+      extractionMethod: "graph_editor",
+      learnedAt: new Date().toISOString(),
+    },
+  });
+
+  return loadMemoryRecordDetail(id, profileId);
+}
+
+export async function deleteMemoryRecord(
+  id: string,
+  profileId?: string,
+): Promise<{ deleted: true; id: string } | null> {
+  const provider = getProvider(profileId);
+  provider.sqlite.open();
+  const index = provider.sqlite.getRecord(id);
+  if (!index) return null;
+
+  await provider.delete(index.id);
+  return { deleted: true, id: index.id };
+}
+
+/** Mark a Person entity as the profile self and migrate placeholder "User" edges. */
+export async function setMemorySelf(
+  id: string,
+  profileId?: string,
+): Promise<
+  | {
+      selfId: string;
+      selfName: string;
+      clearedPrevious: number;
+      migratedAssertions: number;
+      supersededPlaceholder: boolean;
+      detail: NonNullable<Awaited<ReturnType<typeof loadMemoryRecordDetail>>>;
+    }
+  | null
+> {
+  const provider = getProvider(profileId);
+  const result = await setSelfPerson(provider, id);
+  const detail = await loadMemoryRecordDetail(result.selfId, profileId);
+  if (!detail) return null;
+  return { ...result, detail };
+}
+
+/** Merge duplicate Entity nodes and union their assertion connections. */
+export async function cleanMemoryIndex(
+  profileId?: string,
+  onProgress?: DedupeProgressHandler,
+) {
+  const provider = getProvider(profileId);
+  return dedupeMemoryGraph(provider, { includeDocuments: true, onProgress });
 }

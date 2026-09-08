@@ -1,4 +1,4 @@
-const RSS_URLS: Record<string, string> = {
+export const RSS_URLS: Record<string, string> = {
   "AP News": "https://apnews.com/index.rss",
   "BBC News": "https://feeds.bbci.co.uk/news/rss.xml",
   CNN: "http://rss.cnn.com/rss/cnn_topstories.rss",
@@ -12,6 +12,8 @@ const RSS_URLS: Record<string, string> = {
   NPR: "https://feeds.npr.org/1001/rss.xml",
   "The Guardian": "https://www.theguardian.com/world/rss",
 };
+
+export const NEWS_SOURCE_OPTIONS = Object.keys(RSS_URLS);
 
 function decodeEntities(s: string): string {
   return s

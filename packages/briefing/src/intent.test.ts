@@ -1,5 +1,19 @@
 import { describe, expect, it } from "vitest";
-import { detectBriefingIntent } from "./intent.js";
+import { detectBriefingIntent, wantsLaunches } from "./intent.js";
+
+describe("wantsLaunches", () => {
+  it("is false for a plain briefing ask", () => {
+    expect(wantsLaunches("brief me bud")).toBe(false);
+    expect(wantsLaunches("yes")).toBe(false);
+    expect(wantsLaunches("daily briefing please")).toBe(false);
+  });
+
+  it("is true when the user asks for launches/rockets", () => {
+    expect(wantsLaunches("brief me and include rocket launches")).toBe(true);
+    expect(wantsLaunches("daily briefing with the launches")).toBe(true);
+    expect(wantsLaunches("yes, and any SpaceX launches")).toBe(true);
+  });
+});
 
 describe("detectBriefingIntent", () => {
   it("matches explicit asks with natural phrasing", () => {

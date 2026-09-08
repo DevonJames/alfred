@@ -121,6 +121,24 @@ export async function retrieveMemories(
     }
   }
 
+  if (isPhotoUploadQuery(query.text)) {
+    for (const row of deps.sqlite.findBySearchSubstring("photo_upload", 40)) {
+      bump(row.id, (scores.get(row.id) ?? 0) + 0.3);
+    }
+    for (const row of deps.sqlite.findBySearchSubstring("ocr", 40)) {
+      bump(row.id, (scores.get(row.id) ?? 0) + 0.15);
+    }
+  }
+
+  if (isAudioNoteQuery(query.text)) {
+    for (const row of deps.sqlite.findBySearchSubstring("audio_note", 40)) {
+      bump(row.id, (scores.get(row.id) ?? 0) + 0.3);
+    }
+    for (const row of deps.sqlite.findBySearchSubstring("audio note", 40)) {
+      bump(row.id, (scores.get(row.id) ?? 0) + 0.2);
+    }
+  }
+
   const noteHint = extractNoteHint(query.text);
   if (noteHint) {
     for (const row of deps.sqlite.findBySearchSubstring(noteHint, 40)) {
@@ -212,6 +230,26 @@ function formatContent(rev: MemoryRevision): string {
       (typeof rev.provenance?.relPath === "string" && rev.provenance.relPath);
     if (filename) meta.push(`file=${filename}`);
   }
+  if (srcType === "photo_upload") {
+    meta.push("source=photo");
+    const filename =
+      (typeof rev.provenance?.originalFilename === "string" && rev.provenance.originalFilename) ||
+      (typeof rev.provenance?.relPath === "string" && rev.provenance.relPath);
+    if (filename) meta.push(`file=${filename}`);
+    const folderLabel = rev.provenance?.folderLabel;
+    if (typeof folderLabel === "string" && folderLabel) meta.push(`folder=${folderLabel}`);
+  }
+  if (srcType === "audio_note") {
+    meta.push("source=audio note");
+    const filename =
+      (typeof rev.provenance?.originalFilename === "string" && rev.provenance.originalFilename) ||
+      (typeof rev.provenance?.relPath === "string" && rev.provenance.relPath);
+    if (filename) meta.push(`file=${filename}`);
+    const schema = (rev.schema ?? {}) as Record<string, unknown>;
+    if (typeof schema.location === "string" && schema.location.trim()) {
+      meta.push(`place=${schema.location.trim()}`);
+    }
+  }
   if (rev.validFrom) meta.push(`published=${rev.validFrom}`);
   if (rev.learnedAt) meta.push(`learned=${rev.learnedAt}`);
   const suffix = meta.length ? ` [${meta.join("; ")}]` : "";
@@ -242,6 +280,20 @@ function isDocsSourceQuery(text: string): boolean {
 function isDocumentUploadQuery(text: string): boolean {
   return /\bpdf\b|\buploaded document\b|\bthis document\b|\bthe document\b|\buploaded pdf\b/i.test(
     text,
+  );
+}
+
+function isPhotoUploadQuery(text: string): boolean {
+  return /\bphoto\b|\bpicture\b|\bimage\b|\bocr\b|\bscreenshot\b|\breceipt\b|\buploaded photo\b/i.test(
+    text,
+  );
+}
+
+function isAudioNoteQuery(text: string): boolean {
+  return (
+    /\baudio note\b|\bvoice note\b|\bmeeting note\b|\btranscript\b|\baction items?\b|\btakeaways?\b/i.test(
+      text,
+    )
   );
 }
 

@@ -41,7 +41,7 @@
           </div>
           <p id="user-caption" class="user-caption">
             <span id="user-text" class="placeholder">Speak to uplink…</span
-            ><span id="user-cursor" class="cursor user-cursor" hidden></span>
+            ><span id="user-cursor" class="cursor user-cursor"></span>
           </p>
         </div>
 
@@ -80,8 +80,13 @@
 
     <footer class="bottom">
       <div class="actions">
-        <button id="connect" type="button">ENGAGE</button>
-        <button id="disconnect" type="button" disabled>TERMINATE</button>
+        <button id="connect" type="button">Start</button>
+        <button id="shhh" type="button" disabled title="Stop Alfred speaking without ending the session">
+          Shhh
+        </button>
+        <button id="mute" type="button" disabled title="Mute your microphone; conversation stays open">
+          Mute
+        </button>
       </div>
       <p id="meta" class="meta"></p>
     </footer>

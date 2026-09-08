@@ -95,6 +95,7 @@ class DeepgramFluxSession implements StreamingSTTSession {
   private waiters: Array<(v: SttTurnEvent | null) => void> = [];
   private opened?: Promise<void>;
   private audioBytes = 0;
+  private droppedClosedLogged = false;
   private readonly log: Pick<Console, "log" | "warn" | "error" | "debug">;
 
   constructor(private readonly cfg: FluxSessionConfig) {
@@ -149,6 +150,11 @@ class DeepgramFluxSession implements StreamingSTTSession {
       const buf = Buffer.from(frame.data.buffer, frame.data.byteOffset, frame.data.byteLength);
       this.ws.send(buf);
       this.audioBytes += buf.byteLength;
+      return;
+    }
+    if (!this.droppedClosedLogged) {
+      this.droppedClosedLogged = true;
+      this.log.warn("[deepgram] pushAudio skipped — WebSocket not open (session likely closed)");
     }
   }
 

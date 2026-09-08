@@ -52,6 +52,8 @@ export class LiveKitRoomSession {
   private unsubPlayback?: () => void;
   private inboundTasks = new Set<Promise<void>>();
   private closed = false;
+  /** Bumped on every stopPlayback so in-flight captureFrame results are discarded. */
+  private playbackEpoch = 0;
   private readonly vad = new EnergyVad();
   private readonly inputSampleRate: number;
   private readonly outputSampleRate: number;
@@ -92,6 +94,11 @@ export class LiveKitRoomSession {
     });
     room.on(RoomEvent.ParticipantConnected, (p: RemoteParticipant) => {
       this.log.log(`[livekit] participant connected: ${p.identity}`);
+      this.vad.reset();
+    });
+    room.on(RoomEvent.ParticipantDisconnected, (p: RemoteParticipant) => {
+      this.log.log(`[livekit] participant disconnected: ${p.identity}`);
+      this.vad.reset();
     });
     room.on(
       RoomEvent.DataReceived,
@@ -114,9 +121,17 @@ export class LiveKitRoomSession {
 
     // Await captureFrame so the voice path cannot outrun the LiveKit playout queue.
     this.unsubPlayback = this.opts.media.onPlayback(async (frame) => {
+      const gen = this.playbackEpoch;
+      if (this.opts.media.isPlaybackStopped()) return;
       await this.publishFrame(frame);
+      // A stop that lands mid-captureFrame can re-queue audio after clearQueue —
+      // drop anything that made it through after the epoch advanced.
+      if (gen !== this.playbackEpoch || this.opts.media.isPlaybackStopped()) {
+        this.clearOutboundQueue();
+      }
     });
     this.opts.media.onStopPlayback(() => {
+      this.playbackEpoch += 1;
       this.clearOutboundQueue();
     });
     this.opts.media.onCaption((event) => {

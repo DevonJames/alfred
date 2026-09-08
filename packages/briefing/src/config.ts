@@ -1,18 +1,26 @@
 import { defaultBriefingDataDir } from "@alfred/memory";
 
+export type LaunchesMode = "on" | "off" | "request";
+
 export interface BriefingConfig {
   profileId: string;
   timezone: string;
   dayStart: string;
   userName: string;
   zip: string | null;
+  /** Optional precise coordinates (preferred over zip geocode when set). */
+  latitude: number | null;
+  longitude: number | null;
   cryptoId: string;
+  includeCrypto: boolean;
   includeIndex: boolean;
   indexSymbol: "sp500" | "dow";
   includeMetals: boolean;
   metalSymbol: "gold" | "silver";
   newsSources: string[];
   llmGreeting: boolean;
+  /** on = always; off = never; request = only when user asks / ?launches=1 */
+  launchesMode: LaunchesMode;
   launchLocationIds: string;
   stateDir: string;
   cacheDir: string;
@@ -30,6 +38,12 @@ function parseDayStart(raw: string | undefined): string {
   const [h, m] = v.split(":").map(Number);
   if (h! < 0 || h! > 23 || m! < 0 || m! > 59) return "04:30";
   return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+}
+
+function parseCoord(raw: string | undefined): number | null {
+  if (raw == null || raw.trim() === "") return null;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : null;
 }
 
 export function loadBriefingConfig(overrides: Partial<BriefingConfig> = {}): BriefingConfig {
@@ -55,7 +69,16 @@ export function loadBriefingConfig(overrides: Partial<BriefingConfig> = {}): Bri
         : process.env.BRIEFING_ZIP?.trim()
           ? process.env.BRIEFING_ZIP.trim()
           : null,
+    latitude:
+      overrides.latitude !== undefined
+        ? overrides.latitude
+        : parseCoord(process.env.BRIEFING_LAT),
+    longitude:
+      overrides.longitude !== undefined
+        ? overrides.longitude
+        : parseCoord(process.env.BRIEFING_LON),
     cryptoId: overrides.cryptoId ?? process.env.BRIEFING_CRYPTO_ID ?? "bitcoin",
+    includeCrypto: overrides.includeCrypto ?? envFlag("BRIEFING_INCLUDE_CRYPTO", true),
     includeIndex: overrides.includeIndex ?? envFlag("BRIEFING_INCLUDE_INDEX", false),
     indexSymbol: overrides.indexSymbol ?? indexSymbol,
     includeMetals: overrides.includeMetals ?? envFlag("BRIEFING_INCLUDE_METALS", false),
@@ -67,6 +90,13 @@ export function loadBriefingConfig(overrides: Partial<BriefingConfig> = {}): Bri
         .map((s) => s.trim())
         .filter(Boolean),
     llmGreeting: overrides.llmGreeting ?? envFlag("BRIEFING_LLM_GREETING", true),
+    launchesMode:
+      overrides.launchesMode ??
+      ((): LaunchesMode => {
+        const raw = (process.env.BRIEFING_LAUNCHES_MODE ?? "request").trim().toLowerCase();
+        if (raw === "on" || raw === "off" || raw === "request") return raw;
+        return "request";
+      })(),
     launchLocationIds:
       overrides.launchLocationIds ??
       process.env.BRIEFING_LAUNCH_LOCATION_IDS ??

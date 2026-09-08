@@ -21,6 +21,8 @@ cp .env.example .env
 
 | Command          | Description                                       |
 | ---------------- | ------------------------------------------------- |
+| `make alfred`    | Start desktop + voice together                    |
+| `make alfred IOS=1` | Same, plus Expo Dev Client (`--tunnel`)        |
 | `pnpm test`      | Run Vitest unit and scenario tests                |
 | `pnpm simulate`  | Run the 15 M1 CLI scenarios                       |
 | `pnpm voice`     | Start cascaded voice runtime (`apps/voice-agent`) |

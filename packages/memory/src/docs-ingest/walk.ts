@@ -1,8 +1,8 @@
 import { readdir, stat } from "node:fs/promises";
 import path from "node:path";
+import { docsFileKindFromPath } from "./text.js";
 
 const SKIP_DIRS = new Set([".git", "node_modules", "dist", "data"]);
-const MD_EXT = new Set([".md", ".mdx"]);
 
 export interface WalkedMarkdown {
   absPath: string;
@@ -32,8 +32,7 @@ async function walk(root: string, dir: string, out: WalkedMarkdown[]): Promise<v
       continue;
     }
     if (!entry.isFile()) continue;
-    const ext = path.extname(entry.name).toLowerCase();
-    if (!MD_EXT.has(ext)) continue;
+    if (!docsFileKindFromPath(entry.name)) continue;
     out.push({
       absPath: abs,
       relPath: path.relative(root, abs).split(path.sep).join("/"),

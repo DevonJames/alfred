@@ -43,10 +43,38 @@ export class PromptAssembler {
           "When the user indicates a due reminder is done, already handled, should stop, or should be snoozed, call update_reminder (including casual phrasing). Do not invent a different tool for reminders.",
         );
       }
+      if (caps.has("remember_memory")) {
+        guidance.push(
+          "When the user shares durable facts about people, relationships, places, or preferences that should be remembered long-term, call remember_memory with Entity/Assertion structure (e.g. Person James Nosal + supervisorOf/reportsTo). Do not rely on your spoken reply alone to store memory.",
+        );
+      }
+      if (caps.has("get_weather_forecast")) {
+        guidance.push(
+          "When the user asks about current weather or the forecast, call get_weather_forecast immediately (including casual phrasing like \"what's the weather\"). Do not ask which city or zip unless they named a different place — if they omit a location, call the tool with no location argument so home (BRIEFING_ZIP / lat-lon) is used. Only pass location when they specify another city, place, or zip. Do not invent temperatures or conditions. Prefer this over delegate_task for weather.",
+        );
+      }
+      if (caps.has("control_studio_lights")) {
+        guidance.push(
+          "When the user asks to turn lights on or off, up or down, warmer or cooler, or to set brightness or color temperature, call control_studio_lights immediately (including casual phrasing like \"lights down\", \"make it warm\", \"kill the lights\", \"turn off the lights\"). " +
+            "Phrases like \"the lights\", \"all of them\", or \"everything\" mean every Elgato light — omit target and do not ask which room. " +
+            "These lights are local Elgato Key Lights on this LAN. Do not mention Alfred:Home, HomeKit, or a missing home-control connection. " +
+            "Do not claim you changed the lights without calling the tool. Prefer this over delegate_task.",
+        );
+      }
       if (guidance.length) {
         systemParts.push(guidance.join(" "));
       }
     }
+
+    notes.push("memory_access_model");
+    systemParts.push(
+      [
+        "Memory access model:",
+        "Ingested documents, docs folders, knowledge exports, audio notes, and X notes are extracted into your long-term memory graph — you do not open those files on disk during a conversation.",
+        "When the user asks about something they ingested or “in a document/file,” treat that as a memory question: use the Retrieved long-term memory block when present, and if it is empty or incomplete ask for a sharper name/keyword rather than saying you cannot read documents.",
+        "Never claim you lack access to ingested material; search/retrieval is how you read it.",
+      ].join(" "),
+    );
 
     if ((input.dueReminders?.length ?? 0) > 0) {
       notes.push("due_reminders_attached");

@@ -13,10 +13,15 @@ import { desktopContext, useConnection } from "./connection";
 import { isPathFailure, rediscover } from "./discovery";
 import type {
   AskAnswer,
+  AudioNote,
+  AudioNoteJob,
+  NoteUploadSession,
   ConversationTurn,
   DesktopSettings,
   ForgetScope,
   Memory,
+  MemoryGraphNodeDetail,
+  MemoryGraphSnapshot,
   MemoryKind,
   ProvenanceChain,
   PublicCandidate,
@@ -533,16 +538,67 @@ export function addMemoryWithFiles(
 }
 
 export function searchMemory(query: string, opts: { limit?: number; kinds?: MemoryKind[] } = {}) {
-  return call<{ interpretedAs: string; results: Memory[] }>("/api/memory/search", {
+  return call<{ interpretedAs?: string; results?: Memory[]; items?: unknown[] }>("/api/memory/search", {
     method: "POST",
     body: { query, limit: opts.limit ?? 20, kinds: opts.kinds },
-  }).then((result) => ({ ...result, results: normalizeMemories(result.results) }));
+  }).then((result) => {
+    const rawResults = result.results ?? result.items ?? [];
+    return {
+      interpretedAs: result.interpretedAs ?? `meaning close to “${query.trim()}”`,
+      results: normalizeMemories(rawResults),
+    };
+  });
 }
 
 export function askMemory(query: string) {
-  return call<AskAnswer>("/api/memory/ask", {
+  return call<{
+    answer?: string | null;
+    confidence?: string;
+    interpretedAs?: string;
+    sources?: AskAnswer["sources"];
+    items?: Array<{ id?: string; content?: string; relevance?: number }>;
+  }>("/api/memory/ask", {
     method: "POST",
     body: { query, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone },
+  }).then((result) => {
+    const confidenceMap: Record<string, AskAnswer["confidence"]> = {
+      high: "remembered",
+      remembered: "remembered",
+      confirmed: "remembered",
+      medium: "likely",
+      likely: "likely",
+      low: "ambiguous",
+      ambiguous: "ambiguous",
+      inferred: "inferred",
+      unknown: "unknown",
+    };
+    const sources =
+      result.sources?.map((s) => ({
+        ...s,
+        id: String(s.id ?? ""),
+        title: String(s.title ?? "Untitled"),
+        kind: (s.kind ?? "note") as MemoryKind,
+        score: Number(s.score ?? 0),
+        via: String(s.via ?? "semantic"),
+        occurredAt: s.occurredAt ?? null,
+        assertionIds: Array.isArray(s.assertionIds) ? s.assertionIds : [],
+      })) ??
+      (result.items ?? []).map((item) => ({
+        id: String(item.id ?? ""),
+        title: String(item.content ?? "Untitled").slice(0, 80),
+        kind: "note" as MemoryKind,
+        score: Number(item.relevance ?? 0),
+        via: "semantic",
+        occurredAt: null,
+        assertionIds: [] as string[],
+      }));
+
+    return {
+      answer: String(result.answer ?? "").trim() || "I don't know from what you've told me.",
+      confidence: confidenceMap[String(result.confidence ?? "").toLowerCase()] ?? "unknown",
+      interpretedAs: result.interpretedAs ?? query,
+      sources: sources.filter((s) => s.id),
+    } satisfies AskAnswer;
   });
 }
 
@@ -583,9 +639,16 @@ export function getEntity(id: string) {
 }
 
 export function getEpisode(id: string) {
-  return call<{ memory: Memory }>(`/api/memory/episode/${encodeURIComponent(id)}`).then(
-    (result) => ({ memory: normalizeMemory(result.memory) })
-  );
+  return call<{ memory: Memory }>(`/api/memory/episode/${encodeURIComponent(id)}`)
+    .catch(async (error) => {
+      // Older desktop builds only had GET /api/memory/:id (revision blob).
+      if (!(error instanceof ApiError) || (error.status !== 404 && error.status !== 501)) {
+        throw error;
+      }
+      const raw = await call<Record<string, unknown>>(`/api/memory/${encodeURIComponent(id)}`);
+      return { memory: normalizeMemory(raw?.record ?? raw) };
+    })
+    .then((result) => ({ memory: normalizeMemory(result.memory) }));
 }
 
 export function getProvenance(assertionId: string) {
@@ -631,6 +694,140 @@ export function verifyMemory() {
 
 export function rebuildIndexes() {
   return call<RebuildReport>("/api/memory/rebuild-indexes", { method: "POST" });
+}
+
+export function fetchMemoryGraph(opts: { artifacts?: boolean; rebuild?: boolean } = {}) {
+  return call<MemoryGraphSnapshot>("/api/memory/graph", {
+    query: {
+      artifacts: opts.artifacts ? "1" : undefined,
+      rebuild: opts.rebuild ? "1" : undefined,
+    },
+  });
+}
+
+export function fetchMemoryGraphNode(id: string) {
+  return call<MemoryGraphNodeDetail>(`/api/memory/graph/node/${encodeURIComponent(id)}`);
+}
+
+export function listAudioNotes() {
+  return call<{ notes: AudioNote[] }>("/api/notes").then((body) => body.notes ?? []);
+}
+
+export function getAudioNote(id: string) {
+  return call<{ note: AudioNote }>(`/api/notes/${encodeURIComponent(id)}`).then((body) => body.note);
+}
+
+export function getAudioNoteJob(jobId: string) {
+  return call<{ job: AudioNoteJob }>(`/api/notes/jobs/${encodeURIComponent(jobId)}`).then(
+    (body) => body.job
+  );
+}
+
+export function retryAudioNoteDetails(id: string) {
+  return call<{ note: AudioNote }>(`/api/notes/${encodeURIComponent(id)}/retry-details`, {
+    method: "POST",
+  }).then((body) => body.note);
+}
+
+export function retryAudioNoteTranscript(id: string) {
+  return call<{ job: AudioNoteJob }>(`/api/notes/${encodeURIComponent(id)}/retry-transcript`, {
+    method: "POST",
+  }).then((body) => body.job);
+}
+
+export function createNoteUploadSession(opts: {
+  filename: string;
+  mimeType?: string;
+  byteLength: number;
+  title?: string;
+  template?: string;
+  attendees?: string[];
+  durationSeconds?: number;
+}) {
+  return call<{ upload: NoteUploadSession }>("/api/notes/uploads", {
+    method: "POST",
+    body: opts,
+  }).then((body) => body.upload);
+}
+
+export function getNoteUploadSession(uploadId: string) {
+  return call<{ upload: NoteUploadSession }>(`/api/notes/uploads/${encodeURIComponent(uploadId)}`).then(
+    (body) => body.upload
+  );
+}
+
+export function putNoteUploadChunk(uploadId: string, index: number, data: string) {
+  return call<{ upload: NoteUploadSession }>(
+    `/api/notes/uploads/${encodeURIComponent(uploadId)}/chunks/${index}`,
+    { method: "PUT", body: { data } }
+  ).then((body) => body.upload);
+}
+
+export function completeNoteUploadSession(uploadId: string) {
+  return call<{ note?: AudioNote; job?: AudioNoteJob; upload: NoteUploadSession }>(
+    `/api/notes/uploads/${encodeURIComponent(uploadId)}/complete`,
+    { method: "POST" }
+  );
+}
+
+export function getNoteAudioMeta(id: string) {
+  return call<{
+    audio: {
+      filename: string;
+      mimeType: string;
+      byteLength: number;
+      totalChunks: number;
+      chunkSize: number;
+    };
+  }>(`/api/notes/${encodeURIComponent(id)}/audio/meta`).then((body) => body.audio);
+}
+
+export function getNoteAudioChunk(id: string, index: number) {
+  return call<{
+    chunk: { index: number; data: string; totalChunks: number; byteLength: number };
+  }>(`/api/notes/${encodeURIComponent(id)}/audio/chunks/${index}`).then((body) => body.chunk);
+}
+
+export function createAudioNoteFromFile(opts: {
+  uri: string;
+  filename?: string;
+  mimeType?: string;
+  title?: string;
+  template?: string;
+  attendees?: string[];
+  durationSeconds?: number;
+  durationMode: "short" | "long";
+}) {
+  const form = new FormData();
+  form.append("audio", {
+    uri: opts.uri,
+    name: opts.filename ?? "recording.m4a",
+    type: opts.mimeType ?? "audio/mp4",
+  } as unknown as Blob);
+  if (opts.template) form.append("template", opts.template);
+  if (opts.title?.trim()) form.append("title", opts.title.trim());
+  if (opts.attendees?.length) form.append("attendees", JSON.stringify(opts.attendees));
+  if (opts.durationSeconds && opts.durationSeconds > 0) {
+    form.append("durationSeconds", String(Math.round(opts.durationSeconds)));
+  }
+
+  const path = opts.durationMode === "long" ? "/api/notes/from-audio-async" : "/api/notes/from-audio";
+  return call<{ note?: AudioNote; job?: AudioNoteJob }>(path, { method: "POST", form });
+}
+
+export async function waitForAudioNoteJob(
+  jobId: string,
+  onProgress?: (job: AudioNoteJob) => void,
+): Promise<AudioNoteJob> {
+  const started = Date.now();
+  const timeoutMs = 3 * 60 * 60 * 1000;
+  while (Date.now() - started < timeoutMs) {
+    const job = await getAudioNoteJob(jobId);
+    onProgress?.(job);
+    if (job.status === "completed" || job.status === "failed") return job;
+    await new Promise((resolve) => setTimeout(resolve, 2500));
+  }
+  throw new ApiError("timeout", "Note processing timed out.", 0);
 }
 
 // ---------------------------------------------------------------------------

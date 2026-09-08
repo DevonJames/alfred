@@ -14,6 +14,7 @@ import { KeyboardProvider } from "react-native-keyboard-controller";
 import { INK } from "@/components/ui";
 import { useMirror } from "@/lib/memory-cache";
 import { watchForMirrorSync } from "@/lib/mirror-sync";
+import { useNoteUpload, watchConnectionForNoteUpload } from "@/lib/note-upload";
 import { useOutbox, watchConnectionForFlush } from "@/lib/outbox";
 
 export const unstable_settings = {
@@ -50,6 +51,8 @@ function RootLayoutNav() {
         <Stack.Screen name="capture" options={{ presentation: "modal" }} />
         <Stack.Screen name="correct" options={{ presentation: "modal" }} />
         <Stack.Screen name="forget" options={{ presentation: "modal" }} />
+        <Stack.Screen name="notes/[id]" />
+        <Stack.Screen name="notes/record" options={{ presentation: "modal" }} />
       </Stack>
     </ThemeProvider>
   );
@@ -80,6 +83,8 @@ export default function RootLayout() {
   useEffect(() => {
     useOutbox.getState().hydrate().catch(() => {});
     const stopFlush = watchConnectionForFlush();
+    useNoteUpload.getState().hydrate().catch(() => {});
+    const stopNoteUpload = watchConnectionForNoteUpload();
 
     // The read copy of memory this phone has been shown, so recall works before
     // — and without — a path to the Mac (§11.3). Watching starts only once the
@@ -97,6 +102,7 @@ export default function RootLayout() {
     return () => {
       torn = true;
       stopFlush();
+      stopNoteUpload();
       stopSync?.();
     };
   }, []);

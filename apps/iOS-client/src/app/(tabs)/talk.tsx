@@ -8,9 +8,9 @@
 import { useMutation } from "@tanstack/react-query";
 import * as Haptics from "expo-haptics";
 import { useFocusEffect } from "expo-router";
-import { Keyboard, Mic, Radio, Send } from "lucide-react-native";
-import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
-import { Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import { Keyboard, Radio, Send } from "lucide-react-native";
+import { useCallback, useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
+import { AppState, Image, Pressable, ScrollView, Text, TextInput, View, type ImageSourcePropType } from "react-native";
 import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 import Animated, {
   Easing,
@@ -23,13 +23,21 @@ import Animated, {
 } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AgentWaveform } from "@/components/AgentWaveform";
+import { AlfredMarkdown } from "@/components/AlfredMarkdown";
 import { Backdrop, BRASS, ConnectionPill, Display, Notice } from "@/components/ui";
 import { cn } from "@/lib/cn";
 import { useConnection } from "@/lib/connection";
 import { rediscover } from "@/lib/discovery";
 import { sendTurn } from "@/lib/desktop-api";
+import { stripMarkdown } from "@/lib/markdown";
 import { useConversationSession, useSession } from "@/lib/session";
 import type { ConversationTurn } from "@/lib/types";
+import {
+  setCallServiceHandlers,
+  setCallServiceMuted,
+  startCallService,
+  stopCallService,
+} from "@/lib/voice/call-service";
 import {
   useSpokenCaption,
   useVoice,
@@ -39,7 +47,37 @@ import {
 import type { VoiceBlocker } from "@/lib/voice/use-voice";
 import type { UiLayout } from "@/lib/voice/protocol";
 
-/** Within voice layout: press-and-hold vs hands-free mic. */
+/** Shared height for the voice control strip (mode, Shhh, mute, start/stop). */
+const CONTROL_SIZE = 56;
+
+const ICONS = {
+  hold: require("../../../assets/voice-controls/hold.png") as ImageSourcePropType,
+  continuous: require("../../../assets/voice-controls/continuous.png") as ImageSourcePropType,
+  shhh: require("../../../assets/voice-controls/shhh.png") as ImageSourcePropType,
+  micMute: require("../../../assets/voice-controls/mic-mute.png") as ImageSourcePropType,
+  micStart: require("../../../assets/voice-controls/mic-start-white.png") as ImageSourcePropType,
+  stop: require("../../../assets/voice-controls/stop-white.png") as ImageSourcePropType,
+};
+
+function VoiceIcon({
+  source,
+  size = 30,
+  opacity = 1,
+}: {
+  source: ImageSourcePropType;
+  size?: number;
+  opacity?: number;
+}) {
+  return (
+    <Image
+      source={source}
+      style={{ width: size, height: size, opacity }}
+      resizeMode="contain"
+    />
+  );
+}
+
+/** Within voice layout: press-and-hold vs continuous conversation. */
 type VoiceMicMode = "hold" | "continuous";
 
 const BLOCKER_MESSAGE: Record<Exclude<VoiceBlocker, "none">, string> = {
@@ -61,6 +99,10 @@ export default function Talk() {
   const [focused, setFocused] = useState(false);
   const [layout, setUiLayout] = useState<UiLayout>("voice");
   const [micMode, setMicMode] = useState<VoiceMicMode>("hold");
+  /** Continuous session started via the orb (mute can leave this true with mic off). */
+  const [continuousActive, setContinuousActive] = useState(false);
+  /** Continuous-only: mute mic without ending the conversation. */
+  const [micMuted, setMicMuted] = useState(false);
   const [waveCollapsed, setWaveCollapsed] = useState(false);
   const [draft, setDraft] = useState("");
 
@@ -83,7 +125,8 @@ export default function Talk() {
   const captionSpeaking = useVoice((s) => s.caption.speaking);
   const caption = useSpokenCaption();
   const fullCaption = useVoice((s) => s.caption.text);
-  const { start, stop, setMic, setLayout, sendVoiceText } = useVoiceSession();
+  const setVoice = useVoice((s) => s.set);
+  const { start, stop, setMic, setLayout, sendVoiceText, publishControl } = useVoiceSession();
 
   const scroller = useRef<ScrollView>(null);
   const voiceScroller = useRef<ScrollView>(null);
@@ -131,40 +174,141 @@ export default function Talk() {
       Haptics.selectionAsync();
       setUiLayout(next);
       if (next === "chat") {
+        setContinuousActive(false);
         if (phase === "live") await setLayout("chat");
         else await stop().catch(() => {});
         return;
       }
-      // voice
+      // voice — continuous arms the mic (desktop); hold joins quiet until PTT
       if (voiceBlocked) return;
-      const joined = phase === "live" ? true : await start();
+      const armMic = micMode === "continuous";
+      const joined = await start({ mic: armMic && !micMuted });
       if (!joined) {
         setUiLayout("chat");
         return;
       }
-      await setLayout("voice");
+      setContinuousActive(armMic);
+      await publishControl({ type: "mute", muted: micMuted });
+      await setLayout("voice", { mic: armMic && !micMuted });
     },
-    [layout, phase, setLayout, start, stop, voiceBlocked]
+    [layout, micMode, micMuted, phase, publishControl, setLayout, start, stop, voiceBlocked]
   );
 
+  /** Arm the mic: PTT press, or continuous Start (desktop-style open listen). */
   const openMic = useCallback(async () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    if (phase !== "live") {
-      const joined = await start();
-      if (!joined) {
-        setUiLayout("chat");
-        return;
-      }
-      await setLayout("voice");
+    const wantMic = micMode === "continuous" ? !micMuted : true;
+    const joined = await start({ mic: wantMic });
+    if (!joined) {
+      setUiLayout("chat");
       return;
     }
-    await setMic(true);
-  }, [phase, setLayout, setMic, start]);
+    if (micMode === "continuous") setContinuousActive(true);
+    await publishControl({ type: "mute", muted: micMuted });
+    await setLayout("voice", { mic: wantMic });
+  }, [micMode, micMuted, publishControl, setLayout, start]);
 
+  /** Release PTT, or continuous Stop — ends continuous listen; room stays for playback. */
   const closeMic = useCallback(async () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    if (micMode === "continuous") setContinuousActive(false);
     await setMic(false);
-  }, [setMic]);
+  }, [micMode, setMic]);
+
+  const toggleMute = useCallback(async () => {
+    Haptics.selectionAsync();
+    const nextMuted = !micMuted;
+    setMicMuted(nextMuted);
+    await publishControl({ type: "mute", muted: nextMuted });
+    if (continuousActive) await setMic(!nextMuted);
+  }, [continuousActive, micMuted, publishControl, setMic]);
+
+  const stopSpeaking = useCallback(async () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    await publishControl({ type: "stop" });
+  }, [publishControl]);
+
+  const setMicModeAndApply = useCallback(
+    (next: VoiceMicMode) => {
+      if (next === micMode) return;
+      Haptics.selectionAsync();
+      setMicMode(next);
+      if (next === "hold") {
+        setContinuousActive(false);
+        setMicMuted(false);
+        void publishControl({ type: "mute", muted: false });
+        if (phase === "live" && layout === "voice") void setMic(false);
+        return;
+      }
+      // Continuous: arm like desktop when already in a live voice session.
+      if (phase === "live" && layout === "voice") {
+        setContinuousActive(true);
+        void setMic(!micMuted);
+      }
+    },
+    [layout, micMode, micMuted, phase, publishControl, setMic]
+  );
+
+  useEffect(() => {
+    if (phase !== "live") {
+      setContinuousActive(false);
+    }
+  }, [phase]);
+
+  // Pocket / lock-screen: keep the LiveKit room up only while Continuous is active.
+  useEffect(() => {
+    const keep = micMode === "continuous" && continuousActive;
+    setVoice({ keepAliveInBackground: keep });
+  }, [continuousActive, micMode, setVoice]);
+
+  // CallKit keep-alive is only needed once iOS would suspend WebRTC (lock / pocket).
+  // Starting it in the foreground has crashed continuous mode on device builds, so
+  // arm CallKit only when leaving the foreground while a continuous session is live.
+  useEffect(() => {
+    const continuousLive = micMode === "continuous" && continuousActive && phase === "live";
+    if (!continuousLive) {
+      void stopCallService();
+      return;
+    }
+
+    const syncCallKit = (state: string) => {
+      if (state === "background") void startCallService();
+      else void stopCallService();
+    };
+
+    syncCallKit(AppState.currentState);
+    const sub = AppState.addEventListener("change", syncCallKit);
+    return () => {
+      sub.remove();
+      void stopCallService();
+    };
+  }, [continuousActive, micMode, phase]);
+
+  useEffect(() => {
+    setCallServiceHandlers({
+      onEnd: () => {
+        setContinuousActive(false);
+        void setMic(false);
+      },
+      onMute: (muted) => {
+        setMicMuted((prev) => (prev === muted ? prev : muted));
+        void publishControl({ type: "mute", muted });
+        if (continuousActive) void setMic(!muted);
+      },
+    });
+    return () => setCallServiceHandlers({});
+  }, [continuousActive, publishControl, setMic]);
+
+  useEffect(() => {
+    setCallServiceMuted(micMuted);
+  }, [micMuted]);
+
+  // Drop CallKit when leaving the Talk screen entirely.
+  useEffect(() => {
+    return () => {
+      void stopCallService();
+    };
+  }, []);
 
   const connecting = phase === "connecting";
   const busy = connecting || state === "thinking";
@@ -172,50 +316,63 @@ export default function Talk() {
 
   return (
     <Backdrop>
-      <KeyboardAvoidingView behavior="padding" style={{ flex: 1 }} keyboardVerticalOffset={49}>
+      <View
+        testID="talk-screen"
+        style={{
+          flex: 1,
+          paddingHorizontal: 16,
+          paddingTop: insets.top + 6,
+          paddingBottom: 4,
+        }}
+      >
         <View
-          testID="talk-screen"
-          className="flex-1 px-5"
-          style={{ paddingTop: insets.top + 12, paddingBottom: 8 }}
+          style={{
+            flexDirection: "row",
+            alignItems: "center",
+            justifyContent: "space-between",
+            marginBottom: 8,
+          }}
         >
-          <View className="flex-row items-center justify-between">
-            <ConnectionPill
-              mode={mode}
-              busy={discovering}
-              onPress={() => rediscover().catch(() => {})}
-            />
-            <LayoutToggle
-              layout={inVoiceLayout ? "voice" : "chat"}
-              disabled={sessionUnavailable}
-              voiceDisabled={voiceBlocked}
-              onVoice={() => void switchLayout("voice")}
-              onChat={() => void switchLayout("chat")}
-            />
-          </View>
+          <ConnectionPill
+            mode={mode}
+            busy={discovering}
+            onPress={() => rediscover().catch(() => {})}
+          />
+          <LayoutToggle
+            layout={inVoiceLayout ? "voice" : "chat"}
+            disabled={sessionUnavailable}
+            voiceDisabled={voiceBlocked}
+            onVoice={() => void switchLayout("voice")}
+            onChat={() => void switchLayout("chat")}
+          />
+        </View>
 
-          {inVoiceLayout ? (
-            <VoiceStage
-              waveCollapsed={waveCollapsed}
-              onToggleWave={() => setWaveCollapsed((v) => !v)}
-              track={agentAudioTrack}
-              speaking={captionSpeaking}
-              userPartial={userPartial}
-              userFinal={userFinal}
-              caption={caption}
-              fullCaption={fullCaption}
-              connecting={connecting}
-              scrollerRef={voiceScroller}
-              micMode={micMode}
-              onCycleMicMode={() =>
-                setMicMode((m) => (m === "hold" ? "continuous" : "hold"))
-              }
-              micEnabled={micEnabled}
-              busy={connecting}
-              sessionUnavailable={sessionUnavailable}
-              onStart={() => void openMic()}
-              onStop={() => void closeMic()}
-            />
-          ) : (
+        {inVoiceLayout ? (
+          <VoiceStage
+            waveCollapsed={waveCollapsed}
+            onToggleWave={() => setWaveCollapsed((v) => !v)}
+            track={agentAudioTrack}
+            speaking={captionSpeaking}
+            userPartial={userPartial}
+            userFinal={userFinal}
+            caption={caption}
+            fullCaption={fullCaption}
+            connecting={connecting}
+            scrollerRef={voiceScroller}
+            micMode={micMode}
+            onSelectMicMode={setMicModeAndApply}
+            micEnabled={micEnabled}
+            continuousActive={continuousActive}
+            micMuted={micMuted}
+            busy={connecting}
+            sessionUnavailable={sessionUnavailable}
+            onStart={() => void openMic()}
+            onStop={() => void closeMic()}
+            onToggleMute={() => void toggleMute()}
+            onStopSpeaking={() => void stopSpeaking()}
+          />
+        ) : (
+          <KeyboardAvoidingView behavior="padding" style={{ flex: 1 }} keyboardVerticalOffset={8}>
             <ChatStage
               turns={turns}
               partial={partial}
@@ -230,25 +387,25 @@ export default function Talk() {
               sessionUnavailable={sessionUnavailable}
               onSend={() => draft.trim() && sendText.mutate(draft.trim())}
             />
-          )}
+          </KeyboardAvoidingView>
+        )}
 
-          {sessionError ? (
-            <Notice tone={sessionUnavailable ? "info" : "error"} testID="session-error">
-              {sessionError}
-            </Notice>
-          ) : null}
-          {notice ? (
-            <Notice tone={voiceError ? "error" : "info"} testID="voice-notice">
-              {notice}
-            </Notice>
-          ) : null}
-          {agentHint && phase === "live" && !agentPresent ? (
-            <Notice tone="info" testID="agent-hint">
-              {agentHint}
-            </Notice>
-          ) : null}
-        </View>
-      </KeyboardAvoidingView>
+        {sessionError ? (
+          <Notice tone={sessionUnavailable ? "info" : "error"} testID="session-error">
+            {sessionError}
+          </Notice>
+        ) : null}
+        {notice ? (
+          <Notice tone={voiceError ? "error" : "info"} testID="voice-notice">
+            {notice}
+          </Notice>
+        ) : null}
+        {agentHint && phase === "live" && !agentPresent ? (
+          <Notice tone="info" testID="agent-hint">
+            {agentHint}
+          </Notice>
+        ) : null}
+      </View>
     </Backdrop>
   );
 }
@@ -317,12 +474,16 @@ function VoiceStage({
   connecting,
   scrollerRef,
   micMode,
-  onCycleMicMode,
+  onSelectMicMode,
   micEnabled,
+  continuousActive,
+  micMuted,
   busy,
   sessionUnavailable,
   onStart,
   onStop,
+  onToggleMute,
+  onStopSpeaking,
 }: {
   waveCollapsed: boolean;
   onToggleWave: () => void;
@@ -335,31 +496,35 @@ function VoiceStage({
   connecting: boolean;
   scrollerRef: RefObject<ScrollView | null>;
   micMode: VoiceMicMode;
-  onCycleMicMode: () => void;
+  onSelectMicMode: (mode: VoiceMicMode) => void;
   micEnabled: boolean;
+  continuousActive: boolean;
+  micMuted: boolean;
   busy: boolean;
   sessionUnavailable: boolean;
   onStart: () => void;
   onStop: () => void;
+  onToggleMute: () => void;
+  onStopSpeaking: () => void;
 }) {
   const ghost = fullCaption.length > caption.length ? fullCaption.slice(caption.length) : "";
   const hasTranscript = Boolean(caption || ghost || userFinal.length || userPartial);
+  const latestUser = userPartial ?? (userFinal.length ? userFinal[userFinal.length - 1] : null);
+  const orbListening = micMode === "continuous" ? continuousActive : micEnabled;
 
   return (
-    <View style={{ marginTop: 12, flex: 1 }} testID="voice-stage">
+    <View style={{ flex: 1 }} testID="voice-stage">
       <AgentWaveform
         track={track}
-        speaking={speaking}
         collapsed={waveCollapsed}
         onToggleCollapsed={onToggleWave}
       />
 
       <View
         style={{
-          marginTop: 10,
+          marginTop: 8,
           flex: 1,
-          minHeight: 180,
-          borderRadius: 16,
+          borderRadius: 14,
           borderWidth: 1,
           borderColor: "#2E343D",
           backgroundColor: "#111317",
@@ -370,16 +535,21 @@ function VoiceStage({
           ref={scrollerRef}
           testID="voice-response-scroll"
           style={{ flex: 1 }}
-          contentContainerStyle={{ paddingHorizontal: 16, paddingVertical: 14, paddingBottom: 20 }}
+          contentContainerStyle={{
+            flexGrow: 1,
+            justifyContent: hasTranscript ? "flex-end" : "flex-start",
+            paddingHorizontal: 14,
+            paddingTop: 12,
+            paddingBottom: 80,
+          }}
           showsVerticalScrollIndicator
         >
           {!hasTranscript ? (
             <Text
               style={{
-                marginTop: 8,
                 fontFamily: "InstrumentSerif_400Regular",
-                fontSize: 28,
-                lineHeight: 36,
+                fontSize: 26,
+                lineHeight: 34,
                 color: "#F4F1EA",
               }}
             >
@@ -387,85 +557,93 @@ function VoiceStage({
             </Text>
           ) : null}
 
-          {userFinal.map((line, i) => (
-            <Text
-              key={`uf-${i}`}
-              style={{
-                marginTop: i === 0 ? 0 : 14,
-                textAlign: "right",
-                fontSize: 17,
-                lineHeight: 26,
-                color: "#D8A54A",
-              }}
-            >
-              {line}
-            </Text>
-          ))}
-
-          {userPartial ? (
+          {latestUser ? (
             <Text
               testID="voice-user-partial"
               style={{
-                marginTop: 14,
+                marginBottom: 12,
                 textAlign: "right",
-                fontSize: 17,
-                lineHeight: 26,
-                color: "#C4C8D0",
+                fontSize: 16,
+                lineHeight: 24,
+                color: "#D8A54A",
               }}
             >
-              {userPartial}
+              {latestUser}
             </Text>
           ) : null}
 
           {caption || ghost ? (
-            <Text
-              testID="voice-caption"
-              style={{
-                marginTop: 16,
-                fontFamily: "InstrumentSerif_400Regular",
-                fontSize: 22,
-                lineHeight: 32,
-                color: "#F4F1EA",
-              }}
-            >
-              {caption}
-              {ghost ? <Text style={{ color: "#8D939E" }}>{ghost}</Text> : null}
+            <View testID="voice-caption">
+              {caption ? <AlfredMarkdown>{caption}</AlfredMarkdown> : null}
+              {ghost ? (
+                <Text
+                  style={{
+                    fontFamily: "InstrumentSerif_400Regular",
+                    fontSize: 20,
+                    lineHeight: 30,
+                    color: "#8D939E",
+                  }}
+                >
+                  {stripMarkdown(ghost)}
+                </Text>
+              ) : null}
               {speaking ? <Text style={{ color: BRASS }}>▍</Text> : null}
-            </Text>
+            </View>
           ) : null}
 
           {connecting ? (
-            <Text style={{ marginTop: 16, fontSize: 15, fontStyle: "italic", color: "#8D939E" }}>
+            <Text style={{ marginTop: 12, fontSize: 15, fontStyle: "italic", color: "#8D939E" }}>
               Opening the line…
             </Text>
           ) : null}
         </ScrollView>
-      </View>
 
-      {sessionUnavailable ? null : (
-        <View
-          style={{
-            marginTop: 10,
-            flexDirection: "row",
-            alignItems: "center",
-            justifyContent: "space-between",
-            paddingVertical: 4,
-          }}
-        >
-          <Pressable testID="toggle-mic-mode" onPress={onCycleMicMode} hitSlop={8}>
-            <Text style={{ fontSize: 12, color: "#8D939E" }}>
-              {micMode === "hold" ? "Hold to talk" : "Hands free"} · tap to switch
-            </Text>
-          </Pressable>
-          <MicOrb
-            listening={micEnabled}
-            busy={busy}
-            continuous={micMode === "continuous"}
-            onStart={onStart}
-            onStop={onStop}
-          />
-        </View>
-      )}
+        {sessionUnavailable ? null : (
+          <View
+            pointerEvents="box-none"
+            style={{
+              position: "absolute",
+              left: 12,
+              right: 12,
+              bottom: 10,
+              height: CONTROL_SIZE,
+              flexDirection: "row",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 8,
+            }}
+          >
+            <MicModeToggle mode={micMode} onSelect={onSelectMicMode} />
+
+            <View style={{ flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8 }}>
+              <ControlChip
+                testID="stop-speaking"
+                active={speaking}
+                onPress={onStopSpeaking}
+                accessibilityLabel="Shhh — stop Alfred speaking"
+                icon={<VoiceIcon source={ICONS.shhh} size={40} opacity={speaking ? 1 : 0.9} />}
+              />
+              {micMode === "continuous" && continuousActive ? (
+                <ControlChip
+                  testID="mute-mic"
+                  active={micMuted}
+                  onPress={onToggleMute}
+                  accessibilityLabel={micMuted ? "Unmute microphone" : "Mute microphone"}
+                  icon={<VoiceIcon source={ICONS.micMute} size={40} opacity={micMuted ? 1 : 0.9} />}
+                />
+              ) : null}
+            </View>
+
+            <MicOrb
+              listening={orbListening}
+              busy={busy}
+              continuous={micMode === "continuous"}
+              onStart={onStart}
+              onStop={onStop}
+            />
+          </View>
+        )}
+      </View>
     </View>
   );
 }
@@ -535,7 +713,7 @@ function ChatStage({
 
         {caption ? (
           <Animated.View entering={FadeIn} className="mt-5" testID="voice-caption">
-            <Text className="font-display text-2xl leading-8 text-bone">{caption}</Text>
+            <AlfredMarkdown large>{caption}</AlfredMarkdown>
           </Animated.View>
         ) : null}
 
@@ -588,16 +766,22 @@ function Caption({ turn }: { turn: ConversationTurn }) {
       testID={`caption-${turn.role}-${turn.ledger}`}
       className={cn("mt-5", isUser ? "items-end" : "items-start")}
     >
-      <Text
-        className={cn(
-          isUser
-            ? "text-right text-lg leading-6 text-bone"
-            : "font-display text-2xl leading-8 text-bone",
-          (superseded || cancelled) && "text-faint line-through"
-        )}
-      >
-        {turn.text}
-      </Text>
+      {isUser ? (
+        <Text
+          className={cn(
+            "text-right text-lg leading-6 text-bone",
+            (superseded || cancelled) && "text-faint line-through"
+          )}
+        >
+          {turn.text}
+        </Text>
+      ) : (
+        <View className={cn((superseded || cancelled) && "opacity-50")}>
+          <AlfredMarkdown large incomplete={false}>
+            {turn.text}
+          </AlfredMarkdown>
+        </View>
+      )}
       {superseded ? (
         <Text className="mt-1 text-xs text-warn">Replaced by a later answer</Text>
       ) : null}
@@ -611,6 +795,93 @@ function Caption({ turn }: { turn: ConversationTurn }) {
         </Text>
       ) : null}
     </Animated.View>
+  );
+}
+
+function ControlChip({
+  testID,
+  active,
+  onPress,
+  icon,
+  accessibilityLabel,
+}: {
+  testID: string;
+  active?: boolean;
+  onPress: () => void;
+  icon: ReactNode;
+  accessibilityLabel: string;
+}) {
+  return (
+    <Pressable
+      testID={testID}
+      onPress={onPress}
+      accessibilityLabel={accessibilityLabel}
+      hitSlop={6}
+      style={{
+        height: CONTROL_SIZE,
+        width: CONTROL_SIZE,
+        alignItems: "center",
+        justifyContent: "center",
+        borderRadius: 14,
+        borderWidth: 1,
+        borderColor: active ? "#E2574C" : "#2A2E36",
+        backgroundColor: active ? "rgba(226,87,76,0.14)" : "#14161A",
+      }}
+    >
+      {icon}
+    </Pressable>
+  );
+}
+
+function MicModeToggle({
+  mode,
+  onSelect,
+}: {
+  mode: VoiceMicMode;
+  onSelect: (mode: VoiceMicMode) => void;
+}) {
+  return (
+    <View
+      testID="toggle-mic-mode"
+      style={{
+        height: CONTROL_SIZE,
+        borderWidth: 1,
+        borderColor: "#2A2E36",
+        borderRadius: 14,
+        backgroundColor: "#14161A",
+        padding: 4,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 2,
+      }}
+    >
+      {(["hold", "continuous"] as const).map((option) => {
+        const active = mode === option;
+        return (
+          <Pressable
+            key={option}
+            testID={`mic-mode-${option}`}
+            onPress={() => onSelect(option)}
+            accessibilityLabel={option === "hold" ? "Hold to talk" : "Continuous conversation"}
+            hitSlop={4}
+            style={{
+              height: CONTROL_SIZE - 8,
+              width: CONTROL_SIZE - 8,
+              borderRadius: 10,
+              alignItems: "center",
+              justifyContent: "center",
+              backgroundColor: active ? "#1F232B" : "transparent",
+            }}
+          >
+            <VoiceIcon
+              source={option === "hold" ? ICONS.hold : ICONS.continuous}
+              size={30}
+              opacity={active ? 1 : 0.55}
+            />
+          </Pressable>
+        );
+      })}
+    </View>
   );
 }
 
@@ -641,38 +912,43 @@ function MicOrb({
   }));
 
   return (
-    <View style={{ alignItems: "center", justifyContent: "center", width: 72, height: 72 }}>
+    <View style={{ height: CONTROL_SIZE, width: CONTROL_SIZE, alignItems: "center", justifyContent: "center" }}>
       <Animated.View
         style={[
           halo,
           {
             position: "absolute",
-            height: 64,
-            width: 64,
-            borderRadius: 32,
+            height: CONTROL_SIZE,
+            width: CONTROL_SIZE,
+            borderRadius: CONTROL_SIZE / 2,
             backgroundColor: listening ? "#E2574C" : BRASS,
           },
         ]}
       />
       <Pressable
         testID="mic-orb"
+        accessibilityLabel={listening ? "End conversation" : "Start conversation"}
         disabled={busy}
         onPressIn={continuous ? undefined : onStart}
         onPressOut={continuous ? undefined : onStop}
         onPress={continuous ? (listening ? onStop : onStart) : undefined}
         style={{
-          height: 56,
-          width: 56,
-          borderRadius: 28,
+          height: CONTROL_SIZE,
+          width: CONTROL_SIZE,
+          borderRadius: CONTROL_SIZE / 2,
           borderWidth: 2,
           borderColor: listening ? "#E2574C" : BRASS,
-          backgroundColor: listening ? "rgba(226,87,76,0.18)" : "rgba(216,165,74,0.12)",
+          backgroundColor: listening ? "rgba(226,87,76,0.22)" : "rgba(216,165,74,0.2)",
           alignItems: "center",
           justifyContent: "center",
           opacity: busy ? 0.4 : 1,
         }}
       >
-        <Mic color={listening ? "#E2574C" : BRASS} size={22} />
+        <VoiceIcon
+          source={listening ? ICONS.stop : ICONS.micStart}
+          size={40}
+          opacity={1}
+        />
       </Pressable>
     </View>
   );

@@ -39,6 +39,14 @@ function sample(): BriefingData {
           conditionCode: 2,
           precipProbability: 10,
         },
+        {
+          date: "2026-08-11",
+          tempMax: 74,
+          tempMin: 58,
+          condition: "Foggy",
+          conditionCode: 45,
+          precipProbability: 5,
+        },
       ],
       unit: "fahrenheit",
     },
@@ -84,6 +92,8 @@ describe("formatBriefingForSpeech", () => {
     expect(speech).toContain("Good morning, sir");
     // 2026-08-10T16:00:00Z = 9:00 am Pacific
     expect(speech).toContain("It is Monday, August 10 at 9:00 am.");
+    expect(speech).toMatch(/Today, clear sky, high 75, low 60/);
+    expect(speech).toMatch(/Tomorrow, partly cloudy/);
     expect(speech).toContain("Call Sarah");
     expect(speech).toMatch(/Bitcoin is up 1\.2 percent/);
     expect(speech).toContain("thousand dollars");

@@ -49,6 +49,48 @@ export interface ReminderPort {
   invalidateBriefingDay(now?: Date): Promise<void>;
 }
 
+/** Structured long-term memory writes from conversation (Entity / Assertion). */
+export interface StructuredMemoryPort {
+  remember(write: {
+    entities?: Array<{
+      name: string;
+      entityClass?: string;
+      summary?: string;
+      email?: string;
+      telephone?: string;
+    }>;
+    assertions?: Array<{
+      subjectName: string;
+      predicate: string;
+      objectName: string;
+      text?: string;
+    }>;
+    notes?: string[];
+  }): Promise<{
+    entitiesUpserted: number;
+    assertionsCreated: number;
+    notesCreated: number;
+  }>;
+}
+
+/** Live weather forecast for conversational asks (Open-Meteo). */
+export interface WeatherForecastPort {
+  getForecast(opts?: { location?: string; days?: number }): Promise<string>;
+}
+
+/** Local Elgato Key Light control for conversational asks. */
+export interface StudioLightCommand {
+  action: "on" | "off" | "brighter" | "dimmer" | "warmer" | "cooler" | "set" | "status";
+  target?: string;
+  brightness?: number;
+  temperature?: string | number;
+}
+
+export interface StudioLightsPort {
+  control(command: StudioLightCommand): Promise<string>;
+  inventorySpeech?(): Promise<string>;
+}
+
 export interface ProviderRegistryPort {
   getLlm(id: string): LLMProvider;
   getStt(id: string): STTProvider;

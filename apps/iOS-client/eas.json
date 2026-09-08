@@ -22,13 +22,15 @@
       "distribution": "internal",
       "ios": {
         "simulator": false
-      }
+      },
+      "node": "22.14.0"
     },
     "production": {
       "autoIncrement": true,
       "ios": {
         "simulator": false
-      }
+      },
+      "node": "22.14.0"
     }
   },
   "submit": {

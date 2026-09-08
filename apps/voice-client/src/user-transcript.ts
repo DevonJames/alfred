@@ -21,6 +21,7 @@ export class UserTranscriptHud {
     this.textEl = opts.text;
     this.modeEl = opts.mode;
     this.cursorEl = opts.cursor;
+    this.cursorEl.hidden = false;
     this.render();
   }
 
@@ -39,7 +40,7 @@ export class UserTranscriptHud {
     this.final = false;
     this.modeEl.textContent = "IDLE";
     this.rootEl.classList.remove("active", "final");
-    this.cursorEl.hidden = true;
+    this.cursorEl.hidden = false;
     this.render();
   }
 

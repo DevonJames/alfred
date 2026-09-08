@@ -94,9 +94,20 @@ async function geocodeLocation(
 export async function fetchWeather(
   location: string,
   useCelsius = false,
+  coords?: { lat: number; lon: number; timezone?: string; name?: string } | null,
 ): Promise<WeatherData | null> {
   try {
-    const geo = await geocodeLocation(location);
+    let geo: { name: string; lat: number; lon: number; timezone: string } | null = null;
+    if (coords && Number.isFinite(coords.lat) && Number.isFinite(coords.lon)) {
+      geo = {
+        name: coords.name?.trim() || location,
+        lat: coords.lat,
+        lon: coords.lon,
+        timezone: coords.timezone?.trim() || "auto",
+      };
+    } else {
+      geo = await geocodeLocation(location);
+    }
     if (!geo) return null;
 
     const tempUnit = useCelsius ? "celsius" : "fahrenheit";
@@ -115,6 +126,7 @@ export async function fetchWeather(
     url.searchParams.set("wind_speed_unit", "mph");
     url.searchParams.set("precipitation_unit", "inch");
     url.searchParams.set("timezone", geo.timezone);
+    url.searchParams.set("forecast_days", "7");
 
     const response = await fetch(url.toString(), {
       signal: AbortSignal.timeout(10_000),
@@ -175,10 +187,28 @@ export async function fetchWeather(
   }
 }
 
+function dayConditionSpoken(day: DayForecast): string {
+  return day.condition.replace(/[^\w\s-]/g, "").trim().toLowerCase() || "clear";
+}
+
+function precipSpoken(day: DayForecast): string {
+  const chance = day.precipProbability ?? 0;
+  if (chance >= 70) return ` with a high chance of precipitation`;
+  if (chance >= 40) return ` with a ${chance} percent chance of precipitation`;
+  return "";
+}
+
 export function formatWeatherSpeech(weather: WeatherData): string {
   const condition = weather.current.condition.replace(/[^\w\s-]/g, "").trim().toLowerCase();
   const temp = Math.round(weather.current.temperature);
-  const parts: string[] = [`Currently ${temp} degrees and ${condition}.`];
+  const feels = weather.current.feelsLike != null ? Math.round(weather.current.feelsLike) : temp;
+  const parts: string[] = [];
+
+  if (feels !== temp) {
+    parts.push(`Currently ${temp} degrees and ${condition}, feeling like ${feels}.`);
+  } else {
+    parts.push(`Currently ${temp} degrees and ${condition}.`);
+  }
 
   const humidity = weather.current.humidity ?? 0;
   const windSpeed = weather.current.windSpeed ?? 0;
@@ -192,17 +222,22 @@ export function formatWeatherSpeech(weather: WeatherData): string {
     else if (windPart) parts.push(`There's ${windPart} today.`);
   }
 
+  // alfred-home style: today + tomorrow + day-after forecast highs/lows
+  const today = weather.daily[0];
+  if (today) {
+    parts.push(
+      `Today, ${dayConditionSpoken(today)}, high ${Math.round(today.tempMax)}, low ${Math.round(today.tempMin)}${precipSpoken(today)}.`,
+    );
+  }
   const tomorrow = weather.daily[1];
   if (tomorrow) {
-    const tc = tomorrow.condition.replace(/[^\w\s-]/g, "").trim().toLowerCase();
     parts.push(
-      `Tomorrow, ${tc}, ranging from ${Math.round(tomorrow.tempMin)} to ${Math.round(tomorrow.tempMax)} degrees.`,
+      `Tomorrow, ${dayConditionSpoken(tomorrow)}, ranging from ${Math.round(tomorrow.tempMin)} to ${Math.round(tomorrow.tempMax)} degrees${precipSpoken(tomorrow)}.`,
     );
   }
   const dayAfter = weather.daily[2];
   if (dayAfter) {
-    const dc = dayAfter.condition.replace(/[^\w\s-]/g, "").trim().toLowerCase();
-    parts.push(`The day after tomorrow, ${dc}.`);
+    parts.push(`The day after tomorrow, ${dayConditionSpoken(dayAfter)}.`);
   }
 
   return parts.join(" ");
@@ -210,12 +245,23 @@ export function formatWeatherSpeech(weather: WeatherData): string {
 
 export function formatWeatherMarkdown(weather: WeatherData): string {
   const unit = weather.unit === "celsius" ? "°C" : "°F";
+  const feels =
+    weather.current.feelsLike != null && weather.current.feelsLike !== weather.current.temperature
+      ? ` (feels like ${weather.current.feelsLike}${unit})`
+      : "";
   const lines = [
     `**Weather — ${weather.location}**`,
-    `${weather.current.condition}, ${weather.current.temperature}${unit}`,
+    `Currently ${weather.current.condition}, ${weather.current.temperature}${unit}${feels}. Humidity ${weather.current.humidity ?? 0}%, wind ${weather.current.windSpeed} mph.`,
+    "",
+    "**Forecast:**",
   ];
-  for (const day of weather.daily.slice(0, 3)) {
-    lines.push(`- ${day.date}: ${day.condition}, high ${day.tempMax}${unit}, low ${day.tempMin}${unit}`);
+  for (const [i, day] of weather.daily.slice(0, 3).entries()) {
+    const label = i === 0 ? "Today" : i === 1 ? "Tomorrow" : day.date;
+    const precip =
+      day.precipProbability >= 40 ? ` · ${day.precipProbability}% precip` : "";
+    lines.push(
+      `- ${label}: ${day.condition}, high ${day.tempMax}${unit}, low ${day.tempMin}${unit}${precip}`,
+    );
   }
   return lines.join("\n");
 }

@@ -1,5 +1,5 @@
 import { Tabs } from "expo-router";
-import { Archive, MessageSquare, Settings, Sunrise } from "lucide-react-native";
+import { Archive, Mic, MessageSquare, Settings, Sunrise } from "lucide-react-native";
 import { BRASS, INK } from "@/components/ui";
 
 export default function TabLayout() {
@@ -29,6 +29,13 @@ export default function TabLayout() {
         options={{
           title: "Memory",
           tabBarIcon: ({ color, size }) => <Archive color={color} size={size ?? 22} />,
+        }}
+      />
+      <Tabs.Screen
+        name="notes"
+        options={{
+          title: "Notes",
+          tabBarIcon: ({ color, size }) => <Mic color={color} size={size ?? 22} />,
         }}
       />
       <Tabs.Screen

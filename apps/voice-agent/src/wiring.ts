@@ -8,7 +8,11 @@ import {
   createXIngestHarness,
 } from "@alfred/agents";
 import { createPlaywrightCaptureAdapter } from "@alfred/browser";
-import { createBriefingController, type GreetingLlm } from "@alfred/briefing";
+import {
+  createBriefingController,
+  lookupLiveWeatherForecast,
+  type GreetingLlm,
+} from "@alfred/briefing";
 import type { UserConfiguration } from "@alfred/contracts";
 import {
   EventLedger,
@@ -52,6 +56,7 @@ import {
   RECOMMENDED_LLM_PRIORITY,
 } from "@alfred/provider-openai";
 import { ProviderRegistry } from "@alfred/providers";
+import { createElgatoLightsController } from "@alfred/elgato";
 import { createOipReminderPort } from "./reminder-port.js";
 
 const failoverSettings = {
@@ -203,6 +208,39 @@ export async function createCascadedVoiceRuntime(opts?: {
     llm: greetingLlm,
   });
   const reminders = createOipReminderPort(oipMemory, briefing);
+  const structuredMemory = {
+    async remember(write: {
+      entities?: Array<{
+        name: string;
+        entityClass?: string;
+        summary?: string;
+        email?: string;
+        telephone?: string;
+      }>;
+      assertions?: Array<{
+        subjectName: string;
+        predicate: string;
+        objectName: string;
+        text?: string;
+      }>;
+      notes?: string[];
+    }) {
+      const { writeConversationalMemory } = await import("@alfred/memory");
+      return writeConversationalMemory(oipMemory, write);
+    },
+  };
+  const weather = {
+    async getForecast(opts?: { location?: string; days?: number }) {
+      return lookupLiveWeatherForecast({
+        location: opts?.location,
+        days: opts?.days,
+      });
+    },
+  };
+  const lights = createElgatoLightsController();
+  void lights.refresh().catch((err) => {
+    console.warn("[voice] Elgato light discovery failed:", err);
+  });
 
   const voice = new VoiceSessionController({
     sessionId,
@@ -219,6 +257,9 @@ export async function createCascadedVoiceRuntime(opts?: {
     personaContext: persona,
     briefing,
     reminders,
+    structuredMemory,
+    weather,
+    lights,
   });
 
   return {

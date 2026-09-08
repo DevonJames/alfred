@@ -12,6 +12,7 @@ import { LiveWaveform } from "./waveform.js";
 import { publishControl, type UiLayout } from "./control.js";
 import { TranscriptThread } from "./transcript.js";
 import { Composer } from "./composer.js";
+import { isEmbedded, postShellState } from "./shell-bridge.js";
 
 const statusEl = document.querySelector<HTMLElement>("#status")!;
 const linkDot = document.querySelector<HTMLElement>("#link-dot")!;
@@ -19,7 +20,8 @@ const metaEl = document.querySelector<HTMLElement>("#meta")!;
 const levelTag = document.querySelector<HTMLElement>("#level-tag")!;
 const remoteAudioEl = document.querySelector<HTMLElement>("#remote-audio")!;
 const connectBtn = document.querySelector<HTMLButtonElement>("#connect")!;
-const disconnectBtn = document.querySelector<HTMLButtonElement>("#disconnect")!;
+const shhhBtn = document.querySelector<HTMLButtonElement>("#shhh")!;
+const muteBtn = document.querySelector<HTMLButtonElement>("#mute")!;
 const layoutToggle = document.querySelector<HTMLButtonElement>("#layout-toggle")!;
 const waveCanvas = document.querySelector<HTMLCanvasElement>("#wave")!;
 
@@ -52,17 +54,48 @@ waveform.setLevelHandler((rms) => {
   if (captions.isSpeaking) {
     linkDot.classList.add("speaking");
     linkDot.classList.remove("live");
+    shhhBtn.classList.add("active");
   } else if (document.body.classList.contains("linked")) {
     linkDot.classList.add("live");
     linkDot.classList.remove("speaking");
+    shhhBtn.classList.remove("active");
+  } else {
+    shhhBtn.classList.remove("active");
   }
+  publishShell(rms);
 });
 
 let room: Room | undefined;
 let layout: UiLayout = "voice";
+/** Voice-layout mic mute — conversation stays open; unmute resumes listening. */
+let micMuted = false;
+let lastCaption = "";
+
+function publishShell(rms = 0): void {
+  postShellState({
+    linked: Boolean(room),
+    speaking: captions.isSpeaking,
+    rms,
+    caption: lastCaption,
+  });
+}
 
 function setStatus(text: string): void {
   statusEl.textContent = text.toUpperCase();
+}
+
+function setSessionToggle(running: boolean): void {
+  connectBtn.textContent = running ? "Stop" : "Start";
+  connectBtn.classList.toggle("stop", running);
+  connectBtn.setAttribute("aria-pressed", String(running));
+}
+
+function updateSessionControls(linked: boolean): void {
+  shhhBtn.disabled = !linked;
+  muteBtn.disabled = !linked || layout !== "voice";
+  muteBtn.classList.toggle("muted", micMuted);
+  muteBtn.textContent = micMuted ? "Unmute" : "Mute";
+  muteBtn.setAttribute("aria-pressed", String(micMuted));
 }
 
 function applyLayoutDom(next: UiLayout): void {
@@ -70,6 +103,7 @@ function applyLayoutDom(next: UiLayout): void {
   document.body.dataset.layout = next;
   layoutToggle.textContent = next === "voice" ? "CHAT" : "VOICE";
   layoutToggle.setAttribute("aria-pressed", String(next === "chat"));
+  updateSessionControls(Boolean(room));
 }
 
 function setLayout(next: UiLayout): void {
@@ -101,8 +135,26 @@ async function syncMicForLayout(): Promise<void> {
     setStatus("Online // text");
     return;
   }
-  await room.localParticipant.setMicrophoneEnabled(true);
-  setStatus("Online // mic armed");
+  await publishControl(room, { type: "mute", muted: micMuted });
+  await room.localParticipant.setMicrophoneEnabled(!micMuted);
+  setStatus(micMuted ? "Online // mic muted" : "Online // mic armed");
+}
+
+async function shhh(): Promise<void> {
+  if (!room) return;
+  await publishControl(room, { type: "stop" });
+  shhhBtn.classList.remove("active");
+  setStatus("Online // hushed");
+}
+
+async function toggleMute(): Promise<void> {
+  if (!room || layout !== "voice") return;
+  micMuted = !micMuted;
+  // Tell the agent first so STT stops even if WebRTC mute is flaky.
+  await publishControl(room, { type: "mute", muted: micMuted });
+  await room.localParticipant.setMicrophoneEnabled(!micMuted);
+  updateSessionControls(true);
+  setStatus(micMuted ? "Online // mic muted" : "Online // mic armed");
 }
 
 function attachRemoteAudio(track: RemoteTrack): void {
@@ -122,11 +174,17 @@ function attachRemoteAudio(track: RemoteTrack): void {
   }
 }
 
+function alfredApiPath(path: string): string {
+  const match = location.pathname.match(/^(\/proxy\/[^/]+)/);
+  const prefix = match?.[1] ?? "";
+  return `${prefix}${path.startsWith("/") ? path : `/${path}`}`;
+}
+
 async function connect(): Promise<void> {
   connectBtn.disabled = true;
   setStatus("Minting token…");
 
-  const res = await fetch("/api/token");
+  const res = await fetch(alfredApiPath("/api/token"));
   const payload = (await res.json()) as {
     url?: string;
     room?: string;
@@ -172,6 +230,10 @@ async function connect(): Promise<void> {
         if (msg) {
           captions.handle(msg);
           thread.handleCaption(msg);
+          if ((msg.type === "start" || msg.type === "reveal") && msg.text) {
+            lastCaption = msg.text;
+          }
+          publishShell();
         }
       }
       if (!topic || topic === "alfred.user") {
@@ -191,7 +253,9 @@ async function connect(): Promise<void> {
 
   await next.connect(payload.url, payload.token);
   room = next;
+  micMuted = false;
   await publishControl(next, { type: "layout", layout });
+  await publishControl(next, { type: "mute", muted: false });
   await syncMicForLayout();
 
   for (const participant of next.remoteParticipants.values()) {
@@ -202,16 +266,19 @@ async function connect(): Promise<void> {
     }
   }
 
-  disconnectBtn.disabled = false;
+  connectBtn.disabled = false;
+  setSessionToggle(true);
   document.body.classList.add("linked");
   linkDot.classList.add("live");
   metaEl.textContent = `${payload.identity} @ ${payload.room}`;
+  updateSessionControls(true);
+  publishShell();
 }
 
 function teardownUi(status: string): void {
   setStatus(status);
   connectBtn.disabled = false;
-  disconnectBtn.disabled = true;
+  setSessionToggle(false);
   metaEl.textContent = "";
   remoteAudioEl.replaceChildren();
   waveform.detach();
@@ -223,10 +290,15 @@ function teardownUi(status: string): void {
   linkDot.classList.remove("live", "speaking");
   levelTag.textContent = "LVL --";
   room = undefined;
+  micMuted = false;
+  shhhBtn.classList.remove("active");
+  lastCaption = "";
+  updateSessionControls(false);
+  publishShell();
 }
 
 async function disconnect(): Promise<void> {
-  disconnectBtn.disabled = true;
+  connectBtn.disabled = true;
   await room?.disconnect();
   teardownUi("Offline");
 }
@@ -271,16 +343,29 @@ document.querySelector<HTMLFormElement>("#composer")!.addEventListener("submit",
 });
 
 connectBtn.addEventListener("click", () => {
+  if (room) {
+    void disconnect();
+    return;
+  }
   void connect().catch((err) => {
     console.error(err);
     setStatus(err instanceof Error ? err.message : String(err));
     connectBtn.disabled = false;
+    setSessionToggle(false);
   });
 });
 
-disconnectBtn.addEventListener("click", () => {
-  void disconnect();
+shhhBtn.addEventListener("click", () => {
+  void shhh().catch((err) => console.error(err));
 });
 
+muteBtn.addEventListener("click", () => {
+  void toggleMute().catch((err) => console.error(err));
+});
+
+if (isEmbedded()) document.documentElement.classList.add("embedded");
 waveform.detach();
 applyLayoutDom("voice");
+updateSessionControls(false);
+setSessionToggle(false);
+publishShell();

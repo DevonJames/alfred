@@ -229,3 +229,122 @@ export interface OutboxItem {
   attempts: number;
   lastError: string | null;
 }
+
+/** Force-sim snapshot from GET /api/memory/graph (mirrors desktop graph UI). */
+export interface GraphNode {
+  id: string;
+  label: string;
+  type: string;
+  schemaType: string | null;
+  searchText: string;
+  degree: number;
+  updatedAt: string | null;
+}
+
+export interface GraphLink {
+  source: string;
+  target: string;
+  predicate: string;
+}
+
+export interface MemoryGraphSnapshot {
+  root: string;
+  generatedAt: string;
+  stats: {
+    nodes: number;
+    links: number;
+    recordsIndexed: number;
+    edgesIndexed: number;
+    packagesOnDisk: number;
+    rebuilt: boolean;
+  };
+  nodes: GraphNode[];
+  links: GraphLink[];
+}
+
+export interface MemoryGraphNeighbor {
+  predicate: string;
+  direction: "out" | "in";
+  id: string;
+  label: string;
+  type: string;
+}
+
+export type AudioNoteTemplate = "meeting" | "brainstorm" | "checkin" | "freeform";
+export type AudioNoteStatus = "processing" | "completed" | "failed";
+
+export interface AudioNoteActionItem {
+  text: string;
+  assignee?: string;
+  dueDate?: string;
+}
+
+export interface AudioNote {
+  id: string;
+  title: string;
+  template: AudioNoteTemplate;
+  processingStatus: AudioNoteStatus;
+  summary: string;
+  takeaways: string[];
+  nextSteps: AudioNoteActionItem[];
+  openQuestions: string[];
+  attendees: { name: string }[];
+  transcript: string;
+  audioUrl: string;
+  artifactId: string | null;
+  fileEntityId: string | null;
+  episodeId: string;
+  durationSeconds: number | null;
+  createdAt: string;
+  updatedAt: string;
+  jobId?: string;
+  job?: AudioNoteJob | null;
+}
+
+export interface AudioNoteJob {
+  id: string;
+  noteId: string;
+  status: "queued" | "processing" | "completed" | "failed";
+  progress: number;
+  message: string;
+  error: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface NoteUploadSession {
+  id: string;
+  filename: string;
+  mimeType: string;
+  byteLength: number;
+  chunkSize: number;
+  totalChunks: number;
+  received: number[];
+  status: "uploading" | "assembling" | "completed" | "failed";
+  noteId?: string;
+  jobId?: string;
+  error?: string;
+}
+
+export interface MemoryGraphNodeDetail {
+  index: {
+    id: string;
+    logical_id?: string;
+    record_type: string;
+    schema_type?: string | null;
+    name?: string | null;
+    search_text?: string | null;
+    updated_at?: string | null;
+  } | null;
+  revision: {
+    id?: string;
+    type?: string;
+    name?: string;
+    text?: string;
+    schema?: Record<string, unknown>;
+    predicate?: string;
+    object?: string;
+    [key: string]: unknown;
+  } | null;
+  neighbors: MemoryGraphNeighbor[];
+}

@@ -2,14 +2,16 @@ import {
   defaultOipMemoryRoot,
   ingestDocument,
   ingestKnowledgeDocument,
+  ingestPhotos,
   mergeAlfredMemoryBundle,
   OIP_LOCAL_MEMORY_PROVIDER_ID,
+  photoMimeFromFilename,
   type AlfredMemoryMergeReport,
   type KnowledgeIngestResult,
 } from "@alfred/memory";
 import { extractPdfText, extractPlainText, kindFromFilename } from "./text-extract.js";
 
-export type IngestUploadMode = "knowledge" | "document" | "node-bundle";
+export type IngestUploadMode = "knowledge" | "document" | "node-bundle" | "photo";
 
 export type IngestFileResult =
   | (KnowledgeIngestResult & {
@@ -46,10 +48,14 @@ export async function ingestUploadedFile(opts: {
   mode?: IngestUploadMode;
   profileId?: string;
   providerId?: string;
+  label?: string;
 }): Promise<IngestFileResult> {
   const mode = opts.mode ?? "knowledge";
   if (mode === "document") {
     return ingestDocumentFile(opts);
+  }
+  if (mode === "photo") {
+    return ingestPhotoFile(opts);
   }
   if (mode === "node-bundle") {
     return ingestNodeBundleFile(opts);
@@ -66,6 +72,9 @@ export async function ingestTextFile(opts: {
   const kind = kindFromFilename(opts.filename);
   if (kind === "pdf") {
     throw new Error(`PDF files require Document ingest mode: ${opts.filename}`);
+  }
+  if (kind === "image") {
+    throw new Error(`Photos require Photo ingest mode: ${opts.filename}`);
   }
   if (kind === "unknown") {
     throw new Error(`Unsupported file type (use .txt, .md, .rtf, or .json): ${opts.filename}`);
@@ -125,6 +134,59 @@ export async function ingestDocumentFile(opts: {
     kind,
     byteSize: opts.bytes.byteLength,
     textChars: extracted.text.length,
+  };
+}
+
+export async function ingestPhotoFile(opts: {
+  filename: string;
+  bytes: Buffer;
+  profileId?: string;
+  providerId?: string;
+  label?: string;
+}): Promise<IngestFileResult> {
+  return ingestPhotoFiles({
+    files: [{ filename: opts.filename, bytes: opts.bytes }],
+    profileId: opts.profileId,
+    providerId: opts.providerId,
+    label: opts.label,
+  });
+}
+
+export async function ingestPhotoFiles(opts: {
+  files: Array<{ filename: string; bytes: Buffer }>;
+  profileId?: string;
+  providerId?: string;
+  label?: string;
+}): Promise<IngestFileResult> {
+  if (!opts.files.length) {
+    throw new Error("Photo mode requires at least one image");
+  }
+  for (const file of opts.files) {
+    if (kindFromFilename(file.filename) !== "image") {
+      throw new Error(
+        `Photo mode accepts image files (.jpg, .png, .webp, .gif, .heic): ${file.filename}`,
+      );
+    }
+  }
+
+  const providerId =
+    opts.providerId ?? process.env.ALFRED_MEMORY_PROVIDER_ID ?? OIP_LOCAL_MEMORY_PROVIDER_ID;
+  const result = await ingestPhotos({
+    files: opts.files.map((file) => ({
+      filename: file.filename,
+      bytes: file.bytes,
+      mimeType: photoMimeFromFilename(file.filename),
+    })),
+    label: opts.label,
+    profileId: opts.profileId,
+    providerId,
+  });
+
+  return {
+    ...result,
+    kind: "image",
+    byteSize: opts.files.reduce((sum, file) => sum + file.bytes.byteLength, 0),
+    textChars: result.textChars,
   };
 }
 

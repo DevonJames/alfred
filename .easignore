@@ -1,0 +1,64 @@
+# EAS reads .easignore from the git repo root (not apps/iOS-client).
+# When this file exists, .gitignore rules are NOT applied — keep both in sync.
+
+# --- from .gitignore ---
+node_modules
+dist
+coverage
+.env
+.env.local
+*.log
+.DS_Store
+.turbo
+tmp
+*.tsbuildinfo
+
+# Local runtime / memory stores
+/data/
+/data copy/
+**/memory-oip/
+*.alfred-memory.zip
+from-a.alfred-memory.zip
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+/alfred-notes-iOS/
+ChatGPT Image*
+
+apps/iOS-client/ios/Pods
+apps/iOS-client/ios/build
+apps/iOS-client/ios/DerivedData
+apps/iOS-client/ios/**/xcuserdata
+apps/iOS-client/android/.gradle
+apps/iOS-client/android/app/build
+apps/iOS-client/.expo
+apps/iOS-client/dist
+apps/iOS-client/.env
+apps/iOS-client/web-build
+apps/iOS-client/expo-env.d.ts
+apps/iOS-client/.metro-health-check*
+
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+
+# --- EAS-only: keep uploads small ---
+.git
+from-a.alfred-memory.zip
+*.zip
+ChatGPT Image*
+
+# Other apps / packages not needed for the iOS client build
+# (ios-client has no workspace: deps; it installs via its own lockfile when scoped)
+/apps/desktop-client
+/apps/voice-client
+/apps/voice-agent
+/apps/simulator
+/packages
+/docs
+/icons
+/scripts
+/data

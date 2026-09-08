@@ -116,8 +116,11 @@ function guessExt(mimeType?: string): string {
     "audio/mpeg": ".mp3",
     "audio/wav": ".wav",
     "application/pdf": ".pdf",
+    "application/rtf": ".rtf",
+    "text/rtf": ".rtf",
     "text/plain": ".txt",
     "text/markdown": ".md",
+    "application/json": ".json",
   };
   return map[mimeType] ?? "";
 }

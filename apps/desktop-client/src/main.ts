@@ -4,7 +4,7 @@
  * Usage:
  *   1. Set ALFRD_CLOUD_URL / ALFRD_RELAY_URL in repo-root .env (defaults to api.alfrd.net)
  *   2. pnpm desktop
- *   3. Open http://127.0.0.1:3000/ for the local UI hub (voice uplink, memory, …)
+ *   3. Open http://127.0.0.1:3000/ for the app shell (Talk, graph, ingest, claim)
  *   4. Open http://127.0.0.1:3000/connect/claim for QR + claim secret
  *   5. Claim from alfrd.net account; mobile client discovers LAN → WAN → relay
  *   6. Pair device (PIN), then call /api/session/token and /api/memory/*
@@ -22,9 +22,16 @@ import { sidecarHostname, sidecarPort, isSidecarMode } from "./lib/sidecar-mode.
 import { sidecarRuntimeReady, warmupSidecarMemory } from "./lib/text-session.js";
 import { apiMemoryRouter } from "./routes/api-memory.js";
 import { briefingRouter } from "./routes/briefing.js";
+import { briefingUiRouter } from "./routes/briefing-ui.js";
 import { connectRouter } from "./routes/connect.js";
 import { conversationRouter } from "./routes/conversation.js";
+import { loadNoteJobs } from "./lib/notes/jobs.js";
+import { resumeInterruptedNoteJobs } from "./lib/notes/service.js";
+import { resolveFfmpeg, resolveFfprobe } from "./lib/notes/audio-chunks.js";
+import { pruneStaleNoteUploads, resumeAssemblingNoteUploads } from "./lib/notes/uploads.js";
+import { apiNotesRouter } from "./routes/api-notes.js";
 import { memoryRouter } from "./routes/memory.js";
+import { notesUiRouter } from "./routes/notes-ui.js";
 import { pairRouter } from "./routes/pair.js";
 import { sessionRouter } from "./routes/session.js";
 import { tokenRouter } from "./routes/token.js";
@@ -57,6 +64,9 @@ const statusPayload = {
   memoryIngest: "/memory/ingest",
   memoryGraph: "/memory/graph",
   briefing: "/api/briefing",
+  briefingPrefs: "/briefing",
+  notes: "/notes",
+  notesApi: "/api/notes",
   memoryDue: "/api/memory/due",
   token: "/api/token",
 } as const;
@@ -66,7 +76,37 @@ app.get("/", async (c) => {
   return c.html(html);
 });
 
-app.get("/status", (c) => c.json({ ...statusPayload, sidecar, service: sidecar ? "alfred-conversation-sidecar" : statusPayload.service }));
+app.get("/alfred-base.js", async (c) => {
+  const js = await readFile(resolve(uiDir, "alfred-base.js"), "utf8");
+  return c.body(js, 200, {
+    "Content-Type": "application/javascript; charset=utf-8",
+    "Cache-Control": "no-store",
+  });
+});
+
+app.get("/shell.js", async (c) => {
+  const js = await readFile(resolve(uiDir, "shell.js"), "utf8");
+  return c.body(js, 200, {
+    "Content-Type": "application/javascript; charset=utf-8",
+    "Cache-Control": "no-store",
+  });
+});
+
+app.get("/embed-bridge.js", async (c) => {
+  const js = await readFile(resolve(uiDir, "embed-bridge.js"), "utf8");
+  return c.body(js, 200, {
+    "Content-Type": "application/javascript; charset=utf-8",
+    "Cache-Control": "no-store",
+  });
+});
+
+app.get("/status", (c) =>
+  c.json({
+    ...statusPayload,
+    sidecar,
+    service: sidecar ? "alfred-conversation-sidecar" : statusPayload.service,
+  }),
+);
 
 app.get("/health", async (c) => {
   const runtime = sidecarRuntimeReady();
@@ -100,13 +140,20 @@ app.route("/api", tokenRouter);
 app.route("/api/session", sessionRouter);
 app.route("/api/conversation", conversationRouter);
 app.route("/api/memory", apiMemoryRouter);
+app.route("/api/notes", apiNotesRouter);
 app.route("/api", briefingRouter);
+
+// Local Daily Brief preferences UI (public, like ingest/claim).
+app.route("/briefing", briefingUiRouter);
+app.route("/notes", notesUiRouter);
 
 // Local browser UIs (ingest/graph) stay public; iOS uses authenticated /api/memory.
 app.route("/memory", memoryRouter);
 
 // Voice SPA assets stay public; token mint for SPA is /api/token above.
 app.route("/voice", voiceRouter);
+
+const LONG_REQUEST_MS = 3 * 60 * 60 * 1000;
 
 const server = serve({ fetch: app.fetch, port, hostname }, (info) => {
   const host = hostname === "0.0.0.0" ? "127.0.0.1" : hostname;
@@ -127,12 +174,21 @@ const server = serve({ fetch: app.fetch, port, hostname }, (info) => {
   console.log(`  Voice uplink:  http://127.0.0.1:${info.port}/voice/`);
   console.log(`  Memory ingest: http://127.0.0.1:${info.port}/memory/ingest`);
   console.log(`  Memory graph:  http://127.0.0.1:${info.port}/memory/graph`);
+  console.log(`  Graph (beta):  http://127.0.0.1:${info.port}/memory/graph-beta`);
   console.log(`  Briefing:      http://127.0.0.1:${info.port}/api/briefing`);
+  console.log(`  Brief prefs:   http://127.0.0.1:${info.port}/briefing`);
+  console.log(`  Notes:         http://127.0.0.1:${info.port}/notes`);
   console.log(`  Cloud: ${process.env.ALFRD_CLOUD_URL ?? "https://api.alfrd.net"}`);
   console.log(`  Relay: ${process.env.ALFRD_RELAY_URL ?? "wss://api.alfrd.net"}`);
   console.log(`  Name:  ${process.env.DESKTOP_CLIENT_NAME ?? "Alfred"}`);
   console.log(`  Voice agent: run \`pnpm voice\` separately for Talk audio`);
 });
+
+if ("requestTimeout" in server) {
+  server.requestTimeout = LONG_REQUEST_MS;
+  server.timeout = LONG_REQUEST_MS;
+  server.headersTimeout = 10 * 60 * 1000;
+}
 
 server.on("error", (err: NodeJS.ErrnoException) => {
   if (err.code === "EADDRINUSE") {
@@ -158,6 +214,30 @@ if (!sidecar) {
 }
 
 const stopXIngest = startXIngestScheduler();
+void loadNoteJobs()
+  .then(() => resumeInterruptedNoteJobs())
+  .catch((err) => console.error("[notes] resume failed:", err));
+void pruneStaleNoteUploads();
+void resumeAssemblingNoteUploads();
+void warnNotesRuntime();
+
+async function warnNotesRuntime(): Promise<void> {
+  const ffmpeg = await resolveFfmpeg();
+  const ffprobe = await resolveFfprobe();
+  if (ffmpeg) console.log(`[notes] ffmpeg: ${ffmpeg}`);
+  else {
+    console.warn(
+      "[notes] ffmpeg not found. Long recordings will fail OpenAI's 25 MB limit. Install with `brew install ffmpeg`.",
+    );
+  }
+  if (!ffprobe) console.warn("[notes] ffprobe not found. Duration probes will be skipped.");
+  if (!process.env.VOICE_STT_URL && !process.env.OPENAI_API_KEY) {
+    console.warn("[notes] No VOICE_STT_URL or OPENAI_API_KEY — transcription will fail.");
+  }
+  if (!process.env.GROK_API_KEY && !process.env.XAI_API_KEY && !process.env.OPENAI_API_KEY) {
+    console.warn("[notes] No GROK_API_KEY / XAI_API_KEY / OPENAI_API_KEY — summaries will be empty.");
+  }
+}
 
 function shutdown(signal: string) {
   console.log(`\nShutting down (${signal})…`);

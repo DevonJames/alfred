@@ -35,6 +35,8 @@ export interface GenerateBriefingOptions {
   refresh?: boolean;
   llm?: GreetingLlm | null;
   markSurfaced?: boolean;
+  /** Opt-in: include rocket launches only when the user asked for them. Default false. */
+  includeLaunches?: boolean;
 }
 
 export async function generateBriefing(
@@ -42,18 +44,33 @@ export async function generateBriefing(
 ): Promise<BriefingPayload> {
   const now = opts.now ?? new Date();
   const { config } = opts;
+  const includeLaunches = opts.includeLaunches === true;
   const dayKey = getBriefingDayKey(now, config.timezone, config.dayStart);
   const cache = new BriefingCache(config.cacheDir);
 
   if (!opts.refresh) {
-    const hit = await cache.get(dayKey);
+    const hit = await cache.get(dayKey, includeLaunches);
     if (hit) return hit;
   }
 
   const dateLabel = formatBriefingDateLabel(dayKey, config.timezone);
   const windowEnd = briefingDayWindowEndIso(dayKey, config.timezone, config.dayStart);
 
-  const weather = config.zip ? await fetchWeather(config.zip) : null;
+  const weatherLocation = config.zip || (config.latitude != null && config.longitude != null ? "home" : null);
+  const weather = weatherLocation
+    ? await fetchWeather(
+        weatherLocation,
+        false,
+        config.latitude != null && config.longitude != null
+          ? {
+              lat: config.latitude,
+              lon: config.longitude,
+              timezone: config.timezone,
+              name: config.zip ?? "Home",
+            }
+          : null,
+      )
+    : null;
   const weatherText = weather ? formatWeatherSpeech(weather) : null;
 
   const greeting = await buildGreeting({
@@ -69,8 +86,8 @@ export async function generateBriefing(
   });
 
   const [launches, crypto, headlines, reminders] = await Promise.all([
-    fetchLaunches(config.launchLocationIds),
-    fetchCrypto(config.cryptoId),
+    includeLaunches ? fetchLaunches(config.launchLocationIds) : Promise.resolve([]),
+    config.includeCrypto ? fetchCrypto(config.cryptoId) : Promise.resolve(null),
     fetchNewsHeadlines(config.newsSources),
     loadDueReminders(opts.memory, {
       date: dayKey,
@@ -80,7 +97,9 @@ export async function generateBriefing(
   ]);
 
   const marketLines: string[] = [];
-  if (crypto) marketLines.push(formatCryptoDisplay(crypto, config.cryptoId));
+  if (crypto && config.includeCrypto) {
+    marketLines.push(formatCryptoDisplay(crypto, config.cryptoId));
+  }
 
   let indexQuote = null;
   let metalsQuote = null;
@@ -95,7 +114,7 @@ export async function generateBriefing(
 
   const marketsText =
     formatMarketsSpeechFromQuotes({
-      crypto,
+      crypto: config.includeCrypto ? crypto : null,
       cryptoId: config.cryptoId,
       index: indexQuote,
       indexSymbol: config.includeIndex ? config.indexSymbol : null,
@@ -115,7 +134,7 @@ export async function generateBriefing(
     launches,
     launchesText: formatLaunchesSpeech(launches),
     markets: {
-      crypto,
+      crypto: config.includeCrypto ? crypto : null,
       cryptoId: config.cryptoId,
       index: indexQuote,
       indexSymbol: config.includeIndex ? config.indexSymbol : null,
@@ -140,7 +159,7 @@ export async function generateBriefing(
     generated: data.generated,
   };
 
-  await cache.set(dayKey, payload);
+  await cache.set(dayKey, payload, includeLaunches);
 
   if (opts.markSurfaced && reminders.length) {
     await markRemindersSurfaced(opts.memory, reminders);

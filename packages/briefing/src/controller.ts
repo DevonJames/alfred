@@ -4,6 +4,7 @@ import { getBriefingDayKey } from "./day.js";
 import { generateBriefing, type GenerateBriefingOptions } from "./generate.js";
 import type { GreetingLlm } from "./greeting.js";
 import { detectBriefingIntent, type BriefingIntentKind } from "./intent.js";
+import { resolveBriefingConfig, resolveIncludeLaunches } from "./prefs.js";
 import { BriefingStateStore, isSoftOfferEligible } from "./state.js";
 import type { BriefingPayload } from "./types.js";
 import { BriefingCache } from "./cache.js";
@@ -20,20 +21,31 @@ export type BriefingTurnDecision =
 
 /**
  * Facade for voice + HTTP. Safe to construct once per voice process.
+ * Prefs are re-read on each generate so UI saves apply without restart.
  */
 export class BriefingController {
-  readonly config: BriefingConfig;
   readonly state: BriefingStateStore;
   private firstTurnOfProcess = true;
   private offeredThisProcess = false;
+  private readonly configOverrides: Partial<BriefingConfig> | undefined;
 
   constructor(
     private readonly memory: OipLocalMemoryProvider | null,
     config?: Partial<BriefingConfig>,
     private readonly llm?: GreetingLlm | null,
   ) {
-    this.config = loadBriefingConfig(config);
-    this.state = new BriefingStateStore(this.config.stateDir);
+    this.configOverrides = config;
+    const base = loadBriefingConfig(config);
+    this.state = new BriefingStateStore(base.stateDir);
+  }
+
+  /** Sync snapshot (env + overrides only). Prefer resolveConfig() for prefs. */
+  get config(): BriefingConfig {
+    return loadBriefingConfig(this.configOverrides);
+  }
+
+  async resolveConfig(): Promise<BriefingConfig> {
+    return resolveBriefingConfig(this.configOverrides);
   }
 
   get offerCloser(): string {
@@ -56,18 +68,19 @@ export class BriefingController {
   async shouldSoftOffer(now = new Date()): Promise<boolean> {
     if (!this.firstTurnOfProcess) return false;
     if (this.offeredThisProcess) return false;
-    const dayKey = getBriefingDayKey(now, this.config.timezone, this.config.dayStart);
+    const config = await this.resolveConfig();
+    const dayKey = getBriefingDayKey(now, config.timezone, config.dayStart);
     const st = await this.state.load();
     return isSoftOfferEligible(dayKey, st);
   }
 
-  /** Call after handling a committed user turn (whether or not we offered). */
   noteUserTurnSeen(): void {
     this.firstTurnOfProcess = false;
   }
 
   async markOffered(now = new Date()): Promise<void> {
-    const dayKey = getBriefingDayKey(now, this.config.timezone, this.config.dayStart);
+    const config = await this.resolveConfig();
+    const dayKey = getBriefingDayKey(now, config.timezone, config.dayStart);
     this.offeredThisProcess = true;
     this.firstTurnOfProcess = false;
     await this.state.update({
@@ -77,7 +90,8 @@ export class BriefingController {
   }
 
   async markDeclined(now = new Date()): Promise<void> {
-    const dayKey = getBriefingDayKey(now, this.config.timezone, this.config.dayStart);
+    const config = await this.resolveConfig();
+    const dayKey = getBriefingDayKey(now, config.timezone, config.dayStart);
     this.firstTurnOfProcess = false;
     await this.state.update({
       lastDeclinedDay: dayKey,
@@ -86,7 +100,8 @@ export class BriefingController {
   }
 
   async markPlayed(now = new Date()): Promise<void> {
-    const dayKey = getBriefingDayKey(now, this.config.timezone, this.config.dayStart);
+    const config = await this.resolveConfig();
+    const dayKey = getBriefingDayKey(now, config.timezone, config.dayStart);
     this.firstTurnOfProcess = false;
     await this.state.update({
       lastPlayedDay: dayKey,
@@ -94,32 +109,47 @@ export class BriefingController {
     });
   }
 
-  async generate(opts: { refresh?: boolean; markSurfaced?: boolean; now?: Date } = {}): Promise<BriefingPayload> {
+  async generate(
+    opts: {
+      refresh?: boolean;
+      markSurfaced?: boolean;
+      now?: Date;
+      includeLaunches?: boolean;
+      userText?: string;
+    } = {},
+  ): Promise<BriefingPayload> {
+    const config = await this.resolveConfig();
+    const includeLaunches = resolveIncludeLaunches(config.launchesMode, {
+      userText: opts.userText,
+      requestFlag: opts.includeLaunches === true,
+    });
     return generateBriefing({
-      config: this.config,
+      config,
       memory: this.memory,
       llm: this.llm,
       refresh: opts.refresh,
       markSurfaced: opts.markSurfaced,
       now: opts.now,
+      includeLaunches,
     });
   }
 
-  /** Drop today's cached briefing so the next play regenerates without stale reminders. */
   async invalidateTodayCache(now = new Date()): Promise<void> {
-    const dayKey = getBriefingDayKey(now, this.config.timezone, this.config.dayStart);
-    await new BriefingCache(this.config.cacheDir).invalidate(dayKey);
+    const config = await this.resolveConfig();
+    const dayKey = getBriefingDayKey(now, config.timezone, config.dayStart);
+    await new BriefingCache(config.cacheDir).invalidate(dayKey);
   }
 
-  /**
-   * Voice entry: classify turn and either play briefing, decline, or continue chat
-   * (optionally with soft-offer append).
-   */
   async handleUserTurn(text: string, now = new Date()): Promise<BriefingTurnDecision> {
     const intent = await this.detectIntent(text);
 
     if (intent === "explicitAsk" || intent === "affirmOffer") {
-      const payload = await this.generate({ refresh: true, markSurfaced: true, now });
+      const payload = await this.generate({
+        refresh: true,
+        markSurfaced: true,
+        now,
+        userText: text,
+      });
       await this.markPlayed(now);
       return { action: "play", speech: payload.speech, payload };
     }

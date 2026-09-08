@@ -5,7 +5,9 @@ export type UiLayout = "voice" | "chat";
 export type UiCommand =
   | { type: "layout"; layout: UiLayout }
   | { type: "dictate"; active: boolean }
-  | { type: "text"; text: string };
+  | { type: "text"; text: string }
+  | { type: "stop" }
+  | { type: "mute"; muted: boolean };
 
 const CHANNEL = "alfred.control";
 

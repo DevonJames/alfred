@@ -14,7 +14,7 @@ import { EventLedger } from "./event-ledger.js";
 import { NoopObservability } from "./observability.js";
 import { ResponseLedger } from "./response-ledger.js";
 import { ConversationStateMachine } from "./state-machine.js";
-import { VoiceSessionController } from "./voice-session.js";
+import { looksTruncatedAssistantReply, VoiceSessionController } from "./voice-session.js";
 import {
   NullMediaPort,
   parseUiCommand,
@@ -26,9 +26,11 @@ class RecordingMediaPort extends NullMediaPort {
   captions: AssistantCaptionEvent[] = [];
   userTranscripts: UserTranscriptEvent[] = [];
   pcmFrames = 0;
+  onPlayPcm?: () => void | Promise<void>;
 
   async playPcm(): Promise<void> {
     this.pcmFrames += 1;
+    await this.onPlayPcm?.();
   }
 
   async publishCaption(event: AssistantCaptionEvent): Promise<void> {
@@ -83,6 +85,21 @@ function baseConfig(now: string): UserConfiguration {
     systemInstructions: "You are ALFRED.",
   };
 }
+
+describe("looksTruncatedAssistantReply", () => {
+  it("flags mid-stream cutoffs and allows finished sentences", () => {
+    expect(looksTruncatedAssistantReply("Exactly—the last quiet")).toBe(true);
+    expect(looksTruncatedAssistantReply("Do you mean")).toBe(true);
+    expect(looksTruncatedAssistantReply("The")).toBe(true);
+    expect(looksTruncatedAssistantReply("You’re in that liminal stretch—")).toBe(true);
+    expect(
+      looksTruncatedAssistantReply(
+        "Doing well, Devon—systems awake, standards intact. How’re you holding up?",
+      ),
+    ).toBe(false);
+    expect(looksTruncatedAssistantReply("I’m here, Devon.")).toBe(false);
+  });
+});
 
 describe("VoiceSessionController", () => {
   it("starts provisional generation on EagerEndOfTurn and commits on EndOfTurn", async () => {
@@ -221,6 +238,214 @@ describe("VoiceSessionController", () => {
           "stop actually book a flight to Seattle tonight",
       ),
     ).toBe(true);
+
+    await voice.stop();
+  });
+
+  it("queues novel follow-ups spoken while Alfred is still talking (no interrupt cue)", async () => {
+    const clock = new FakeClock();
+    const persistence = createInMemoryPersistence();
+    const events = new EventLedger(persistence.events, clock, new NoopObservability());
+    const sessionId = "sess_busy_followup";
+    const fsm = new ConversationStateMachine(sessionId, events);
+    await fsm.force("Listening", "start");
+    const responseLedger = new ResponseLedger(persistence.responseLedgers, events, clock);
+    const registry = new ProviderRegistry();
+    const stt = new FakeStreamingSTTProvider();
+    registry.registerStt(stt);
+    registry.registerLlm(
+      new FakeLLMProvider("llm.fake", {
+        reply: (user) =>
+          user.includes("Agentic")
+            ? "Love it — Agentic Local Framework for Retrieving Epistemic Data."
+            : "Absolutely, Devon. Let's hear it.",
+      }),
+    );
+    registry.registerTts(new FakeMultiContextTTSProvider());
+    const memory = new MemoryController("p1", persistence.memorySettings);
+    memory.register(new FakeMemoryProvider());
+    await memory.initialize();
+    const media = new RecordingMediaPort();
+    let session: import("@alfred/providers").FakeStreamingSTTSession | undefined;
+
+    media.onPlayPcm = async () => {
+      // User answers while Alfred is still saying "let's hear it" — no "stop"/"hold on".
+      session?.pushEvent({
+        type: "end_of_turn",
+        text: "Agentic local framework for retrieving epistemic data.",
+        metadata: {},
+      });
+      await new Promise((r) => setTimeout(r, 30));
+    };
+
+    const voice = new VoiceSessionController({
+      sessionId,
+      profileId: "p1",
+      config: baseConfig(clock.nowIso()),
+      clock,
+      events,
+      fsm,
+      responseLedger,
+      providers: registry,
+      memory,
+      agents: new AgentRouter(),
+      media,
+      sttSessionFactory: async () => stt.openSession(),
+      ttsSessionFactory: async () =>
+        registry.getTts("tts.fake.multicontext").openMultiContextSession!(),
+    });
+    await voice.start();
+    session = stt.lastSession.current!;
+
+    session.pushEvent({
+      type: "end_of_turn",
+      text: "Okay. Are you ready for your canonical Alfred backronym?",
+      metadata: {},
+    });
+    await new Promise((r) => setTimeout(r, 200));
+
+    const commits = (await events.list(sessionId)).filter((e) => e.type === "turn.committed");
+    expect(
+      commits.some(
+        (c) =>
+          (c.payload as { text?: string }).text ===
+          "Agentic local framework for retrieving epistemic data.",
+      ),
+    ).toBe(true);
+
+    await voice.stop();
+  });
+
+  it("commits short follow-ups during post-TTS echo cooldown (not only barge-ins)", async () => {
+    const clock = new FakeClock();
+    const persistence = createInMemoryPersistence();
+    const events = new EventLedger(persistence.events, clock, new NoopObservability());
+    const sessionId = "sess_echo_followup";
+    const fsm = new ConversationStateMachine(sessionId, events);
+    await fsm.force("Listening", "start");
+    const responseLedger = new ResponseLedger(persistence.responseLedgers, events, clock);
+    const registry = new ProviderRegistry();
+    const stt = new FakeStreamingSTTProvider();
+    registry.registerStt(stt);
+    // Long memory-style reply — lots of tokens for false echo overlap.
+    registry.registerLlm(
+      new FakeLLMProvider("llm.fake", {
+        reply:
+          "From your notes, the Alexandria project timeline has three milestones and a review with Devon next week about shipping.",
+      }),
+    );
+    registry.registerTts(new FakeMultiContextTTSProvider());
+    const memory = new MemoryController("p1", persistence.memorySettings);
+    memory.register(new FakeMemoryProvider());
+    await memory.initialize();
+
+    const voice = new VoiceSessionController({
+      sessionId,
+      profileId: "p1",
+      config: baseConfig(clock.nowIso()),
+      clock,
+      events,
+      fsm,
+      responseLedger,
+      providers: registry,
+      memory,
+      agents: new AgentRouter(),
+      media: new NullMediaPort(),
+      sttSessionFactory: async () => stt.openSession(),
+      ttsSessionFactory: async () =>
+        registry.getTts("tts.fake.multicontext").openMultiContextSession!(),
+    });
+    await voice.start();
+    const session = stt.lastSession.current!;
+
+    session.pushEvent({
+      type: "end_of_turn",
+      text: "What is in my notes about the Alexandria project?",
+      metadata: {},
+    });
+    await new Promise((r) => setTimeout(r, 80));
+
+    // Still inside the default 2.5s echo guard — short novel follow-up must commit.
+    // (Old gate required isConfidentBargeIn and dropped these every other turn.)
+    session.pushEvent({ type: "end_of_turn", text: "What's the weather?", metadata: {} });
+    await new Promise((r) => setTimeout(r, 80));
+
+    const commits = (await events.list(sessionId)).filter((e) => e.type === "turn.committed");
+    expect(commits.map((c) => (c.payload as { text?: string }).text)).toEqual([
+      "What is in my notes about the Alexandria project?",
+      "What's the weather?",
+    ]);
+
+    await voice.stop();
+  });
+
+  it("reuses EagerEOT provisional when durable memory was already in the draft", async () => {
+    const clock = new FakeClock();
+    const persistence = createInMemoryPersistence();
+    const events = new EventLedger(persistence.events, clock, new NoopObservability());
+    const sessionId = "sess_prov_reuse";
+    const fsm = new ConversationStateMachine(sessionId, events);
+    await fsm.force("Listening", "start");
+    const responseLedger = new ResponseLedger(persistence.responseLedgers, events, clock);
+    const registry = new ProviderRegistry();
+    const stt = new FakeStreamingSTTProvider();
+    const llm = new FakeLLMProvider("llm.fake", { reply: "From your notes: ship next week." });
+    registry.registerStt(stt);
+    registry.registerLlm(llm);
+    registry.registerTts(new FakeMultiContextTTSProvider());
+
+    class NoteMemory extends FakeMemoryProvider {
+      override async retrieve(query: Parameters<FakeMemoryProvider["retrieve"]>[0]) {
+        const result = await super.retrieve(query);
+        return {
+          ...result,
+          items: result.items.map((item) => ({
+            ...item,
+            provenance: { ...item.provenance, kind: "note" },
+          })),
+        };
+      }
+    }
+    const memory = new MemoryController("p1", persistence.memorySettings);
+    memory.register(new NoteMemory("memory.fake", [{ content: "Alexandria ships next week" }]));
+    await memory.initialize();
+
+    const voice = new VoiceSessionController({
+      sessionId,
+      profileId: "p1",
+      config: baseConfig(clock.nowIso()),
+      clock,
+      events,
+      fsm,
+      responseLedger,
+      providers: registry,
+      memory,
+      agents: new AgentRouter(),
+      media: new NullMediaPort(),
+      sttSessionFactory: async () => stt.openSession(),
+      ttsSessionFactory: async () =>
+        registry.getTts("tts.fake.multicontext").openMultiContextSession!(),
+    });
+    await voice.start();
+    const session = stt.lastSession.current!;
+    const ask = "What is in my notes about Alexandria?";
+
+    session.pushEvent({
+      type: "eager_end_of_turn",
+      text: ask,
+      eagerEotConfidence: 0.8,
+      metadata: {},
+    });
+    await new Promise((r) => setTimeout(r, 80));
+    expect(llm.requests.length).toBe(1);
+
+    session.pushEvent({ type: "end_of_turn", text: ask, metadata: {} });
+    await new Promise((r) => setTimeout(r, 100));
+
+    // Must not start a second LLM call — that was the latency regression.
+    expect(llm.requests.length).toBe(1);
+    const commits = (await events.list(sessionId)).filter((e) => e.type === "turn.committed");
+    expect(commits).toHaveLength(1);
 
     await voice.stop();
   });
@@ -374,13 +599,19 @@ describe("parseUiCommand", () => {
     return new TextEncoder().encode(JSON.stringify(obj));
   }
 
-  it("parses layout, dictate, and text commands", () => {
+  it("parses layout, dictate, stop, mute, and text commands", () => {
     expect(
       parseUiCommand(encode({ v: 1, channel: "alfred.control", type: "layout", layout: "chat" })),
     ).toEqual({ type: "layout", layout: "chat" });
     expect(
       parseUiCommand(encode({ v: 1, channel: "alfred.control", type: "dictate", active: true })),
     ).toEqual({ type: "dictate", active: true });
+    expect(parseUiCommand(encode({ v: 1, channel: "alfred.control", type: "stop" }))).toEqual({
+      type: "stop",
+    });
+    expect(
+      parseUiCommand(encode({ v: 1, channel: "alfred.control", type: "mute", muted: true })),
+    ).toEqual({ type: "mute", muted: true });
     expect(
       parseUiCommand(encode({ v: 1, channel: "alfred.control", type: "text", text: "hello" })),
     ).toEqual({ type: "text", text: "hello" });
@@ -455,6 +686,24 @@ describe("VoiceSessionController chat layout and text turns", () => {
     await voice.stop();
   });
 
+  it("does not auto-commit STT while mic is muted", async () => {
+    const { voice, stt, events, sessionId, media } = await setup();
+    voice.handleUiCommand({ type: "mute", muted: true });
+    const session = stt.lastSession.current!;
+    session.pushEvent({ type: "end_of_turn", text: "should not hear this", metadata: {} });
+    await new Promise((r) => setTimeout(r, 40));
+    const commits = (await events.list(sessionId)).filter((e) => e.type === "turn.committed");
+    expect(commits).toHaveLength(0);
+    expect(media.userTranscripts).toHaveLength(0);
+    voice.handleUiCommand({ type: "mute", muted: false });
+    session.pushEvent({ type: "end_of_turn", text: "hello after unmute", metadata: {} });
+    await new Promise((r) => setTimeout(r, 80));
+    const after = (await events.list(sessionId)).filter((e) => e.type === "turn.committed");
+    expect(after).toHaveLength(1);
+    expect((after[0]?.payload as { text?: string }).text).toBe("hello after unmute");
+    await voice.stop();
+  });
+
   it("does not auto-commit STT while chat layout is active", async () => {
     const { voice, stt, events, sessionId, media } = await setup();
     voice.handleUiCommand({ type: "layout", layout: "chat" });
@@ -511,5 +760,143 @@ describe("VoiceSessionController chat layout and text turns", () => {
     );
     expect(media.pcmFrames).toBe(0);
     await voice.stop();
+  });
+
+  it("reopens STT after the streaming session ends so a second client can be heard", async () => {
+    const clock = new FakeClock();
+    const persistence = createInMemoryPersistence();
+    const events = new EventLedger(persistence.events, clock, new NoopObservability());
+    const sessionId = "sess_stt_reconnect";
+    const fsm = new ConversationStateMachine(sessionId, events);
+    await fsm.force("Listening", "start");
+    const responseLedger = new ResponseLedger(persistence.responseLedgers, events, clock);
+    const registry = new ProviderRegistry();
+    const stt = new FakeStreamingSTTProvider();
+    registry.registerStt(stt);
+    registry.registerLlm(new FakeLLMProvider("llm.fake", { reply: "Heard you again." }));
+    registry.registerTts(new FakeMultiContextTTSProvider());
+    const memory = new MemoryController("p1", persistence.memorySettings);
+    memory.register(new FakeMemoryProvider());
+    await memory.initialize();
+    const agents = new AgentRouter();
+    agents.register(createCodexStub());
+
+    let openCount = 0;
+    const voice = new VoiceSessionController({
+      sessionId,
+      profileId: "p1",
+      config: baseConfig(clock.nowIso()),
+      clock,
+      events,
+      fsm,
+      responseLedger,
+      providers: registry,
+      memory,
+      agents,
+      media: new NullMediaPort(),
+      sttSessionFactory: async () => {
+        openCount += 1;
+        return stt.openSession();
+      },
+      ttsSessionFactory: async () =>
+        registry.getTts("tts.fake.multicontext").openMultiContextSession!(),
+    });
+
+    await voice.start();
+    expect(openCount).toBe(1);
+    const first = stt.lastSession.current!;
+    // Simulate Deepgram idle-close after the first client disconnects.
+    first.end();
+    await new Promise((r) => setTimeout(r, 400));
+    expect(openCount).toBeGreaterThanOrEqual(2);
+
+    const second = stt.lastSession.current!;
+    expect(second).not.toBe(first);
+    second.pushEvent({
+      type: "end_of_turn",
+      text: "Hello again after reconnect",
+      metadata: {},
+    });
+    await new Promise((r) => setTimeout(r, 80));
+
+    const commits = (await events.list(sessionId)).filter((e) => e.type === "turn.committed");
+    expect(commits.length).toBeGreaterThanOrEqual(1);
+    expect(
+      commits.some(
+        (c) => (c.payload as { text?: string }).text === "Hello again after reconnect",
+      ),
+    ).toBe(true);
+
+    await voice.stop();
+  });
+
+  it("still answers the next utterance after Shhh mid-speech", async () => {
+    const prevCooldown = process.env.ALFRED_ECHO_COOLDOWN_MS;
+    process.env.ALFRED_ECHO_COOLDOWN_MS = "0";
+    try {
+      const clock = new FakeClock();
+      const persistence = createInMemoryPersistence();
+      const events = new EventLedger(persistence.events, clock, new NoopObservability());
+      const sessionId = "sess_shhh";
+      const fsm = new ConversationStateMachine(sessionId, events);
+      await fsm.force("Listening", "start");
+      const responseLedger = new ResponseLedger(persistence.responseLedgers, events, clock);
+      const registry = new ProviderRegistry();
+      const stt = new FakeStreamingSTTProvider();
+      const llm = new FakeLLMProvider("llm.fake", {
+        reply: (user) => (/second/i.test(user) ? "Second answer." : "Long first answer to hush."),
+      });
+      registry.registerStt(stt);
+      registry.registerLlm(llm);
+      registry.registerTts(new FakeMultiContextTTSProvider());
+      const memory = new MemoryController("p1", persistence.memorySettings);
+      memory.register(new FakeMemoryProvider());
+      await memory.initialize();
+      const media = new RecordingMediaPort();
+      const voice = new VoiceSessionController({
+        sessionId,
+        profileId: "p1",
+        config: baseConfig(clock.nowIso()),
+        clock,
+        events,
+        fsm,
+        responseLedger,
+        providers: registry,
+        memory,
+        agents: new AgentRouter(),
+        media,
+        sttSessionFactory: async () => stt.openSession(),
+        ttsSessionFactory: async () =>
+          registry.getTts("tts.fake.multicontext").openMultiContextSession!(),
+      });
+      await voice.start();
+
+      let stopped = false;
+      media.onPlayPcm = async () => {
+        if (stopped) return;
+        stopped = true;
+        voice.handleUiCommand({ type: "stop" });
+      };
+
+      const session = stt.lastSession.current!;
+      session.pushEvent({ type: "end_of_turn", text: "Tell me something long", metadata: {} });
+      await new Promise((r) => setTimeout(r, 100));
+      expect(stopped).toBe(true);
+
+      const pcmAfterStop = media.pcmFrames;
+      session.pushEvent({ type: "end_of_turn", text: "second question please", metadata: {} });
+      await new Promise((r) => setTimeout(r, 100));
+
+      expect(media.pcmFrames).toBeGreaterThan(pcmAfterStop);
+      const commits = (await events.list(sessionId)).filter((e) => e.type === "turn.committed");
+      expect(
+        commits.some((c) => (c.payload as { text?: string }).text === "second question please"),
+      ).toBe(true);
+
+      await voice.stop();
+    } finally {
+      if (prevCooldown === undefined) delete process.env.ALFRED_ECHO_COOLDOWN_MS;
+      else process.env.ALFRED_ECHO_COOLDOWN_MS = prevCooldown;
+    }
   });
 });

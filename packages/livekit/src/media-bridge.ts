@@ -73,6 +73,11 @@ export class LiveKitMediaBridge implements MediaPort {
     }
   }
 
+  /** True after stopPlayback until resumePlayback — callers must drop in-flight frames. */
+  isPlaybackStopped(): boolean {
+    return this.stopped;
+  }
+
   /** Room publisher listens here to clear AudioSource queues on barge-in. */
   onStopPlayback(handler: (reason?: string) => void): () => void {
     this.stopHandlers.add(handler);

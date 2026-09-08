@@ -45,7 +45,7 @@ export async function upsertFolderEntity(
 ): Promise<MemoryRevision> {
   const body = {
     name: source.label,
-    text: `Documentation folder at ${source.path}`,
+    text: source.label,
     schemaType: SCHEMA_ORG.Collection,
     schema: {
       "@type": "Collection",
@@ -79,6 +79,7 @@ export async function writeDocsFileToOip(opts: {
   relPath: string;
   bytes: Buffer;
   text: string;
+  mimeType?: string;
   chunks: DocsChunk[];
   extracted: Array<{ chunk: DocsChunk; result: MemoryExtractionResult }>;
   learnedAt: string;
@@ -88,8 +89,9 @@ export async function writeDocsFileToOip(opts: {
   const { provider, source, relPath, bytes, chunks, extracted, learnedAt, previous, folderDid } =
     opts;
   const contentHash = hashBytes(bytes);
+  const mimeType = opts.mimeType ?? "text/markdown";
   const artifact = await provider.putArtifactBytes(bytes, {
-    mimeType: "text/markdown",
+    mimeType,
     originalFilename: relPath.split("/").pop(),
     name: relPath,
     reindex: false,
@@ -102,7 +104,7 @@ export async function writeDocsFileToOip(opts: {
     schema: {
       "@type": "DigitalDocument",
       name: relPath,
-      encodingFormat: "text/markdown",
+      encodingFormat: mimeType,
     },
     alfred: { entityClass: "docs_file", visibility: "private" as const, confidence: 1 },
     learnedAt,
@@ -116,11 +118,11 @@ export async function writeDocsFileToOip(opts: {
       learnedAt,
       extractionMethod: "docs_folder_ingest",
     }),
-    drefs: {
-      isPartOf: folderDid,
-      sourceArtifact: artifact.id,
-    },
-  };
+      drefs: {
+        isPartOf: folderDid,
+        sourceArtifact: artifact.id,
+      },
+    };
 
   const file = previous?.fileDid
     ? await provider.updateRecord(previous.fileDid, fileBody, { reindex: false })
@@ -147,7 +149,7 @@ export async function writeDocsFileToOip(opts: {
         extractionMethod: "docs_heading_chunk",
       }),
       drefs: {
-        isPartOf: file.id,
+        isPartOf: [file.id, folderDid],
         sourceArtifact: artifact.id,
       },
     };
@@ -224,7 +226,7 @@ export async function writeDocsFileToOip(opts: {
             extractionMethod: "docs_llm_extract",
           }),
           drefs: {
-            isPartOf: file.id,
+            isPartOf: [file.id, folderDid],
             derivedFrom: sectionDid,
             sourceArtifact: artifact.id,
           },
@@ -266,7 +268,7 @@ export async function writeDocsFileToOip(opts: {
             extractionMethod: "docs_llm_extract",
           }),
           drefs: {
-            isPartOf: file.id,
+            isPartOf: [file.id, folderDid],
             derivedFrom: sectionDid,
             subject: subjectDid,
             sourceArtifact: artifact.id,

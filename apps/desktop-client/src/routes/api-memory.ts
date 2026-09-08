@@ -4,13 +4,22 @@
 
 import { OpenAiResponsesLLMProvider } from "@alfred/provider-openai";
 import { Hono } from "hono";
-import { activeProfileId, oipForProfile } from "../lib/oip-memory.js";
 import {
   isConversationTurn,
   parseCategory,
   revisionToCard,
   type MemoryCardCategory,
 } from "../lib/memory-cards.js";
+import { loadMemoryGraph, loadMemoryRecordDetail } from "../lib/memory-graph.js";
+import {
+  artifactRefFromRevision,
+  revisionToPhoneMemory,
+  sourceArtifactIdFromRevision,
+  phoneAskSource,
+  phoneKindMatches,
+  toPhoneAskConfidence,
+} from "../lib/phone-memory.js";
+import { activeProfileId, oipForProfile } from "../lib/oip-memory.js";
 import { requireSidecarOrDevice } from "../middleware/sidecar-or-device.js";
 
 export const apiMemoryRouter = new Hono();
@@ -98,8 +107,11 @@ apiMemoryRouter.post("/", async (c) => {
 
       return c.json({
         ok: true,
+        durable: true,
         artifactId,
+        createdEntities: [],
         observation: observation ? serializeRevision(observation) : null,
+        memory: observation ? revisionToPhoneMemory(observation) : null,
       });
     }
 
@@ -139,7 +151,13 @@ apiMemoryRouter.post("/", async (c) => {
       schema: { text, name: body.name ?? body.title },
     });
 
-    return c.json({ ok: true, record: serializeRevision(record) });
+    return c.json({
+      ok: true,
+      durable: true,
+      createdEntities: [],
+      record: serializeRevision(record),
+      memory: revisionToPhoneMemory(record),
+    });
   } catch (err) {
     return c.json(
       { error: err instanceof Error ? err.message : String(err) },
@@ -151,18 +169,40 @@ apiMemoryRouter.post("/", async (c) => {
 apiMemoryRouter.post("/search", async (c) => {
   const memory = oipForProfile(profileFromRequest(c));
   try {
-    const body = await c.req.json<{ query?: string; text?: string; limit?: number }>();
+    const body = await c.req.json<{
+      query?: string;
+      text?: string;
+      limit?: number;
+      kinds?: string[];
+    }>();
     const text = (body.query ?? body.text ?? "").trim();
     if (!text) return c.json({ error: "query is required" }, 400);
+    const limit = body.limit ?? 20;
     const result = await memory.retrieve({
       text,
       profileId: activeProfileId(),
-      limit: body.limit ?? 12,
+      limit: Math.max(limit * 2, 24),
     });
+
+    const results = [];
+    for (const item of result.items) {
+      const logicalId = item.id.replace(/^did:memory:/, "").split("#")[0]!;
+      const rev = await memory.packages.readCurrent(logicalId);
+      if (!rev || rev.type === "Artifact" || isConversationTurn(rev)) continue;
+      const phone = revisionToPhoneMemory(rev, {
+        score: item.relevance ?? 0,
+        via: "semantic",
+      });
+      if (!phoneKindMatches(phone.kind, body.kinds)) continue;
+      results.push(phone);
+      if (results.length >= limit) break;
+    }
+
     return c.json({
+      interpretedAs: `meaning close to “${text}”`,
+      results,
       providerId: result.providerId,
       retrievedAt: result.retrievedAt,
-      items: result.items,
     });
   } catch (err) {
     return c.json(
@@ -185,6 +225,18 @@ apiMemoryRouter.post("/ask", async (c) => {
       limit: body.limit ?? 8,
     });
 
+    const sources = [];
+    for (const item of result.items) {
+      const logicalId = item.id.replace(/^did:memory:/, "").split("#")[0]!;
+      const rev = await memory.packages.readCurrent(logicalId);
+      if (!rev || rev.type === "Artifact" || isConversationTurn(rev)) continue;
+      const phone = revisionToPhoneMemory(rev, {
+        score: item.relevance ?? 0,
+        via: "semantic",
+      });
+      sources.push(phoneAskSource(phone, item.relevance ?? 0, "semantic"));
+    }
+
     const evidence = result.items
       .map(
         (item, i) =>
@@ -196,13 +248,15 @@ apiMemoryRouter.post("/ask", async (c) => {
 
     const apiKey = process.env.OPENAI_API_KEY?.trim();
     if (!apiKey) {
+      const fallback =
+        result.items[0]?.content ??
+        "I found no matching memories yet.";
       return c.json({
-        answer:
-          result.items[0]?.content ??
-          "I found no matching memories (retrieval-only mode; set OPENAI_API_KEY for synthesis).",
+        answer: fallback,
+        confidence: toPhoneAskConfidence(result.items[0] ? "medium" : "low"),
+        interpretedAs: query,
+        sources,
         answerMode: "retrieval_only" as const,
-        confidence: result.items[0] ? "medium" : "low",
-        items: result.items,
         providerId: result.providerId,
       });
     }
@@ -225,25 +279,24 @@ apiMemoryRouter.post("/ask", async (c) => {
     })) {
       if (chunk.type === "token" && chunk.text) answer += chunk.text;
       if (chunk.type === "error") {
-        return c.json(
-          {
-            answer: result.items[0]?.content ?? null,
-            answerMode: "retrieval_only" as const,
-            confidence: "low",
-            items: result.items,
-            error: chunk.error,
-            providerId: result.providerId,
-          },
-          200,
-        );
+        return c.json({
+          answer: result.items[0]?.content ?? "I couldn't form an answer from what I have.",
+          confidence: toPhoneAskConfidence("low"),
+          interpretedAs: query,
+          sources,
+          answerMode: "retrieval_only" as const,
+          error: chunk.error,
+          providerId: result.providerId,
+        });
       }
     }
 
     return c.json({
-      answer: answer.trim(),
+      answer: answer.trim() || "I don't know from what you've told me.",
+      confidence: toPhoneAskConfidence(result.items.length ? "high" : "low"),
+      interpretedAs: query,
+      sources,
       answerMode: "synthesized" as const,
-      confidence: result.items.length ? "high" : "low",
-      items: result.items,
       providerId: result.providerId,
     });
   } catch (err) {
@@ -520,6 +573,126 @@ apiMemoryRouter.delete("/cards/:id", async (c) => {
   try {
     await memory.delete(id);
     return c.json({ ok: true, deleted: id });
+  } catch (err) {
+    return c.json({ error: err instanceof Error ? err.message : String(err) }, 500);
+  }
+});
+
+/** GET /api/memory/graph — force-sim snapshot for the iOS / desktop graph UIs. */
+apiMemoryRouter.get("/graph", async (c) => {
+  try {
+    const artifacts = c.req.query("artifacts") === "1";
+    const forceRebuild = c.req.query("rebuild") === "1";
+    const snapshot = await loadMemoryGraph({
+      profileId: profileFromRequest(c),
+      hideArtifacts: !artifacts,
+      hideProvenanceEdges: true,
+      forceRebuild,
+    });
+    return c.json(snapshot);
+  } catch (err) {
+    return c.json(
+      {
+        error: "graph_load_failed",
+        message: err instanceof Error ? err.message : String(err),
+      },
+      500,
+    );
+  }
+});
+
+/** GET /api/memory/graph/node/:id — record + neighbors for the graph detail sheet. */
+apiMemoryRouter.get("/graph/node/:id", async (c) => {
+  try {
+    const id = decodeURIComponent(c.req.param("id"));
+    const detail = await loadMemoryRecordDetail(id, profileFromRequest(c));
+    if (!detail) {
+      return c.json({ error: "not_found", message: `No record ${id}` }, 404);
+    }
+    return c.json(detail);
+  } catch (err) {
+    return c.json(
+      {
+        error: "node_load_failed",
+        message: err instanceof Error ? err.message : String(err),
+      },
+      500,
+    );
+  }
+});
+
+/** Resolve a package id (DID or logical) into the phone Memory card shape. */
+async function loadPhoneMemory(profileId: string, rawId: string) {
+  const memory = oipForProfile(profileId);
+  memory.sqlite.open();
+  const index = memory.sqlite.getRecord(rawId);
+  const logicalId =
+    index?.logical_id ??
+    rawId.replace(/^did:memory:/, "").split("#")[0]!;
+  const rev = await memory.packages.readCurrent(logicalId);
+  if (!rev) return null;
+
+  const detail = await loadMemoryRecordDetail(index?.id ?? rev.id, profileId);
+  const related =
+    detail?.neighbors.slice(0, 40).map((n) => ({
+      id: n.id,
+      title: n.label,
+      kind:
+        n.type === "Entity" ? ("entity" as const) : n.type === "Episode" ? ("episode" as const) : ("note" as const),
+      entityType: n.type === "Entity" ? "Thing" : null,
+      relation: `${n.direction === "out" ? "→" : "←"} ${n.predicate}`,
+    })) ?? [];
+
+  let artifactId =
+    sourceArtifactIdFromRevision(rev) ||
+    detail?.file?.artifactId ||
+    null;
+  if (!artifactId && typeof rev.drefs?.recording === "string") {
+    const recording = await memory.resolveRef(rev.drefs.recording);
+    artifactId = sourceArtifactIdFromRevision(recording);
+  }
+  const artifactRev = artifactId ? await memory.resolveRef(artifactId) : null;
+  const artifact = artifactRefFromRevision(artifactRev);
+
+  return revisionToPhoneMemory(rev, {
+    related,
+    artifacts: artifact ? [artifact] : [],
+  });
+}
+
+/** GET /api/memory/recent — newest packages for the Memory tab list. */
+apiMemoryRouter.get("/recent", async (c) => {
+  const memory = oipForProfile(profileFromRequest(c));
+  const limit = Math.min(100, Math.max(1, Number(c.req.query("limit") ?? "30") || 30));
+  try {
+    const collected = [];
+    for await (const rev of memory.packages.iterateCurrentRevisions()) {
+      if (rev.type === "Artifact" || isConversationTurn(rev)) continue;
+      collected.push(rev);
+    }
+    collected.sort((a, b) => (b.updatedAt || "").localeCompare(a.updatedAt || ""));
+    const memories = collected.slice(0, limit).map((rev) => revisionToPhoneMemory(rev));
+    return c.json({ memories });
+  } catch (err) {
+    return c.json({ error: err instanceof Error ? err.message : String(err) }, 500);
+  }
+});
+
+apiMemoryRouter.get("/episode/:id", async (c) => {
+  try {
+    const memory = await loadPhoneMemory(profileFromRequest(c), decodeURIComponent(c.req.param("id")));
+    if (!memory) return c.json({ error: "not_found" }, 404);
+    return c.json({ memory });
+  } catch (err) {
+    return c.json({ error: err instanceof Error ? err.message : String(err) }, 500);
+  }
+});
+
+apiMemoryRouter.get("/entity/:id", async (c) => {
+  try {
+    const memory = await loadPhoneMemory(profileFromRequest(c), decodeURIComponent(c.req.param("id")));
+    if (!memory) return c.json({ error: "not_found" }, 404);
+    return c.json({ memory });
   } catch (err) {
     return c.json({ error: err instanceof Error ? err.message : String(err) }, 500);
   }

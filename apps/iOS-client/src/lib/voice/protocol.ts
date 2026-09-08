@@ -24,7 +24,9 @@ export type UiLayout = "voice" | "chat";
 export type UiCommand =
   | { type: "layout"; layout: UiLayout }
   | { type: "dictate"; active: boolean }
-  | { type: "text"; text: string };
+  | { type: "text"; text: string }
+  | { type: "stop" }
+  | { type: "mute"; muted: boolean };
 
 /** Encode an `alfred.control` payload for LiveKit publishData. */
 export function encodeControlCommand(command: UiCommand): Uint8Array {
@@ -149,12 +151,17 @@ export function applyCaption(state: CaptionState, message: CaptionMessage): Capt
         revealed: Math.max(state.revealed, message.text.length),
         speaking: true,
       };
-    case "end":
+    case "end": {
+      const full = message.text || state.text;
+      const completed =
+        !message.reason || message.reason === "complete" || message.reason === "end";
       return {
-        text: message.text || state.text,
-        revealed: (message.text || state.text).length,
+        text: full,
+        // Interrupted / ui_stop must not snap the HUD to the unread tail.
+        revealed: completed ? full.length : Math.min(state.revealed, full.length),
         speaking: false,
       };
+    }
   }
 }
 

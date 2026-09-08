@@ -11,10 +11,9 @@
  * and Talk falls back to typing.
  */
 import type { RemoteAudioTrack, RemoteTrack } from "livekit-client";
-import { configureAudioSession, releaseAudioSession, requestMicPermission } from "../audio";
+import { requestMicPermission } from "../audio";
 import { endSession, sessionToken } from "../desktop-api";
 import type {
-  LKParticipant,
   LKRoom,
   LKTrack,
   LKTrackPublication,
@@ -41,17 +40,61 @@ let sdk: Sdk | null | undefined;
 let globalsRegistered = false;
 
 /**
+ * LiveKit must own AVAudioSession on iOS. Using expo-audio's setAudioModeAsync
+ * here fights WebRTC and often yields captions (data) with silent remote audio.
+ */
+async function prepareLiveKitAudio(native: LiveKitNativeModule): Promise<void> {
+  const session = native.AudioSession;
+  if (!session) return;
+
+  await session
+    .configureAudio?.({
+      // Prefer speaker when bare, but yield to wired/BT headphones when connected.
+      ios: { defaultOutput: "speaker" },
+    })
+    .catch(() => {});
+
+  await session
+    .setAppleAudioConfiguration?.({
+      audioCategory: "playAndRecord",
+      audioCategoryOptions: ["allowBluetooth", "allowBluetoothA2DP", "defaultToSpeaker"],
+      // videoChat enables AEC and still routes to a headset when one is attached.
+      audioMode: "videoChat",
+    })
+    .catch(() => {});
+
+  await session.startAudioSession().catch(() => {});
+  await session.setDefaultRemoteAudioTrackVolume?.(1).catch(() => {});
+  // Do not force_speaker — that fights AirPods/headphones for pocket use.
+}
+
+function ensureRemoteAudioAudible(track: RemoteTrack): void {
+  const audio = track as RemoteAudioTrack & {
+    setVolume?: (volume: number) => void;
+    isMuted?: boolean;
+    setMuted?: (muted: boolean) => void;
+    mediaStreamTrack?: { enabled?: boolean };
+  };
+  try {
+    audio.setVolume?.(1);
+    if (audio.mediaStreamTrack && audio.mediaStreamTrack.enabled === false) {
+      audio.mediaStreamTrack.enabled = true;
+    }
+  } catch {
+    /* best-effort */
+  }
+}
+
+/**
  * `livekit-client` carries the room logic; `@livekit/react-native` provides the
- * WebRTC natives and must have `registerGlobals()` called once before any room
- * is constructed.
+ * WebRTC natives and must register globals (DOMException, WebRTC, etc.) *before*
+ * `livekit-client` is evaluated.
  */
 function loadSdk(): Sdk | null {
   if (sdk !== undefined) return sdk;
 
-  const client = loadLiveKitClient<LiveKitClientModule>();
   const native = loadLiveKitNative<LiveKitNativeModule>();
-
-  if (!client?.Room || !native) {
+  if (!native) {
     sdk = null;
     return sdk;
   }
@@ -65,6 +108,12 @@ function loadSdk(): Sdk | null {
       sdk = null;
       return sdk;
     }
+  }
+
+  const client = loadLiveKitClient<LiveKitClientModule>();
+  if (!client?.Room) {
+    sdk = null;
+    return sdk;
   }
 
   sdk = { client, native };
@@ -87,6 +136,8 @@ export interface VoiceSessionHandlers {
 export interface VoiceSessionHandle {
   identity: string;
   room: string;
+  /** False when the LiveKit room is gone or tearing down (zombie guard). */
+  isConnected: () => boolean;
   setMicrophoneEnabled: (enabled: boolean) => Promise<void>;
   publishControl: (command: UiCommand) => Promise<void>;
   disconnect: () => Promise<void>;
@@ -107,18 +158,26 @@ export class VoiceUnavailableError extends Error {
  * drop the agent's opening caption; enabling the mic before connect has nothing
  * to publish to.
  */
+export interface StartVoiceSessionOptions {
+  /**
+   * Whether to publish the mic immediately after connect.
+   * Continuous / desktop voice: true. Hold-to-talk idle join: false.
+   */
+  microphoneEnabled?: boolean;
+}
+
 export async function startVoiceSession(
-  handlers: VoiceSessionHandlers
+  handlers: VoiceSessionHandlers,
+  options: StartVoiceSessionOptions = {}
 ): Promise<VoiceSessionHandle> {
   const loaded = loadSdk();
   if (!loaded) throw new VoiceUnavailableError("no-sdk");
 
   if (!(await requestMicPermission())) throw new VoiceUnavailableError("no-mic");
 
-  // playAndRecord + voiceChat, so hardware echo cancellation is in the path and
-  // Alfred's own voice doesn't feed back into the mic during barge-in.
-  await configureAudioSession();
-  await loaded.native.AudioSession?.startAudioSession().catch(() => {});
+  // LiveKit owns the audio session (playAndRecord + speaker). Do not call
+  // expo-audio setAudioModeAsync here — it can mute remote WebRTC playout.
+  await prepareLiveKitAudio(loaded.native);
 
   const minted = await sessionToken("voice");
   if (!minted.url || !minted.token) throw new VoiceUnavailableError("not-configured");
@@ -139,6 +198,7 @@ export async function startVoiceSession(
 
   const setAgentTrack = (track: RemoteTrack | LKTrack | null) => {
     if (track && isAudio(track.kind)) {
+      ensureRemoteAudioAudible(track as RemoteTrack);
       handlers.onAgentAudio(true);
       handlers.onAgentAudioTrack(track as RemoteAudioTrack);
       return;
@@ -147,14 +207,32 @@ export async function startVoiceSession(
     handlers.onAgentAudioTrack(null);
   };
 
+  let tornDown = false;
+  const runTeardown = async () => {
+    if (tornDown) return;
+    tornDown = true;
+    await teardown(room, loaded, minted.sessionId);
+  };
+
   room
     .on(RoomEvent.TrackSubscribed, ((track: RemoteTrack) => {
       // On React Native the SDK routes subscribed audio to the output device
-      // itself; there is no element to attach, so this is purely for the UI.
+      // itself; we only keep the track for waveform metering.
       if (isAudio(track.kind)) setAgentTrack(track);
     }) as (...args: never[]) => void)
     .on(RoomEvent.TrackUnsubscribed, ((track: RemoteTrack) => {
       if (isAudio(track.kind)) setAgentTrack(null);
+    }) as (...args: never[]) => void)
+    .on(RoomEvent.ParticipantConnected, ((participant: {
+      trackPublications?: Map<string, LKTrackPublication>;
+    }) => {
+      for (const publication of participant.trackPublications?.values() ?? []) {
+        const existing = publication.track;
+        if (existing && isAudio(publicationKind(publication))) {
+          setAgentTrack(existing as RemoteTrack);
+          break;
+        }
+      }
     }) as (...args: never[]) => void)
     .on(RoomEvent.DataReceived, ((
       payload: Uint8Array,
@@ -167,11 +245,17 @@ export async function startVoiceSession(
     }) as (...args: never[]) => void)
     .on(RoomEvent.Disconnected, ((reason?: unknown) => {
       handlers.onAgentAudioTrack(null);
-      handlers.onDisconnected(typeof reason === "string" ? reason : null);
+      // Unexpected drops must still release AVAudioSession (guide §6).
+      void runTeardown().finally(() => {
+        handlers.onDisconnected(typeof reason === "string" ? reason : null);
+      });
     }) as (...args: never[]) => void);
 
   await room.connect(minted.url, minted.token);
-  await room.localParticipant.setMicrophoneEnabled(true);
+  // Mirror desktop voice-client: arm mic only when the UI wants continuous listen
+  // (or the user is actively holding PTT). Hold-to-talk idle joins leave it off.
+  const micOn = options.microphoneEnabled !== false;
+  await room.localParticipant.setMicrophoneEnabled(micOn);
 
   // The agent usually joins before the phone does, and tracks published before
   // we connected raise no TrackSubscribed event for us to catch.
@@ -196,11 +280,18 @@ export async function startVoiceSession(
   return {
     identity: minted.identity || "",
     room: minted.room || "",
+    isConnected: () => {
+      if (tornDown) return false;
+      const state = room.state;
+      // Older stubs may omit state — treat as connected until teardown.
+      if (state == null) return true;
+      return state === "connected" || state === "reconnecting" || state === "signalReconnecting";
+    },
     setMicrophoneEnabled: async (enabled: boolean) => {
       await room.localParticipant.setMicrophoneEnabled(enabled);
     },
     publishControl,
-    disconnect: () => teardown(room, loaded, minted.sessionId),
+    disconnect: () => runTeardown(),
   };
 }
 
@@ -217,7 +308,6 @@ async function teardown(room: LKRoom, loaded: Sdk, sessionId: string): Promise<v
   await room.localParticipant.setMicrophoneEnabled(false).catch(() => {});
   await room.disconnect().catch(() => {});
   await loaded.native.AudioSession?.stopAudioSession().catch(() => {});
-  await releaseAudioSession().catch(() => {});
   if (sessionId) await endSession(sessionId).catch(() => {});
 }
 

@@ -7,6 +7,7 @@
  */
 import type { RemoteAudioTrack } from "livekit-client";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { AppState, type AppStateStatus } from "react-native";
 import { create } from "zustand";
 import { isNotBuiltYet, sessionStatus } from "../desktop-api";
 import {
@@ -47,6 +48,11 @@ interface VoiceStore {
   userPartial: string | null;
   userFinal: string[];
   error: string | null;
+  /**
+   * Continuous conversation: keep LiveKit + AVAudioSession alive through lock
+   * screen / pocket use (requires UIBackgroundModes audio — already in Info.plist).
+   */
+  keepAliveInBackground: boolean;
   set: (patch: Partial<VoiceStore>) => void;
   applyMessage: (message: VoiceMessage) => void;
   reset: () => void;
@@ -63,6 +69,7 @@ const EMPTY = {
   userPartial: null,
   userFinal: [] as string[],
   error: null,
+  keepAliveInBackground: false,
 };
 
 export const useVoice = create<VoiceStore>((set) => ({
@@ -145,56 +152,87 @@ export function useVoiceAvailability(enabled: boolean) {
  */
 export function useVoiceSession() {
   const handle = useRef<VoiceSessionHandle | null>(null);
+  const startInFlight = useRef<Promise<boolean> | null>(null);
   const store = useVoice((s) => s.set);
   const applyMessage = useVoice((s) => s.applyMessage);
   const reset = useVoice((s) => s.reset);
 
   const stop = useCallback(async () => {
+    startInFlight.current = null;
     const active = handle.current;
     handle.current = null;
     reset();
     if (active) await active.disconnect().catch(() => {});
   }, [reset]);
 
-  const start = useCallback(async () => {
-    if (handle.current) return true;
-    store({ phase: "connecting", error: null });
-    try {
-      const session = await startVoiceSession({
-        onMessage: applyMessage,
-        onAgentAudio: (present) => store({ agentPresent: present }),
-        onAgentAudioTrack: (track) => store({ agentAudioTrack: track }),
-        onDisconnected: () => {
-          handle.current = null;
-          reset();
-        },
-      });
-      handle.current = session;
-      store({
-        phase: "live",
-        micEnabled: true,
-        identity: session.identity,
-        room: session.room,
-      });
+  const start = useCallback(async (opts?: { mic?: boolean }) => {
+    const wantMic = opts?.mic ?? true;
+
+    // Healthy live room — optionally sync mic, then done.
+    if (handle.current?.isConnected()) {
+      await handle.current.setMicrophoneEnabled(wantMic).catch(() => {});
+      store({ micEnabled: wantMic });
       return true;
-    } catch (err) {
-      const blocker: VoiceBlocker =
-        err instanceof VoiceUnavailableError ? err.reason : "unreachable";
-      store({
-        phase: "error",
-        blocker,
-        error:
-          blocker === "no-mic"
-            ? "Alfred needs the microphone to hear you."
-            : "Couldn't join the voice room on your Mac.",
-      });
-      return false;
     }
+
+    // Zombie handle after background / drop: tear down before minting a fresh room.
+    if (handle.current) {
+      const stale = handle.current;
+      handle.current = null;
+      await stale.disconnect().catch(() => {});
+      reset();
+    }
+
+    if (startInFlight.current) return startInFlight.current;
+
+    const pending = (async () => {
+      store({ phase: "connecting", error: null });
+      try {
+        const session = await startVoiceSession(
+          {
+            onMessage: applyMessage,
+            onAgentAudio: (present) => store({ agentPresent: present }),
+            onAgentAudioTrack: (track) => store({ agentAudioTrack: track }),
+            onDisconnected: () => {
+              // Teardown (incl. audio session) already ran in the transport.
+              if (handle.current) handle.current = null;
+              reset();
+            },
+          },
+          { microphoneEnabled: wantMic }
+        );
+        handle.current = session;
+        store({
+          phase: "live",
+          micEnabled: wantMic,
+          identity: session.identity,
+          room: session.room,
+        });
+        return true;
+      } catch (err) {
+        const blocker: VoiceBlocker =
+          err instanceof VoiceUnavailableError ? err.reason : "unreachable";
+        store({
+          phase: "error",
+          blocker,
+          error:
+            blocker === "no-mic"
+              ? "Alfred needs the microphone to hear you."
+              : "Couldn't join the voice room on your Mac.",
+        });
+        return false;
+      } finally {
+        startInFlight.current = null;
+      }
+    })();
+
+    startInFlight.current = pending;
+    return pending;
   }, [applyMessage, reset, store]);
 
   const setMic = useCallback(
     async (enabled: boolean) => {
-      if (!handle.current) return;
+      if (!handle.current?.isConnected()) return;
       await handle.current.setMicrophoneEnabled(enabled).catch(() => {});
       store({ micEnabled: enabled });
     },
@@ -202,19 +240,23 @@ export function useVoiceSession() {
   );
 
   const publishControl = useCallback(async (command: UiCommand) => {
-    if (!handle.current) return;
+    if (!handle.current?.isConnected()) return;
     await handle.current.publishControl(command).catch(() => {});
   }, []);
 
-  /** Tell the agent which UI layout is active (voice auto-commits; chat does not). */
+  /**
+   * Tell the agent which UI layout is active (voice auto-commits; chat does not).
+   * Mic policy matches desktop voice-client: chat mutes; voice leaves mic alone
+   * unless `mic` is passed (continuous arms, hold stays off until PTT).
+   */
   const setLayout = useCallback(
-    async (layout: UiLayout) => {
+    async (layout: UiLayout, opts?: { mic?: boolean }) => {
       await publishControl({ type: "layout", layout });
       if (layout === "chat") {
         await setMic(false);
-      } else if (handle.current) {
-        await setMic(true);
+        return;
       }
+      if (opts?.mic !== undefined) await setMic(opts.mic);
     },
     [publishControl, setMic]
   );
@@ -227,14 +269,27 @@ export function useVoiceSession() {
     [publishControl]
   );
 
+  // Hold-to-talk ends on background (privacy/battery). Continuous conversation
+  // keeps the room alive so lock-screen + headphones still work (UIBackgroundModes=audio).
+  useEffect(() => {
+    const onChange = (next: AppStateStatus) => {
+      if (next !== "background") return;
+      if (useVoice.getState().keepAliveInBackground) return;
+      void stop();
+    };
+    const sub = AppState.addEventListener("change", onChange);
+    return () => sub.remove();
+  }, [stop]);
+
   // A live microphone must never outlive the screen that owns it.
   useEffect(() => {
     return () => {
       const active = handle.current;
       handle.current = null;
+      reset();
       if (active) active.disconnect().catch(() => {});
     };
-  }, []);
+  }, [reset]);
 
   return { start, stop, setMic, setLayout, sendVoiceText, publishControl };
 }

@@ -8,7 +8,8 @@ import { defaultDocsExtractor, type DocsExtractor } from "./extract.js";
 import { loadDocsLedger, saveDocsLedger, upsertDocsLedgerEntry } from "./ledger.js";
 import { upsertFolderEntity, writeDocsFileToOip } from "./oip-write.js";
 import { findDocsSource, loadDocsSources } from "./sources.js";
-import type { DocsIngestItemResult, DocsIngestRunResult, DocsSource } from "./types.js";
+import type { DocsIngestItemResult, DocsIngestRunResult, DocsLedgerEntry, DocsSource } from "./types.js";
+import { extractDocsFileText, mimeForDocsFileKind } from "./text.js";
 import { isDirectory, walkMarkdownFiles } from "./walk.js";
 
 export async function ingestDocsFolders(opts: {
@@ -74,6 +75,10 @@ export async function ingestDocsFolders(opts: {
       const contentHash = hashBytes(bytes);
       const prev = ledger.get(file.absPath);
       if (prev?.contentHash === contentHash && prev.fileDid) {
+        if (!opts.dryRun && folderDid) {
+          await ensureFolderMembership(provider, prev, folderDid);
+          upsertDocsLedgerEntry(ledger, { ...prev, lastIngestedAt: learnedAt });
+        }
         processed.push({
           path: file.absPath,
           relPath: file.relPath,
@@ -86,7 +91,32 @@ export async function ingestDocsFolders(opts: {
         continue;
       }
 
-      const text = bytes.toString("utf8");
+      let extractedText: Awaited<ReturnType<typeof extractDocsFileText>>;
+      try {
+        extractedText = await extractDocsFileText(bytes, file.relPath);
+      } catch (err) {
+        processed.push({
+          path: file.absPath,
+          relPath: file.relPath,
+          folderLabel: source.label,
+          status: "failed",
+          contentHash,
+          error: err instanceof Error ? err.message : String(err),
+        });
+        continue;
+      }
+      const text = extractedText.text;
+      if (!text.trim()) {
+        processed.push({
+          path: file.absPath,
+          relPath: file.relPath,
+          folderLabel: source.label,
+          status: "failed",
+          contentHash,
+          error: "file contained no extractable text",
+        });
+        continue;
+      }
       const chunks = chunkMarkdown(text, file.relPath);
       if (opts.dryRun) {
         processed.push({
@@ -118,6 +148,7 @@ export async function ingestDocsFolders(opts: {
           relPath: file.relPath,
           bytes,
           text,
+          mimeType: mimeForDocsFileKind(extractedText.kind),
           chunks,
           extracted,
           learnedAt,
@@ -166,6 +197,28 @@ export async function ingestDocsFolders(opts: {
   return { processed, sources };
 }
 
+async function ensureFolderMembership(
+  provider: OipLocalMemoryProvider,
+  previous: DocsLedgerEntry,
+  folderDid: string,
+): Promise<void> {
+  const ids = [previous.fileDid, ...Object.values(previous.sectionKeys), ...previous.extractDids];
+  for (const id of ids) {
+    if (!id) continue;
+    const rec = await provider.resolveRef(id);
+    if (!rec) continue;
+    const current = rec.drefs?.isPartOf;
+    const list = Array.isArray(current) ? current.map(String) : current ? [String(current)] : [];
+    if (list.includes(folderDid)) continue;
+    list.push(folderDid);
+    await provider.updateRecord(
+      id,
+      { drefs: { isPartOf: list.length === 1 ? list[0] : list } },
+      { reindex: false },
+    );
+  }
+}
+
 export function speechFromDocsRun(run: DocsIngestRunResult): string {
   const ok = run.processed.filter((p) => p.status === "ingested");
   const skipped = run.processed.filter((p) => p.status === "skipped");
@@ -174,7 +227,7 @@ export function speechFromDocsRun(run: DocsIngestRunResult): string {
     return "There are no documentation folders registered. Add one with ingest-docs-source add --path.";
   }
   if (!run.processed.length) {
-    return `No markdown files found in ${run.sources.map((s) => s.label).join(", ")}.`;
+    return `No .md, .txt, .rtf, or .pdf files found in ${run.sources.map((s) => s.label).join(", ")}.`;
   }
   const parts: string[] = [];
   if (ok.length === 1) {

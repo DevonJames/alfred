@@ -1,0 +1,401 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Alfred // daily brief</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Syne:wght@700;800&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg: #0b0f14;
+        --fg: #e8eef5;
+        --muted: #8b9bb0;
+        --line: #1c2733;
+        --accent: #7ee0c3;
+        --mint: #3dffc4;
+        --warn: #e0c07e;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family: "IBM Plex Mono", ui-monospace, monospace;
+        background:
+          radial-gradient(1200px 600px at 20% -10%, #163049 0%, transparent 55%),
+          radial-gradient(900px 500px at 100% 20%, #1a2a22 0%, transparent 50%), var(--bg);
+        color: var(--fg);
+        padding: 2rem 1.25rem 3rem;
+      }
+      main {
+        width: min(40rem, 100%);
+        margin: 0 auto;
+      }
+      .brand {
+        font-family: Syne, sans-serif;
+        font-weight: 800;
+        font-size: clamp(1.75rem, 5vw, 2.25rem);
+        letter-spacing: 0.04em;
+        line-height: 1;
+        margin: 0 0 0.35rem;
+      }
+      .sub {
+        color: var(--muted);
+        font-size: 0.72rem;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        margin: 0 0 1.75rem;
+      }
+      section {
+        border: 1px solid var(--line);
+        background: rgba(12, 18, 26, 0.55);
+        padding: 1.1rem 1.15rem 1.2rem;
+        margin-bottom: 1rem;
+      }
+      h2 {
+        margin: 0 0 0.85rem;
+        font-size: 0.7rem;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        color: var(--accent);
+        font-weight: 600;
+      }
+      .hint {
+        color: var(--muted);
+        font-size: 0.75rem;
+        line-height: 1.45;
+        margin: 0 0 0.9rem;
+      }
+      .row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.55rem;
+        margin-bottom: 0.75rem;
+      }
+      .label {
+        color: var(--muted);
+        font-size: 0.65rem;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        margin-bottom: 0.4rem;
+        width: 100%;
+      }
+      .seg {
+        display: inline-flex;
+        border: 1px solid var(--line);
+        padding: 0.15rem;
+        gap: 0.15rem;
+      }
+      .seg button {
+        appearance: none;
+        border: 1px solid transparent;
+        background: transparent;
+        color: var(--muted);
+        font: inherit;
+        font-size: 0.72rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        padding: 0.45rem 0.7rem;
+        cursor: pointer;
+      }
+      .seg button.active {
+        color: var(--mint);
+        border-color: rgba(61, 255, 196, 0.4);
+        background: rgba(61, 255, 196, 0.06);
+      }
+      .check-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr));
+        gap: 0.45rem 0.75rem;
+      }
+      label.opt {
+        display: flex;
+        align-items: flex-start;
+        gap: 0.45rem;
+        font-size: 0.8rem;
+        line-height: 1.35;
+        cursor: pointer;
+        color: var(--fg);
+      }
+      label.opt input {
+        margin-top: 0.15rem;
+        accent-color: var(--mint);
+      }
+      select,
+      input[type="text"] {
+        width: 100%;
+        max-width: 18rem;
+        border: 1px solid var(--line);
+        background: rgba(8, 12, 18, 0.75);
+        color: var(--fg);
+        font: inherit;
+        font-size: 0.85rem;
+        padding: 0.55rem 0.65rem;
+      }
+      select:disabled,
+      .disabled {
+        opacity: 0.45;
+        pointer-events: none;
+      }
+      .actions {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        margin-top: 1.25rem;
+      }
+      button.save {
+        appearance: none;
+        border: 1px solid rgba(61, 255, 196, 0.45);
+        background: rgba(61, 255, 196, 0.1);
+        color: var(--mint);
+        font: inherit;
+        font-size: 0.75rem;
+        font-weight: 600;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        padding: 0.7rem 1.1rem;
+        cursor: pointer;
+      }
+      button.save:hover {
+        background: rgba(61, 255, 196, 0.18);
+      }
+      button.save:disabled {
+        opacity: 0.5;
+        cursor: default;
+      }
+      #status {
+        font-size: 0.72rem;
+        color: var(--muted);
+      }
+      #status.ok {
+        color: var(--accent);
+      }
+      #status.err {
+        color: var(--warn);
+      }
+      .hidden {
+        display: none !important;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1 class="brand">Daily Brief</h1>
+      <p class="sub">Preferences</p>
+
+      <section>
+        <h2>Rocket launches</h2>
+        <p class="hint">
+          On = always include. Off = never. By request = only when you ask (e.g. “brief me with
+          launches”).
+        </p>
+        <div class="label">Mode</div>
+        <div class="seg" id="launches-mode" role="group" aria-label="Launches mode"></div>
+        <div class="label" style="margin-top: 1rem">Sites</div>
+        <div class="check-grid" id="launch-sites"></div>
+      </section>
+
+      <section>
+        <h2>Crypto</h2>
+        <div class="row">
+          <label class="opt">
+            <input type="checkbox" id="include-crypto" />
+            Include crypto in briefing
+          </label>
+        </div>
+        <div class="label">Asset</div>
+        <select id="crypto-id"></select>
+      </section>
+
+      <section>
+        <h2>Metals</h2>
+        <div class="row">
+          <label class="opt">
+            <input type="checkbox" id="include-metals" />
+            Include metals in briefing
+          </label>
+        </div>
+        <div class="label">Metal</div>
+        <div class="seg" id="metal-symbol" role="group" aria-label="Metal"></div>
+      </section>
+
+      <section>
+        <h2>News sources</h2>
+        <p class="hint">Pick up to 10 sources. Headlines are pulled from their RSS feeds.</p>
+        <div class="check-grid" id="news-sources"></div>
+      </section>
+
+      <div class="actions">
+        <button type="button" class="save" id="save">Save preferences</button>
+        <span id="status"></span>
+      </div>
+    </main>
+    <script src="/alfred-base.js"></script>
+    <script src="/embed-bridge.js"></script>
+    <script>
+      const api = (path) => (typeof alfredUrl === "function" ? alfredUrl(path) : path);
+
+      /** @type {any} */
+      let catalog = null;
+      /** @type {any} */
+      let prefs = null;
+
+      function setStatus(msg, kind) {
+        const el = document.getElementById("status");
+        el.textContent = msg;
+        el.className = kind || "";
+      }
+
+      function renderSeg(containerId, options, selected, onPick) {
+        const el = document.getElementById(containerId);
+        el.innerHTML = "";
+        for (const opt of options) {
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.textContent = opt.label;
+          btn.dataset.id = opt.id;
+          if (opt.id === selected) btn.classList.add("active");
+          btn.addEventListener("click", () => onPick(opt.id));
+          el.appendChild(btn);
+        }
+      }
+
+      function selectedIds(containerId) {
+        return [...document.querySelectorAll(`#${containerId} input:checked`)].map(
+          (i) => i.value,
+        );
+      }
+
+      function renderChecks(containerId, options, selected) {
+        const el = document.getElementById(containerId);
+        el.innerHTML = "";
+        const selectedSet = new Set(selected);
+        for (const opt of options) {
+          const id = typeof opt === "string" ? opt : opt.id;
+          const labelText = typeof opt === "string" ? opt : opt.label;
+          const lab = document.createElement("label");
+          lab.className = "opt";
+          const input = document.createElement("input");
+          input.type = "checkbox";
+          input.value = id;
+          input.checked = selectedSet.has(id);
+          lab.appendChild(input);
+          lab.appendChild(document.createTextNode(labelText));
+          el.appendChild(lab);
+        }
+      }
+
+      function syncDependent() {
+        document.getElementById("crypto-id").disabled = !document.getElementById(
+          "include-crypto",
+        ).checked;
+        document
+          .getElementById("metal-symbol")
+          .classList.toggle("disabled", !document.getElementById("include-metals").checked);
+      }
+
+      function paint() {
+        renderSeg(
+          "launches-mode",
+          catalog.launchesModes,
+          prefs.launchesMode,
+          (id) => {
+            prefs.launchesMode = id;
+            for (const btn of document.querySelectorAll("#launches-mode button")) {
+              btn.classList.toggle("active", btn.dataset.id === id);
+            }
+          },
+        );
+
+        const siteIds = String(prefs.launchLocationIds || "")
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean);
+        renderChecks("launch-sites", catalog.launchSites, siteIds);
+
+        document.getElementById("include-crypto").checked = Boolean(prefs.includeCrypto);
+        const cryptoSel = document.getElementById("crypto-id");
+        cryptoSel.innerHTML = "";
+        for (const c of catalog.crypto) {
+          const o = document.createElement("option");
+          o.value = c.id;
+          o.textContent = c.label;
+          if (c.id === prefs.cryptoId) o.selected = true;
+          cryptoSel.appendChild(o);
+        }
+
+        document.getElementById("include-metals").checked = Boolean(prefs.includeMetals);
+        renderSeg("metal-symbol", catalog.metals, prefs.metalSymbol, (id) => {
+          prefs.metalSymbol = id;
+          paint();
+        });
+
+        renderChecks("news-sources", catalog.newsSources, prefs.newsSources || []);
+        syncDependent();
+      }
+
+      function collect() {
+        const sites = selectedIds("launch-sites");
+        const news = selectedIds("news-sources").slice(0, 10);
+        return {
+          launchesMode: prefs.launchesMode,
+          launchLocationIds: sites.join(",") || "11",
+          includeCrypto: document.getElementById("include-crypto").checked,
+          cryptoId: document.getElementById("crypto-id").value,
+          includeMetals: document.getElementById("include-metals").checked,
+          metalSymbol: prefs.metalSymbol,
+          newsSources: news,
+        };
+      }
+
+      async function load() {
+        setStatus("Loading…");
+        const res = await fetch(api("/briefing/prefs"));
+        if (!res.ok) throw new Error(`Failed to load (${res.status})`);
+        const data = await res.json();
+        catalog = data.catalog;
+        prefs = data.prefs;
+        paint();
+        setStatus("");
+      }
+
+      document.getElementById("include-crypto").addEventListener("change", syncDependent);
+      document.getElementById("include-metals").addEventListener("change", syncDependent);
+
+      document.getElementById("save").addEventListener("click", async () => {
+        const btn = document.getElementById("save");
+        btn.disabled = true;
+        setStatus("Saving…");
+        try {
+          const body = collect();
+          if (!body.newsSources.length) {
+            setStatus("Pick at least one news source.", "err");
+            return;
+          }
+          const res = await fetch(api("/briefing/prefs"), {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          });
+          if (!res.ok) throw new Error(`Save failed (${res.status})`);
+          const data = await res.json();
+          prefs = data.prefs;
+          paint();
+          setStatus("Saved.", "ok");
+        } catch (err) {
+          setStatus(err instanceof Error ? err.message : String(err), "err");
+        } finally {
+          btn.disabled = false;
+        }
+      });
+
+      load().catch((err) => setStatus(err instanceof Error ? err.message : String(err), "err"));
+    </script>
+  </body>
+</html>

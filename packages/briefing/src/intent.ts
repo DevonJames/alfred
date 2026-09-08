@@ -16,6 +16,20 @@ const AFFIRM_RE =
 const DECLINE_RE =
   /\b(no|nah|nope|not\s+now|later|skip|pass|don't|dont)\b/i;
 
+const LAUNCH_PATTERNS: RegExp[] = [
+  /\blaunch(?:es|ing)?\b/i,
+  /\brocket(?:s)?\b/i,
+  /\bspacex\b/i,
+  /\bspace\s*x\b/i,
+  /\bvandenberg\b/i,
+  /\bcape\s+canaveral\b/i,
+];
+
+/** True when the user asked to include rocket launches in this briefing. */
+export function wantsLaunches(text: string): boolean {
+  return LAUNCH_PATTERNS.some((re) => re.test(text));
+}
+
 /**
  * Deterministic briefing intent. Affirm/decline only apply when an offer is pending.
  */

@@ -1,0 +1,26 @@
+# Used when building with:
+#   EAS_NO_VCS=1 EAS_PROJECT_ROOT="$(pwd)" eas build ...
+# (EAS ignores this file if you build from the monorepo git root without EAS_NO_VCS.)
+
+# Dependencies & caches — reinstalled on the build server
+/node_modules
+/.expo
+/dist
+/web-build
+/coverage
+/.turbo
+*.log
+*.tsbuildinfo
+.DS_Store
+
+# Native projects are regenerated / pods installed on EAS
+/ios
+/android
+/Pods
+/DerivedData
+/build
+
+# Local env
+.env
+.env.*
+!.env.example

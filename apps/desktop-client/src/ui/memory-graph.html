@@ -1,349 +1,794 @@
 <!doctype html>
 <html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Alfred — Memory graph</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,400&family=Fraunces:opsz,wght@9..144,500;9..144,600&display=swap" rel="stylesheet" />
-  <style>
-    :root {
-      --bg0: #0e1210;
-      --panel: rgba(28, 36, 30, 0.92);
-      --ink: #e7eee6;
-      --muted: #93a094;
-      --line: #334038;
-      --brass: #c4a35a;
-      --sage: #6b9e78;
-      --coral: #d4785a;
-      --steel: #7eb8c9;
-      --stone: #9a9588;
-    }
-    * { box-sizing: border-box; }
-    html, body {
-      margin: 0;
-      height: 100%;
-      overflow: hidden;
-      background: var(--bg0);
-      color: var(--ink);
-      font-family: "DM Sans", system-ui, sans-serif;
-    }
-    #stage {
-      position: fixed;
-      inset: 0;
-      background:
-        radial-gradient(ellipse 80% 60% at 20% 10%, rgba(107, 158, 120, 0.12), transparent 55%),
-        radial-gradient(ellipse 70% 50% at 90% 80%, rgba(196, 163, 90, 0.08), transparent 50%),
-        linear-gradient(165deg, #121714 0%, var(--bg0) 45%, #0c100e 100%);
-    }
-    #graph-canvas {
-      position: absolute;
-      inset: 0;
-      width: 100%;
-      height: 100%;
-      display: block;
-      cursor: grab;
-      touch-action: none;
-    }
-    #graph-canvas:active { cursor: grabbing; }
-
-    .chrome { position: fixed; z-index: 5; pointer-events: none; }
-    .chrome > * { pointer-events: auto; }
-
-    header.top {
-      top: 1rem;
-      left: 1rem;
-      right: 1rem;
-      display: flex;
-      align-items: flex-start;
-      justify-content: space-between;
-      gap: 1rem;
-      pointer-events: none;
-    }
-    header.top > * { pointer-events: auto; }
-
-    .brand-block h1 {
-      margin: 0;
-      font-family: Fraunces, Georgia, serif;
-      font-weight: 600;
-      font-size: clamp(1.6rem, 3vw, 2.1rem);
-      letter-spacing: 0.01em;
-      line-height: 1.1;
-    }
-    .brand-block h1 span { color: var(--brass); }
-    .brand-block p {
-      margin: 0.35rem 0 0;
-      color: var(--muted);
-      font-size: 0.92rem;
-      max-width: 28rem;
-    }
-
-    .panel {
-      background: var(--panel);
-      border: 1px solid var(--line);
-      backdrop-filter: blur(10px);
-      box-shadow: 0 12px 40px rgba(0,0,0,0.35);
-    }
-
-    .controls {
-      width: min(20rem, calc(100vw - 2rem));
-      padding: 0.9rem 1rem 1rem;
-    }
-    .controls label {
-      display: block;
-      font-size: 0.72rem;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-      color: var(--muted);
-      margin: 0.7rem 0 0.35rem;
-    }
-    .controls input[type="search"] {
-      width: 100%;
-      border: 1px solid var(--line);
-      background: #121714;
-      color: var(--ink);
-      padding: 0.55rem 0.65rem;
-      font: inherit;
-      font-size: 0.95rem;
-      outline: none;
-    }
-    .controls input[type="search"]:focus { border-color: var(--brass); }
-
-    .filters {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 0.4rem;
-      margin-top: 0.35rem;
-    }
-    .filters button {
-      border: 1px solid var(--line);
-      background: transparent;
-      color: var(--muted);
-      font: inherit;
-      font-size: 0.78rem;
-      padding: 0.28rem 0.55rem;
-      cursor: pointer;
-    }
-    .filters button.on { color: var(--ink); border-color: currentColor; }
-    .filters button[data-type="Entity"].on { color: var(--brass); }
-    .filters button[data-type="Episode"].on { color: var(--sage); }
-    .filters button[data-type="Assertion"].on { color: var(--coral); }
-    .filters button[data-type="Observation"].on { color: var(--steel); }
-    .filters button[data-type="Artifact"].on { color: var(--stone); }
-
-    .row-actions {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 0.45rem;
-      margin-top: 0.85rem;
-    }
-    .row-actions button, .detail-actions button {
-      border: 1px solid var(--brass);
-      background: transparent;
-      color: var(--ink);
-      font: inherit;
-      font-size: 0.85rem;
-      padding: 0.4rem 0.7rem;
-      cursor: pointer;
-    }
-    .row-actions button:hover, .detail-actions button:hover {
-      background: color-mix(in srgb, var(--brass) 18%, transparent);
-    }
-    .row-actions button.ghost {
-      border-color: var(--line);
-      color: var(--muted);
-    }
-
-    .stats {
-      margin-top: 0.85rem;
-      font-size: 0.78rem;
-      color: var(--muted);
-      font-variant-numeric: tabular-nums;
-      line-height: 1.45;
-      white-space: pre-wrap;
-      word-break: break-all;
-    }
-
-    .detail {
-      position: fixed;
-      top: 1rem;
-      right: 1rem;
-      width: min(24rem, calc(100vw - 2rem));
-      max-height: calc(100vh - 2rem);
-      overflow: auto;
-      padding: 1.1rem 1.15rem 1.2rem;
-      transform: translateX(110%);
-      transition: transform 220ms ease;
-      z-index: 6;
-    }
-    .detail.open { transform: translateX(0); }
-    .detail .type-pill {
-      display: inline-block;
-      font-size: 0.72rem;
-      letter-spacing: 0.06em;
-      text-transform: uppercase;
-      padding: 0.15rem 0.45rem;
-      border: 1px solid currentColor;
-      margin-bottom: 0.5rem;
-    }
-    .detail h2 {
-      margin: 0 0 0.4rem;
-      font-family: Fraunces, Georgia, serif;
-      font-size: 1.45rem;
-      font-weight: 600;
-      line-height: 1.2;
-    }
-    .detail .meta {
-      color: var(--muted);
-      font-size: 0.8rem;
-      word-break: break-all;
-      margin-bottom: 0.85rem;
-    }
-    .detail .body {
-      font-size: 0.95rem;
-      line-height: 1.45;
-      white-space: pre-wrap;
-      margin-bottom: 1rem;
-    }
-    .detail h3 {
-      margin: 1rem 0 0.4rem;
-      font-size: 0.72rem;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-      color: var(--muted);
-      font-weight: 500;
-    }
-    .neighbors { list-style: none; margin: 0; padding: 0; }
-    .neighbors li {
-      display: grid;
-      grid-template-columns: auto 1fr;
-      gap: 0.35rem 0.55rem;
-      padding: 0.4rem 0;
-      border-top: 1px solid var(--line);
-      font-size: 0.88rem;
-      cursor: pointer;
-    }
-    .neighbors li:hover .n-label { color: var(--brass); }
-    .neighbors .pred {
-      color: var(--muted);
-      font-size: 0.75rem;
-      grid-column: 1 / -1;
-    }
-    .neighbors .dir { color: var(--stone); font-size: 0.75rem; }
-    .close-x {
-      position: absolute;
-      top: 0.65rem;
-      right: 0.75rem;
-      border: none;
-      background: transparent;
-      color: var(--muted);
-      font-size: 1.4rem;
-      cursor: pointer;
-      line-height: 1;
-    }
-
-    .hint {
-      position: fixed;
-      bottom: 1rem;
-      left: 50%;
-      transform: translateX(-50%);
-      z-index: 4;
-      color: var(--muted);
-      font-size: 0.78rem;
-      background: rgba(14, 18, 16, 0.75);
-      border: 1px solid var(--line);
-      padding: 0.35rem 0.75rem;
-      pointer-events: none;
-    }
-
-    .empty {
-      position: fixed;
-      inset: 0;
-      display: none;
-      place-items: center;
-      z-index: 3;
-      text-align: center;
-      padding: 2rem;
-      pointer-events: none;
-    }
-    .empty.show { display: grid; }
-    .empty > div { pointer-events: auto; }
-    .empty h2 {
-      font-family: Fraunces, Georgia, serif;
-      margin: 0 0 0.5rem;
-    }
-    .empty a { color: var(--brass); }
-    .empty .diag {
-      margin-top: 1rem;
-      font-size: 0.8rem;
-      color: var(--muted);
-      font-family: ui-monospace, Menlo, monospace;
-      word-break: break-all;
-      max-width: 36rem;
-      white-space: pre-wrap;
-      text-align: left;
-    }
-
-    @media (max-width: 720px) {
-      header.top { flex-direction: column; }
-      .detail {
-        top: auto;
-        bottom: 0;
-        right: 0;
-        left: 0;
-        width: 100%;
-        max-height: 45vh;
-        transform: translateY(110%);
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Alfred — Memory graph</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,400&family=Fraunces:opsz,wght@9..144,500;9..144,600&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg0: #0e1210;
+        --panel: rgba(28, 36, 30, 0.92);
+        --ink: #e7eee6;
+        --muted: #93a094;
+        --line: #334038;
+        --brass: #c4a35a;
+        --sage: #6b9e78;
+        --coral: #d4785a;
+        --steel: #7eb8c9;
+        --stone: #9a9588;
       }
-      .detail.open { transform: translateY(0); }
-    }
-  </style>
-</head>
-<body>
-  <div id="stage"><canvas id="graph-canvas"></canvas></div>
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        overflow: hidden;
+        background: var(--bg0);
+        color: var(--ink);
+        font-family: "DM Sans", system-ui, sans-serif;
+      }
+      #stage {
+        position: fixed;
+        inset: 0;
+        background:
+          radial-gradient(ellipse 80% 60% at 20% 10%, rgba(107, 158, 120, 0.12), transparent 55%),
+          radial-gradient(ellipse 70% 50% at 90% 80%, rgba(196, 163, 90, 0.08), transparent 50%),
+          linear-gradient(165deg, #121714 0%, var(--bg0) 45%, #0c100e 100%);
+      }
+      #graph-canvas {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        display: block;
+        cursor: grab;
+        touch-action: none;
+      }
+      #graph-canvas:active {
+        cursor: grabbing;
+      }
 
-  <header class="top chrome">
-    <div class="brand-block">
-      <h1><span>Alfred</span> memory graph</h1>
-      <p>Browse linked people, places, projects, and facts. Click a node to inspect; search to focus a neighborhood.</p>
-    </div>
-    <div class="panel controls">
-      <label for="q">Search</label>
-      <input id="q" type="search" placeholder="Sarah, Barolo, USPTO…" autocomplete="off" />
-      <label>Show types</label>
-      <div class="filters" id="filters">
-        <button type="button" class="on" data-type="Entity">Entity</button>
-        <button type="button" class="on" data-type="Episode">Episode</button>
-        <button type="button" class="on" data-type="Assertion">Assertion</button>
-        <button type="button" class="on" data-type="Observation">Observation</button>
-        <button type="button" data-type="Artifact">Artifact</button>
+      .chrome {
+        position: fixed;
+        z-index: 5;
+        pointer-events: none;
+      }
+      .chrome > * {
+        pointer-events: auto;
+      }
+
+      header.top {
+        top: 1rem;
+        left: 1rem;
+        right: 1rem;
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 1rem;
+        pointer-events: none;
+      }
+      header.top > * {
+        pointer-events: auto;
+      }
+
+      .brand-block h1 {
+        margin: 0;
+        font-family: Fraunces, Georgia, serif;
+        font-weight: 600;
+        font-size: clamp(1.6rem, 3vw, 2.1rem);
+        letter-spacing: 0.01em;
+        line-height: 1.1;
+      }
+      .brand-block h1 span {
+        color: var(--brass);
+      }
+      .brand-block p {
+        margin: 0.35rem 0 0;
+        color: var(--muted);
+        font-size: 0.92rem;
+        max-width: 28rem;
+      }
+
+      .panel {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        backdrop-filter: blur(10px);
+        box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+      }
+
+      .controls {
+        width: min(20rem, calc(100vw - 2rem));
+        padding: 0.9rem 1rem 1rem;
+      }
+      .controls label {
+        display: block;
+        font-size: 0.72rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--muted);
+        margin: 0.7rem 0 0.35rem;
+      }
+      .controls input[type="search"] {
+        width: 100%;
+        border: 1px solid var(--line);
+        background: #121714;
+        color: var(--ink);
+        padding: 0.55rem 0.65rem;
+        font: inherit;
+        font-size: 0.95rem;
+        outline: none;
+      }
+      .controls input[type="search"]:focus {
+        border-color: var(--brass);
+      }
+      .bridge-hint {
+        margin: 0.45rem 0 0;
+        font-size: 0.75rem;
+        color: var(--muted);
+        line-height: 1.35;
+        min-height: 1.1em;
+      }
+      .bridge-hint.ok {
+        color: var(--sage);
+      }
+      .bridge-hint.miss {
+        color: var(--coral);
+      }
+
+      .filters {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.4rem;
+        margin-top: 0.35rem;
+      }
+      .filters button {
+        border: 1px solid var(--line);
+        background: transparent;
+        color: var(--muted);
+        font: inherit;
+        font-size: 0.78rem;
+        padding: 0.28rem 0.55rem;
+        cursor: pointer;
+      }
+      .filters button.on {
+        color: var(--ink);
+        border-color: currentColor;
+      }
+      .filters button[data-type="Entity"].on {
+        color: var(--brass);
+      }
+      .filters button[data-type="Organization"].on {
+        color: #6b9ac4;
+      }
+      .filters button[data-type="Episode"].on {
+        color: var(--sage);
+      }
+      .filters button[data-type="Assertion"].on {
+        color: var(--coral);
+      }
+      .filters button[data-type="Observation"].on {
+        color: var(--steel);
+      }
+      .filters button[data-type="Artifact"].on {
+        color: var(--stone);
+      }
+
+      .row-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.45rem;
+        margin-top: 0.85rem;
+      }
+      .row-actions button,
+      .detail-actions button {
+        border: 1px solid var(--brass);
+        background: transparent;
+        color: var(--ink);
+        font: inherit;
+        font-size: 0.85rem;
+        padding: 0.4rem 0.7rem;
+        cursor: pointer;
+      }
+      .row-actions button:hover,
+      .detail-actions button:hover {
+        background: color-mix(in srgb, var(--brass) 18%, transparent);
+      }
+      .detail-actions button.danger {
+        border-color: var(--coral);
+        color: var(--coral);
+        margin-left: auto;
+      }
+      .detail-actions button.danger:hover {
+        background: color-mix(in srgb, var(--coral) 16%, transparent);
+      }
+      .row-actions button.ghost {
+        border-color: var(--line);
+        color: var(--muted);
+      }
+
+      .stats {
+        margin-top: 0.85rem;
+        font-size: 0.78rem;
+        color: var(--muted);
+        font-variant-numeric: tabular-nums;
+        line-height: 1.45;
+        white-space: pre-wrap;
+        word-break: break-all;
+      }
+
+      .detail {
+        position: fixed;
+        top: 1rem;
+        right: 1rem;
+        width: min(24rem, calc(100vw - 2rem));
+        max-height: calc(100vh - 2rem);
+        overflow: auto;
+        padding: 1.1rem 1.15rem 1.2rem;
+        transform: translateX(110%);
+        transition: transform 220ms ease;
+        z-index: 6;
+      }
+      .detail.open {
+        transform: translateX(0);
+      }
+      .detail .type-pill {
+        display: inline-block;
+        font-size: 0.72rem;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        padding: 0.15rem 0.45rem;
+        border: 1px solid currentColor;
+        margin-bottom: 0.5rem;
+      }
+      .detail h2 {
+        margin: 0 0 0.4rem;
+        font-family: Fraunces, Georgia, serif;
+        font-size: 1.45rem;
+        font-weight: 600;
+        line-height: 1.2;
+      }
+      .detail .meta {
+        color: var(--muted);
+        font-size: 0.8rem;
+        word-break: break-all;
+        margin-bottom: 0.85rem;
+      }
+      .detail .body {
+        font-size: 0.95rem;
+        line-height: 1.45;
+        white-space: pre-wrap;
+        margin-bottom: 1rem;
+      }
+      .detail .edit-form {
+        display: grid;
+        gap: 0.55rem;
+        margin: 0.75rem 0 1rem;
+      }
+      .detail .edit-form label {
+        display: block;
+        font-size: 0.72rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--muted);
+        margin-bottom: 0.25rem;
+      }
+      .detail .edit-form input,
+      .detail .edit-form textarea {
+        width: 100%;
+        border: 1px solid var(--line);
+        background: #121714;
+        color: var(--ink);
+        padding: 0.5rem 0.6rem;
+        font: inherit;
+        font-size: 0.92rem;
+        outline: none;
+        resize: vertical;
+      }
+      .detail .edit-form input:focus,
+      .detail .edit-form textarea:focus {
+        border-color: var(--brass);
+      }
+      .detail .edit-form textarea {
+        min-height: 5.5rem;
+        line-height: 1.4;
+      }
+      .detail-photo {
+        margin: 0 0 0.85rem;
+        border: 1px solid var(--line);
+        background: #0a0d0b;
+        overflow: hidden;
+      }
+      .detail-photo img {
+        display: block;
+        width: 100%;
+        max-height: 16rem;
+        object-fit: contain;
+        cursor: zoom-in;
+        background: #0a0d0b;
+      }
+      .detail-photo.missing {
+        display: none;
+      }
+      .detail-file {
+        margin: 0 0 0.85rem;
+        border: 1px solid var(--line);
+        background: #0a0d0b;
+        overflow: hidden;
+      }
+      .detail-file iframe {
+        display: block;
+        width: 100%;
+        height: 16rem;
+        border: 0;
+        background: #fff;
+      }
+      .detail-file audio {
+        display: block;
+        width: 100%;
+        padding: 0.75rem;
+      }
+      .detail-file-text {
+        margin: 0;
+        max-height: 16rem;
+        overflow: auto;
+        padding: 0.65rem 0.75rem;
+        font: 0.78rem/1.45 ui-monospace, Menlo, monospace;
+        color: var(--ink);
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+      .detail-file-open {
+        display: inline-block;
+        margin: 0 0 0.75rem;
+        font-size: 0.75rem;
+        color: var(--brass);
+        text-decoration: none;
+      }
+      .detail-file-open:hover {
+        text-decoration: underline;
+      }
+      .detail-label-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.5rem;
+        margin-bottom: 0.25rem;
+      }
+      .detail-label-row label {
+        margin-bottom: 0;
+      }
+      .detail-expand {
+        border: 1px solid var(--line);
+        background: transparent;
+        color: var(--muted);
+        font: inherit;
+        font-size: 0.72rem;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        padding: 0.18rem 0.45rem;
+        cursor: pointer;
+      }
+      .detail-expand:hover {
+        color: var(--brass);
+        border-color: var(--brass);
+      }
+      .detail-overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 20;
+        display: none;
+        place-items: center;
+        padding: 1.5rem;
+        background: rgba(8, 10, 9, 0.72);
+      }
+      .detail-overlay.open {
+        display: grid;
+      }
+      .detail-overlay-panel {
+        position: relative;
+        width: min(52rem, calc(100vw - 3rem));
+        max-height: min(86vh, 48rem);
+        display: flex;
+        flex-direction: column;
+        padding: 1.2rem 1.25rem 1.15rem;
+      }
+      .detail-overlay-panel h2 {
+        margin: 0 2rem 0.35rem 0;
+        font-family: Fraunces, Georgia, serif;
+        font-size: 1.45rem;
+        font-weight: 600;
+      }
+      .detail-overlay-panel .meta {
+        color: var(--muted);
+        font-size: 0.78rem;
+        margin: 0 2rem 0.75rem 0;
+      }
+      .detail-overlay-panel textarea {
+        flex: 1;
+        min-height: 18rem;
+        width: 100%;
+        border: 1px solid var(--line);
+        background: #121714;
+        color: var(--ink);
+        padding: 0.75rem 0.85rem;
+        font: inherit;
+        font-size: 1rem;
+        line-height: 1.5;
+        outline: none;
+        resize: vertical;
+      }
+      .detail-overlay-panel textarea:focus {
+        border-color: var(--brass);
+      }
+      .detail-overlay-photo {
+        margin: 0 0 0.75rem;
+        border: 1px solid var(--line);
+        background: #0a0d0b;
+        overflow: hidden;
+        flex: 0 0 auto;
+      }
+      .detail-overlay-photo[hidden] {
+        display: none;
+      }
+      .detail-overlay-photo img {
+        display: block;
+        width: 100%;
+        max-height: min(42vh, 24rem);
+        object-fit: contain;
+      }
+      .detail-overlay-file {
+        margin: 0 0 0.75rem;
+        border: 1px solid var(--line);
+        background: #0a0d0b;
+        overflow: hidden;
+        flex: 0 0 auto;
+      }
+      .detail-overlay-file[hidden] {
+        display: none;
+      }
+      .detail-overlay-file iframe {
+        display: block;
+        width: 100%;
+        height: min(42vh, 24rem);
+        border: 0;
+        background: #fff;
+      }
+      .detail-overlay-file pre {
+        margin: 0;
+        max-height: min(42vh, 24rem);
+        overflow: auto;
+        padding: 0.75rem 0.85rem;
+        font: 0.85rem/1.45 ui-monospace, Menlo, monospace;
+        color: var(--ink);
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+      .detail-overlay-actions {
+        display: flex;
+        gap: 0.5rem;
+        margin-top: 0.85rem;
+      }
+      .detail-overlay-actions button {
+        border: 1px solid var(--brass);
+        background: transparent;
+        color: var(--ink);
+        font: inherit;
+        font-size: 0.85rem;
+        padding: 0.4rem 0.7rem;
+        cursor: pointer;
+      }
+      .detail-overlay-actions button.ghost {
+        border-color: var(--line);
+        color: var(--muted);
+      }
+      .detail .edit-status {
+        font-size: 0.78rem;
+        color: var(--muted);
+        min-height: 1.1em;
+      }
+      .detail .edit-status.ok {
+        color: var(--sage);
+      }
+      .detail .edit-status.err {
+        color: var(--coral);
+      }
+      .detail .contact-chip {
+        margin: 0 0 0.85rem;
+        padding: 0.55rem 0.65rem;
+        border: 1px solid var(--line);
+        background: #121714;
+        font-size: 0.88rem;
+        line-height: 1.45;
+        color: var(--ink);
+      }
+      .detail .contact-chip div + div {
+        margin-top: 0.2rem;
+      }
+      .detail h3 {
+        margin: 1rem 0 0.4rem;
+        font-size: 0.72rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--muted);
+        font-weight: 500;
+      }
+      .neighbors {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+      }
+      .neighbors li {
+        display: grid;
+        grid-template-columns: auto 1fr;
+        gap: 0.35rem 0.55rem;
+        padding: 0.4rem 0;
+        border-top: 1px solid var(--line);
+        font-size: 0.88rem;
+        cursor: pointer;
+      }
+      .neighbors li:hover .n-label {
+        color: var(--brass);
+      }
+      .neighbors .pred {
+        color: var(--muted);
+        font-size: 0.75rem;
+        grid-column: 1 / -1;
+      }
+      .neighbors .dir {
+        color: var(--stone);
+        font-size: 0.75rem;
+      }
+      .close-x {
+        position: absolute;
+        top: 0.65rem;
+        right: 0.75rem;
+        border: none;
+        background: transparent;
+        color: var(--muted);
+        font-size: 1.4rem;
+        cursor: pointer;
+        line-height: 1;
+      }
+
+      .hint {
+        position: fixed;
+        bottom: 1rem;
+        left: 50%;
+        transform: translateX(-50%);
+        z-index: 4;
+        color: var(--muted);
+        font-size: 0.78rem;
+        background: rgba(14, 18, 16, 0.75);
+        border: 1px solid var(--line);
+        padding: 0.35rem 0.75rem;
+        pointer-events: none;
+      }
+
+      .job-progress {
+        position: fixed;
+        right: 1rem;
+        bottom: 1rem;
+        z-index: 8;
+        width: min(20rem, calc(100vw - 2rem));
+        padding: 0.85rem 0.95rem 0.95rem;
+        opacity: 0;
+        transform: translateY(12px);
+        pointer-events: none;
+        transition: opacity 180ms ease, transform 180ms ease;
+      }
+      .job-progress.on {
+        opacity: 1;
+        transform: translateY(0);
+        pointer-events: auto;
+      }
+      .job-progress-title {
+        font-size: 0.72rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--brass);
+        margin: 0 0 0.3rem;
+      }
+      .job-progress-label {
+        margin: 0 0 0.55rem;
+        font-size: 0.82rem;
+        color: var(--ink);
+        line-height: 1.35;
+        min-height: 1.1em;
+      }
+      .job-progress-track {
+        height: 0.38rem;
+        background: #121714;
+        border: 1px solid var(--line);
+        overflow: hidden;
+      }
+      .job-progress-fill {
+        height: 100%;
+        width: 0;
+        background: linear-gradient(90deg, var(--sage), var(--brass));
+        transition: width 160ms ease;
+      }
+      .job-progress-meta {
+        display: flex;
+        justify-content: space-between;
+        gap: 0.75rem;
+        margin-top: 0.4rem;
+        font-size: 0.72rem;
+        color: var(--muted);
+        font-variant-numeric: tabular-nums;
+      }
+      .job-progress.err .job-progress-title {
+        color: var(--coral);
+      }
+      .job-progress.err .job-progress-fill {
+        background: var(--coral);
+      }
+
+      .empty {
+        position: fixed;
+        inset: 0;
+        display: none;
+        place-items: center;
+        z-index: 3;
+        text-align: center;
+        padding: 2rem;
+        pointer-events: none;
+      }
+      .empty.show {
+        display: grid;
+      }
+      .empty > div {
+        pointer-events: auto;
+      }
+      .empty h2 {
+        font-family: Fraunces, Georgia, serif;
+        margin: 0 0 0.5rem;
+      }
+      .empty a {
+        color: var(--brass);
+      }
+      .empty .diag {
+        margin-top: 1rem;
+        font-size: 0.8rem;
+        color: var(--muted);
+        font-family: ui-monospace, Menlo, monospace;
+        word-break: break-all;
+        max-width: 36rem;
+        white-space: pre-wrap;
+        text-align: left;
+      }
+
+      @media (max-width: 720px) {
+        header.top {
+          flex-direction: column;
+        }
+        .detail {
+          top: auto;
+          bottom: 0;
+          right: 0;
+          left: 0;
+          width: 100%;
+          max-height: 45vh;
+          transform: translateY(110%);
+        }
+        .detail.open {
+          transform: translateY(0);
+        }
+        .job-progress {
+          bottom: 3.25rem;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="stage"><canvas id="graph-canvas"></canvas></div>
+
+    <header class="top chrome">
+      <div class="brand-block">
+        <h1><span>Alfred</span> memory graph</h1>
+        <p>
+          Browse linked people, places, projects, and facts. Use both search boxes to see how two
+          memories connect.
+        </p>
       </div>
-      <div class="row-actions">
-        <button type="button" id="btn-reload">Reload</button>
-        <button type="button" class="ghost" id="btn-rebuild">Rebuild index</button>
-        <button type="button" class="ghost" id="btn-reset">Reset view</button>
-        <button type="button" class="ghost" id="btn-ingest">Ingest</button>
+      <div class="panel controls">
+        <label for="q">From</label>
+        <input id="q" type="search" placeholder="Devon, Sarah…" autocomplete="off" />
+        <label for="q2">To</label>
+        <input id="q2" type="search" placeholder="USPTO, Barolo…" autocomplete="off" />
+        <p class="bridge-hint" id="bridge-hint">Fill both to trace the path between them.</p>
+        <label for="qDate">Date</label>
+        <input
+          id="qDate"
+          type="search"
+          placeholder="August 15 · 08/15 · 1985-08-15"
+          autocomplete="off"
+        />
+        <p class="bridge-hint" id="date-hint">Month names and numbers match the same dates.</p>
+        <label>Show types</label>
+        <div class="filters" id="filters">
+          <button type="button" class="on" data-type="Entity">Entity</button>
+          <button type="button" data-type="Organization">Organization</button>
+          <button type="button" class="on" data-type="Episode">Episode</button>
+          <button type="button" class="on" data-type="Assertion">Assertion</button>
+          <button type="button" class="on" data-type="Observation">Observation</button>
+          <button type="button" data-type="Artifact">Artifact</button>
+        </div>
+        <div class="row-actions">
+          <button type="button" id="btn-reload">Reload</button>
+          <button type="button" class="ghost" id="btn-rebuild">Rebuild index</button>
+          <button type="button" class="ghost" id="btn-clean">Clean Index</button>
+          <button type="button" class="ghost" id="btn-reset">Reset view</button>
+          <button type="button" class="ghost" id="btn-ingest">Ingest</button>
+        </div>
+        <div class="stats" id="stats">Loading…</div>
       </div>
-      <div class="stats" id="stats">Loading…</div>
+    </header>
+
+    <aside class="panel detail" id="detail" aria-live="polite">
+      <button type="button" class="close-x" id="detail-close" aria-label="Close">×</button>
+      <div id="detail-body"></div>
+    </aside>
+    <div class="detail-overlay" id="detail-overlay" hidden>
+      <div class="panel detail-overlay-panel" role="dialog" aria-modal="true" aria-labelledby="detail-overlay-title">
+        <button type="button" class="close-x" id="detail-overlay-close" aria-label="Close expanded details">×</button>
+        <h2 id="detail-overlay-title">Details</h2>
+        <p class="meta" id="detail-overlay-name"></p>
+        <figure class="detail-overlay-photo" id="detail-overlay-photo" hidden>
+          <img id="detail-overlay-img" alt="" />
+        </figure>
+        <figure class="detail-overlay-file" id="detail-overlay-file" hidden></figure>
+        <textarea id="detail-overlay-text"></textarea>
+        <div class="detail-overlay-actions">
+          <button type="button" id="detail-overlay-save">Save changes</button>
+          <button type="button" class="ghost" id="detail-overlay-done">Done</button>
+        </div>
+      </div>
     </div>
-  </header>
 
-  <aside class="panel detail" id="detail" aria-live="polite">
-    <button type="button" class="close-x" id="detail-close" aria-label="Close">×</button>
-    <div id="detail-body"></div>
-  </aside>
-
-  <div class="hint">Drag to pan · scroll to zoom · click node for details · double-click to center</div>
-  <div class="empty" id="empty">
-    <div>
-      <h2>No memory graph yet</h2>
-      <p id="empty-lead">If you just ingested, click <strong>Rebuild index</strong>. Confirm the data root matches your ingest root.</p>
-      <p><a href="/memory/ingest">Open ingest →</a></p>
-      <p class="diag" id="empty-diag"></p>
+    <div class="hint">
+      Drag to pan · scroll to zoom · click node for details · double-click to center
     </div>
-  </div>
+    <div class="panel job-progress" id="job-progress" hidden>
+      <div class="job-progress-title" id="job-progress-title">Clean Index</div>
+      <p class="job-progress-label" id="job-progress-label">Starting…</p>
+      <div
+        class="job-progress-track"
+        id="job-progress-bar"
+        role="progressbar"
+        aria-valuemin="0"
+        aria-valuemax="100"
+        aria-valuenow="0"
+      >
+        <div class="job-progress-fill" id="job-progress-fill"></div>
+      </div>
+      <div class="job-progress-meta">
+        <span id="job-progress-count"></span>
+        <span id="job-progress-pct">0%</span>
+      </div>
+    </div>
+    <div class="empty" id="empty">
+      <div>
+        <h2>No memory graph yet</h2>
+        <p id="empty-lead">
+          If you just ingested, click <strong>Rebuild index</strong>. Confirm the data root matches
+          your ingest root.
+        </p>
+        <p><a href="/memory/ingest">Open ingest →</a></p>
+        <p class="diag" id="empty-diag"></p>
+      </div>
+    </div>
 
-  <script src="/memory/graph/app.js" defer></script>
-</body>
+    <script src="/alfred-base.js"></script>
+    <script src="/embed-bridge.js"></script>
+    <script src="/memory/graph/date-query.js"></script>
+    <script src="/memory/graph/app.js" defer></script>
+  </body>
 </html>

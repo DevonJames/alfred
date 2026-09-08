@@ -126,6 +126,9 @@ importers:
       '@livekit/react-native':
         specifier: ^2.12.0
         version: 2.12.0(@livekit/react-native-webrtc@144.1.2(react-native@0.81.5(@babel/core@7.28.4)(@react-native/metro-config@0.87.0(@babel/core@7.28.4))(@types/react@19.1.17)(react@19.1.0)))(livekit-client@2.21.0(@types/dom-mediacapture-record@1.0.22))(react-dom@19.1.0(react@19.1.0))(react-native@0.81.5(@babel/core@7.28.4)(@react-native/metro-config@0.87.0(@babel/core@7.28.4))(@types/react@19.1.17)(react@19.1.0))(react@19.1.0)(tslib@2.8.1)
+      '@livekit/react-native-callkeep':
+        specifier: ^4.3.16
+        version: 4.3.16(react-native@0.81.5(@babel/core@7.28.4)(@react-native/metro-config@0.87.0(@babel/core@7.28.4))(@types/react@19.1.17)(react@19.1.0))
       '@livekit/react-native-expo-plugin':
         specifier: ^1.0.2
         version: 1.0.2(@livekit/react-native@2.12.0(@livekit/react-native-webrtc@144.1.2(react-native@0.81.5(@babel/core@7.28.4)(@react-native/metro-config@0.87.0(@babel/core@7.28.4))(@types/react@19.1.17)(react@19.1.0)))(livekit-client@2.21.0(@types/dom-mediacapture-record@1.0.22))(react-dom@19.1.0(react@19.1.0))(react-native@0.81.5(@babel/core@7.28.4)(@react-native/metro-config@0.87.0(@babel/core@7.28.4))(@types/react@19.1.17)(react@19.1.0))(react@19.1.0)(tslib@2.8.1))(expo@54.0.22)(react-native@0.81.5(@babel/core@7.28.4)(@react-native/metro-config@0.87.0(@babel/core@7.28.4))(@types/react@19.1.17)(react@19.1.0))(react@19.1.0)
@@ -523,8 +526,8 @@ importers:
         specifier: 3.4.18
         version: 3.4.18(tsx@4.23.9)(yaml@2.9.0)
       uuid:
-        specifier: 11.1.0
-        version: 11.1.0
+        specifier: ^14.0.2
+        version: 14.0.2
       victory-native:
         specifier: 41.20.1
         version: 41.20.1(psigo5ypp2ij7xbkywjfzl6ivq)
@@ -556,6 +559,9 @@ importers:
       '@types/react':
         specifier: 19.1.17
         version: 19.1.17
+      '@types/uuid':
+        specifier: ^11.0.0
+        version: 11.0.0
       '@typescript-eslint/eslint-plugin':
         specifier: 8.45.0
         version: 8.45.0(@typescript-eslint/parser@8.45.0(eslint@9.36.0(jiti@1.21.7))(typescript@5.9.3))(eslint@9.36.0(jiti@1.21.7))(typescript@5.9.3)
@@ -650,6 +656,9 @@ importers:
       '@alfred/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@alfred/elgato':
+        specifier: workspace:*
+        version: link:../../packages/elgato
       '@alfred/livekit':
         specifier: workspace:*
         version: link:../../packages/livekit
@@ -775,6 +784,15 @@ importers:
         specifier: ^2.1.8
         version: 2.1.9(@types/node@22.20.1)(lightningcss@1.33.0)(terser@5.50.0)
 
+  packages/elgato:
+    devDependencies:
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.8
+        version: 2.1.9(@types/node@22.20.1)(lightningcss@1.33.0)(terser@5.50.0)
+
   packages/livekit:
     dependencies:
       '@alfred/contracts':
@@ -811,6 +829,9 @@ importers:
       ulid:
         specifier: ^3.0.2
         version: 3.0.2
+      unpdf:
+        specifier: ^1.8.1
+        version: 1.8.1
       zod:
         specifier: ^3.24.1
         version: 3.25.76
@@ -2471,6 +2492,11 @@ packages:
   '@livekit/protocol@1.50.4':
     resolution: {integrity: sha512-L1uggNQAqyY21smQY8AllyOYbcv9Me9TaxwuLytL1R8ck9nbYPmQLNwEDi3pOFGAMa5F8I2nUi2Jc59W5awxlA==}
 
+  '@livekit/react-native-callkeep@4.3.16':
+    resolution: {integrity: sha512-MEPfXThtEEQuzwju57sVaUIHd6dAJjXMhzjU5ZN1Btb/d9RYEIcF2B5jLJVTbb97uHFtC3pP8+HMgQ04uqIiaw==}
+    peerDependencies:
+      react-native: '>=0.40.0'
+
   '@livekit/react-native-expo-plugin@1.0.2':
     resolution: {integrity: sha512-Crnht6xAlvbSo677oXFBMzS6I5lCMfCNNyLIs6bQZOwlwempz6tWj4CddRknqCCd/dvAyHCa1HwslqXpvGoSJA==}
     peerDependencies:
@@ -3522,6 +3548,10 @@ packages:
 
   '@types/uuid@10.0.0':
     resolution: {integrity: sha512-7gqG38EyHgyP1S+7+xomFtL+ZNHcKv6DwNaCZmJmo1vgMugyF3TCnXVg4t1uk89mLNwnLtnY3TpOpCOyp1/xHQ==}
+
+  '@types/uuid@11.0.0':
+    resolution: {integrity: sha512-HVyk8nj2m+jcFRNazzqyVKiZezyhDKrGUA3jlEcg/nZ6Ms+qHwocba1Y/AaVaznJTAM9xpdFSh+ptbNrhOGvZA==}
+    deprecated: This is a stub types definition. uuid provides its own type definitions, so you do not need this installed.
 
   '@types/ws@8.18.1':
     resolution: {integrity: sha512-ThVF6DCVhA8kUGy+aazFQ4kXQ7E1Ty7A3ypFOe0IcJV8O/M511G99AW24irKrW56Wt44yG9+ij8FaqoBGkuBXg==}
@@ -8708,12 +8738,12 @@ packages:
     deprecated: uuid@10 and below is no longer supported.  For ESM codebases, update to uuid@latest.  For CommonJS codebases, use uuid@11 (but be aware this version will likely be deprecated in 2028).
     hasBin: true
 
-  uuid@11.1.0:
-    resolution: {integrity: sha512-0/A9rDy9P7cJ+8w1c9WD9V//9Wj15Ce2MPz8Ri6032usz+NfePxx5AcN3bN+r6ZL6jEo066/yNYB3tn4pQEx+A==}
-    hasBin: true
-
   uuid@11.1.1:
     resolution: {integrity: sha512-vIYxrBCC/N/K+Js3qSN88go7kIfNPssr/hHCesKCQNAjmgvYS2oqr69kIufEG+O4+PfezOH4EbIeHCfFov8ZgQ==}
+    hasBin: true
+
+  uuid@14.0.2:
+    resolution: {integrity: sha512-xZe/16rV4aa+HGSOCiY2YeLT1OybRLrrkL/Rqaq7p7GMVXjFh+6wN4oMYgjFmnSnhY8t6Xpdl2l9qmnHYuMHwQ==}
     hasBin: true
 
   uuid@3.4.0:
@@ -10893,6 +10923,10 @@ snapshots:
     dependencies:
       '@bufbuild/protobuf': 1.10.1
 
+  '@livekit/react-native-callkeep@4.3.16(react-native@0.81.5(@babel/core@7.28.4)(@react-native/metro-config@0.87.0(@babel/core@7.28.4))(@types/react@19.1.17)(react@19.1.0))':
+    dependencies:
+      react-native: 0.81.5(@babel/core@7.28.4)(@react-native/metro-config@0.87.0(@babel/core@7.28.4))(@types/react@19.1.17)(react@19.1.0)
+
   '@livekit/react-native-expo-plugin@1.0.2(@livekit/react-native@2.12.0(@livekit/react-native-webrtc@144.1.2(react-native@0.81.5(@babel/core@7.28.4)(@react-native/metro-config@0.87.0(@babel/core@7.28.4))(@types/react@19.1.17)(react@19.1.0)))(livekit-client@2.21.0(@types/dom-mediacapture-record@1.0.22))(react-dom@19.1.0(react@19.1.0))(react-native@0.81.5(@babel/core@7.28.4)(@react-native/metro-config@0.87.0(@babel/core@7.28.4))(@types/react@19.1.17)(react@19.1.0))(react@19.1.0)(tslib@2.8.1))(expo@54.0.22)(react-native@0.81.5(@babel/core@7.28.4)(@react-native/metro-config@0.87.0(@babel/core@7.28.4))(@types/react@19.1.17)(react@19.1.0))(react@19.1.0)':
     dependencies:
       '@livekit/react-native': 2.12.0(@livekit/react-native-webrtc@144.1.2(react-native@0.81.5(@babel/core@7.28.4)(@react-native/metro-config@0.87.0(@babel/core@7.28.4))(@types/react@19.1.17)(react@19.1.0)))(livekit-client@2.21.0(@types/dom-mediacapture-record@1.0.22))(react-dom@19.1.0(react@19.1.0))(react-native@0.81.5(@babel/core@7.28.4)(@react-native/metro-config@0.87.0(@babel/core@7.28.4))(@types/react@19.1.17)(react@19.1.0))(react@19.1.0)(tslib@2.8.1)
@@ -11995,6 +12029,10 @@ snapshots:
   '@types/stack-utils@2.0.3': {}
 
   '@types/uuid@10.0.0': {}
+
+  '@types/uuid@11.0.0':
+    dependencies:
+      uuid: 14.0.2
 
   '@types/ws@8.18.1':
     dependencies:
@@ -18195,9 +18233,9 @@ snapshots:
 
   uuid@10.0.0: {}
 
-  uuid@11.1.0: {}
-
   uuid@11.1.1: {}
+
+  uuid@14.0.2: {}
 
   uuid@3.4.0: {}
 

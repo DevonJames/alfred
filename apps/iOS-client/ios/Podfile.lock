@@ -2567,6 +2567,8 @@ PODS:
   - RevenueCat (5.50.0)
   - RevenueCatUI (5.50.0):
     - RevenueCat (= 5.50.0)
+  - RNCallKeep (4.3.16):
+    - React
   - RNCAsyncStorage (2.2.0):
     - hermes-engine
     - RCTRequired
@@ -3127,6 +3129,7 @@ DEPENDENCIES:
   - "ReactCommon/turbomodule/core (from `../../../node_modules/.pnpm/react-native@0.81.5_@babel+core@7.28.4_@react-native+metro-config@0.87.0_@babel+core@7.28.4___vujisx6wqagemhdxinhwxhlcda/node_modules/react-native/ReactCommon`)"
   - "ReactNativeDependencies (from `../../../node_modules/.pnpm/react-native@0.81.5_@babel+core@7.28.4_@react-native+metro-config@0.87.0_@babel+core@7.28.4___vujisx6wqagemhdxinhwxhlcda/node_modules/react-native/third-party-podspecs/ReactNativeDependencies.podspec`)"
   - "ReactNativeEnriched (from `../../../node_modules/.pnpm/react-native-enriched@0.1.6_react-native@0.81.5_@babel+core@7.28.4_@react-native+metro-config_ru2qoeabsfgpcelisrh5siqwhi/node_modules/react-native-enriched`)"
+  - "RNCallKeep (from `../node_modules/@livekit/react-native-callkeep`)"
   - "RNCAsyncStorage (from `../../../node_modules/.pnpm/@react-native-async-storage+async-storage@2.2.0_react-native@0.81.5_@babel+core@7.28.4_@react_yyrevfjdhjuyoce7xalorzsx4m/node_modules/@react-native-async-storage/async-storage`)"
   - "RNCClipboard (from `../../../node_modules/.pnpm/@react-native-clipboard+clipboard@1.16.3_react-native@0.81.5_@babel+core@7.28.4_@react-native_fjha324drnf4bvaxuac54jgb4y/node_modules/@react-native-clipboard/clipboard`)"
   - "RNCMaskedView (from `../../../node_modules/.pnpm/@react-native-masked-view+masked-view@0.3.2_react-native@0.81.5_@babel+core@7.28.4_@react-nat_kk3fpw5v6wh5eybsefyb5b24be/node_modules/@react-native-masked-view/masked-view`)"
@@ -3476,6 +3479,8 @@ EXTERNAL SOURCES:
     :podspec: "../../../node_modules/.pnpm/react-native@0.81.5_@babel+core@7.28.4_@react-native+metro-config@0.87.0_@babel+core@7.28.4___vujisx6wqagemhdxinhwxhlcda/node_modules/react-native/third-party-podspecs/ReactNativeDependencies.podspec"
   ReactNativeEnriched:
     :path: "../../../node_modules/.pnpm/react-native-enriched@0.1.6_react-native@0.81.5_@babel+core@7.28.4_@react-native+metro-config_ru2qoeabsfgpcelisrh5siqwhi/node_modules/react-native-enriched"
+  RNCallKeep:
+    :path: "../node_modules/@livekit/react-native-callkeep"
   RNCAsyncStorage:
     :path: "../../../node_modules/.pnpm/@react-native-async-storage+async-storage@2.2.0_react-native@0.81.5_@babel+core@7.28.4_@react_yyrevfjdhjuyoce7xalorzsx4m/node_modules/@react-native-async-storage/async-storage"
   RNCClipboard:
@@ -3673,6 +3678,7 @@ SPEC CHECKSUMS:
   ReactNativeEnriched: 335700c48d72b91ddb307a5b64c30c62e83821f0
   RevenueCat: a5fcd0a12b5ec9bbddc0cf0dd20c14b7e6213df6
   RevenueCatUI: d470454494ecc734ca9b416fea0704613c4cd7a2
+  RNCallKeep: 6229f80ddf30df568233585144e5e5e60db3a13f
   RNCAsyncStorage: 3a4f5e2777dae1688b781a487923a08569e27fe4
   RNCClipboard: 88d7eeb555d1183915f0885bdbc5c97eb6f7f3ba
   RNCMaskedView: d2578d41c59b936db122b2798ba37e4722d21035

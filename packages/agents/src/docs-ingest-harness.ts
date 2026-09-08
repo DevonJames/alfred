@@ -19,7 +19,7 @@ export class DocsIngestHarness implements AgentHarness {
     displayName: "Docs Folder Ingest",
     version: "0.1.0",
     capabilities: ["research"],
-    notes: "Ingests local markdown documentation folders into OIP memory.",
+    notes: "Ingests local .md / .txt / .rtf / .pdf documentation folders into OIP memory.",
   };
 
   constructor(private readonly opts: { profileId?: string } = {}) {}

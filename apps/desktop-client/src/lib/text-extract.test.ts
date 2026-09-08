@@ -17,7 +17,12 @@ describe("text-extract", () => {
   });
 
   it("rejects unknown extensions", () => {
-    expect(() => extractPlainText(Buffer.from("x"), "photo.png")).toThrow(/Unsupported/);
+    expect(() => extractPlainText(Buffer.from("x"), "notes.xyz")).toThrow(/Unsupported/);
+  });
+
+  it("sends photos to Photo ingest mode", () => {
+    expect(kindFromFilename("receipt.jpg")).toBe("image");
+    expect(() => extractPlainText(Buffer.from("x"), "photo.png")).toThrow(/Photo ingest/);
   });
 
   it("classifies PDFs and keeps them off the knowledge-export path", () => {

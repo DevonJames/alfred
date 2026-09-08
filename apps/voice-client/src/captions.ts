@@ -30,6 +30,7 @@ export class CaptionHud {
     this.restEl = opts.rest;
     this.cursorEl = opts.cursor;
     this.modeEl = opts.mode;
+    this.cursorEl.hidden = true;
     this.render();
   }
 
@@ -55,9 +56,11 @@ export class CaptionHud {
       this.render();
       return;
     }
-    // end
-    if (this.full && this.revealed.length < this.full.length) {
-      this.revealed = this.full;
+    // end — only snap to full text on a clean complete; interrupts keep the spoken prefix
+    if (!msg.reason || msg.reason === "complete") {
+      if (this.full && this.revealed.length < this.full.length) {
+        this.revealed = this.full;
+      }
     }
     this.speaking = false;
     this.modeEl.textContent = "STANDBY";

@@ -299,22 +299,26 @@ export class SqliteMemoryIndex {
 
   findByName(name: string, recordType?: string): RecordRow[] {
     const db = this.open();
+    // Prefer exact name matches — search_text LIKE can flood LIMIT 20 with
+    // unrelated hits (e.g. "USPTO" in Alexandria Place search text).
     if (recordType) {
       return db
         .prepare(
           `SELECT * FROM records
            WHERE record_type = ? AND (LOWER(name) = LOWER(?) OR LOWER(search_text) LIKE ?)
+           ORDER BY CASE WHEN LOWER(name) = LOWER(?) THEN 0 ELSE 1 END, id
            LIMIT 20`,
         )
-        .all(recordType, name, `%${name.toLowerCase()}%`) as RecordRow[];
+        .all(recordType, name, `%${name.toLowerCase()}%`, name) as RecordRow[];
     }
     return db
       .prepare(
         `SELECT * FROM records
          WHERE LOWER(name) = LOWER(?) OR LOWER(search_text) LIKE ?
+         ORDER BY CASE WHEN LOWER(name) = LOWER(?) THEN 0 ELSE 1 END, id
          LIMIT 20`,
       )
-      .all(name, `%${name.toLowerCase()}%`) as RecordRow[];
+      .all(name, `%${name.toLowerCase()}%`, name) as RecordRow[];
   }
 
   edgesFrom(sourceId: string): EdgeRow[] {
@@ -486,12 +490,47 @@ function buildSearchText(r: MemoryRevision): string {
   if (typeof r.schema?.name === "string") parts.push(String(r.schema.name));
   if (typeof r.schema?.url === "string") parts.push(String(r.schema.url));
   if (typeof r.schema?.description === "string") parts.push(String(r.schema.description));
+  if (typeof r.schema?.email === "string") parts.push(String(r.schema.email), "email");
+  if (typeof r.schema?.telephone === "string") {
+    parts.push(String(r.schema.telephone), "phone", "telephone");
+  }
+  if (typeof r.schema?.birthDate === "string") {
+    const bd = String(r.schema.birthDate);
+    parts.push(bd, "birthday", "birth date", "born");
+    // Expand --MM-DD / YYYY-MM-DD into month name for spoken search
+    const md = bd.match(/^(?:\d{4}|--)?-?(\d{2})-(\d{2})$/);
+    if (md) {
+      const months = [
+        "january",
+        "february",
+        "march",
+        "april",
+        "may",
+        "june",
+        "july",
+        "august",
+        "september",
+        "october",
+        "november",
+        "december",
+      ];
+      const mi = Number(md[1]) - 1;
+      const day = Number(md[2]);
+      if (mi >= 0 && mi < 12) {
+        parts.push(`${months[mi]} ${day}`, `${months[mi]} ${day}${day === 1 ? "st" : day === 2 ? "nd" : day === 3 ? "rd" : "th"}`);
+      }
+    }
+  }
   if (typeof r.schema?.author === "string") parts.push(String(r.schema.author));
   if (Array.isArray(r.schema?.alternateName)) {
     parts.push(...r.schema.alternateName.map(String));
   }
   if (r.predicate) parts.push(r.predicate);
   if (r.object != null && typeof r.object !== "object") parts.push(String(r.object));
+  const alfred = r.alfred as { supersededBy?: unknown } | undefined;
+  if (typeof alfred?.supersededBy === "string" && alfred.supersededBy) {
+    parts.push("__alfred_superseded__");
+  }
   if (r.type) parts.push(r.type);
   if (r.schemaType) parts.push(r.schemaType);
   const prov = r.provenance ?? {};
@@ -504,6 +543,12 @@ function buildSearchText(r: MemoryRevision): string {
     }
     if (prov.sourceType === "document_upload") {
       parts.push("pdf", "document", "uploaded document", "document_upload");
+    }
+    if (prov.sourceType === "photo_upload") {
+      parts.push("photo", "image", "ocr", "uploaded photo", "photo_upload");
+    }
+    if (prov.sourceType === "audio_note") {
+      parts.push("audio note", "recording", "transcript", "meeting", "audio_note");
     }
   }
   if (typeof prov.sourcePath === "string") parts.push(prov.sourcePath);

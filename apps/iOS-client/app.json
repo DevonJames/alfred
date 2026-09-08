@@ -34,7 +34,7 @@
             }
           }
         },
-        "UIBackgroundModes": ["audio"],
+        "UIBackgroundModes": ["audio", "voip"],
         "ITSAppUsesNonExemptEncryption": false
       }
     },
@@ -83,7 +83,7 @@
     },
     "extra": {
       "eas": {
-        "projectId": "replace-with-eas-project-id"
+        "projectId": "acd84559-ea51-4e72-9ad3-43233c76e551"
       }
     }
   }

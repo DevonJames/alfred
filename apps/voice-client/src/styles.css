@@ -57,6 +57,16 @@ body {
   background: radial-gradient(ellipse at center, transparent 40%, rgba(0, 0, 0, 0.55) 100%);
 }
 
+html.embedded .brand-mark {
+  display: none;
+}
+
+html.embedded .top,
+html.embedded .bottom {
+  padding-top: 0.75rem;
+  padding-bottom: 0.75rem;
+}
+
 .top,
 .bottom {
   position: relative;
@@ -455,6 +465,10 @@ body {
   height: 0.95em;
 }
 
+.cursor[hidden] {
+  display: none;
+}
+
 @keyframes blink {
   50% {
     opacity: 0;
@@ -504,12 +518,36 @@ button:disabled {
   cursor: not-allowed;
 }
 
-button#disconnect {
+button#connect.stop {
   border-color: var(--danger);
   color: var(--danger);
 }
 
-button#disconnect:hover:not(:disabled) {
+button#connect.stop:hover:not(:disabled) {
+  background: rgba(255, 92, 106, 0.12);
+}
+
+button#shhh {
+  border-color: rgba(255, 179, 71, 0.65);
+  color: var(--amber);
+}
+
+button#shhh:hover:not(:disabled) {
+  background: rgba(255, 179, 71, 0.12);
+}
+
+button#shhh.active {
+  border-color: var(--danger);
+  color: var(--danger);
+  background: rgba(255, 92, 106, 0.12);
+}
+
+button#mute.muted {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+button#mute.muted:hover:not(:disabled) {
   background: rgba(255, 92, 106, 0.12);
 }
 

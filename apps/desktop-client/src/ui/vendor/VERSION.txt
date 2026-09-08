@@ -1,0 +1,2 @@
+three@0.128.0
+3d-force-graph@1.73.3

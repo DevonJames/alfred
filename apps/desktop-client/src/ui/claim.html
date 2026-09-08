@@ -28,8 +28,7 @@
         font-family: "IBM Plex Mono", ui-monospace, monospace;
         background:
           radial-gradient(1200px 600px at 20% -10%, #163049 0%, transparent 55%),
-          radial-gradient(900px 500px at 100% 20%, #1a2a22 0%, transparent 50%),
-          var(--bg);
+          radial-gradient(900px 500px at 100% 20%, #1a2a22 0%, transparent 50%), var(--bg);
         color: var(--fg);
         display: grid;
         place-items: center;
@@ -143,7 +142,7 @@
       <p class="sub">Claim // phone pairing</p>
 
       <div class="qr-wrap">
-        <img src="/connect/claim.png" width="512" height="512" alt="Alfred claim QR code" />
+        <img id="claim-qr" src="/connect/claim.png" width="512" height="512" alt="Alfred claim QR code" />
       </div>
 
       <p class="hint">
@@ -185,13 +184,24 @@
       <p class="status {{RELAY_CLASS}}">{{RELAY_STATUS}}</p>
 
       <footer>
-        <a href="/">← Desktop hub</a>
-        · <a href="/connect/claim.json">claim.json</a>
-        · <a href="/connect/info">info</a>
-        · <a href="/pair/devices">devices</a>
+        <a data-alfred-href="/" href="/">← Desktop hub</a>
+        · <a data-alfred-href="/connect/claim.json" href="/connect/claim.json">claim.json</a> ·
+        <a data-alfred-href="/connect/info" href="/connect/info">info</a> ·
+        <a data-alfred-href="/pair/devices" href="/pair/devices">devices</a>
       </footer>
     </main>
+    <script src="/alfred-base.js"></script>
     <script>
+      (function () {
+        const to = typeof alfredUrl === "function" ? alfredUrl : (p) => p;
+        const qr = document.getElementById("claim-qr");
+        if (qr) qr.src = to("/connect/claim.png");
+        document.querySelectorAll("[data-alfred-href]").forEach((a) => {
+          const path = a.getAttribute("data-alfred-href");
+          if (path) a.setAttribute("href", to(path));
+        });
+      })();
+
       document.querySelectorAll("button.copy").forEach((btn) => {
         btn.addEventListener("click", async () => {
           const id = btn.getAttribute("data-copy");
@@ -215,7 +225,8 @@
         const hint = document.getElementById("pinHint");
         if (!pinField || !pinEl || !hint) return;
         try {
-          const res = await fetch("/pair/devices");
+          const path = typeof alfredUrl === "function" ? alfredUrl("/pair/devices") : "/pair/devices";
+          const res = await fetch(path);
           if (!res.ok) return;
           const data = await res.json();
           const pending = (data.devices || []).find(
@@ -225,9 +236,7 @@
             pinField.hidden = false;
             pinEl.textContent = pending.pairing_pin;
             hint.textContent =
-              "PIN for “" +
-              pending.name +
-              "” — enter it in the iOS app (expires soon).";
+              "PIN for “" + pending.name + "” — enter it in the iOS app (expires soon).";
           } else {
             pinField.hidden = true;
           }
@@ -239,5 +248,6 @@
       refreshPendingPin();
       setInterval(refreshPendingPin, 2000);
     </script>
+    <script src="/embed-bridge.js"></script>
   </body>
 </html>

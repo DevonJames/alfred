@@ -154,6 +154,21 @@ describe("looksLikeAssistantEcho / isEchoTranscript", () => {
     expect(isConfidentBargeIn({ heard: fragment, assistantSpeech: assistant })).toBe(false);
   });
 
+  it("does not treat short novel follow-ups as echo of a long memory reply", () => {
+    const assistant =
+      "From your notes, the Alexandria project timeline has three milestones and a review with Devon next week about shipping.";
+    const userTurn = "What is in my notes about the Alexandria project?";
+    expect(
+      isEchoTranscript({
+        heard: "What's the weather?",
+        assistantSpeech: assistant,
+        userTurn,
+        aggressiveShort: true,
+      }),
+    ).toBe(false);
+    expect(isNoisyReplay("What's the weather?", assistant)).toBe(false);
+  });
+
   it("still treats hold-on / say-red as an interrupt cue", () => {
     expect(hasInterruptCue("Hold on. Say red.")).toBe(true);
     expect(

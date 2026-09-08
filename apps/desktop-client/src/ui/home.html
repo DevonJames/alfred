@@ -12,119 +12,209 @@
     />
     <style>
       :root {
-        --bg: #0b0f14;
+        --bg: #05080f;
         --fg: #e8eef5;
         --muted: #8b9bb0;
         --line: #1c2733;
         --accent: #7ee0c3;
+        --mint: #3dffc4;
+        --amber: #ffb347;
+        --nav-h: 3.15rem;
       }
       * {
         box-sizing: border-box;
       }
+      html,
       body {
         margin: 0;
-        min-height: 100vh;
-        font-family: "IBM Plex Mono", ui-monospace, monospace;
-        background:
-          radial-gradient(1200px 600px at 20% -10%, #163049 0%, transparent 55%),
-          radial-gradient(900px 500px at 100% 20%, #1a2a22 0%, transparent 50%),
-          var(--bg);
+        height: 100%;
+        overflow: hidden;
+        background: var(--bg);
         color: var(--fg);
-        display: grid;
-        place-items: center;
-        padding: 2rem;
+        font-family: "IBM Plex Mono", ui-monospace, monospace;
       }
-      main {
-        width: min(36rem, 100%);
+      body {
+        display: grid;
+        grid-template-rows: var(--nav-h) 1fr;
+      }
+      .shell-nav {
+        display: flex;
+        align-items: center;
+        gap: 0.35rem;
+        padding: 0 0.85rem;
+        border-bottom: 1px solid var(--line);
+        background: rgba(8, 12, 18, 0.94);
+        z-index: 5;
       }
       .brand {
         font-family: Syne, sans-serif;
         font-weight: 800;
-        font-size: clamp(2.5rem, 8vw, 3.5rem);
-        letter-spacing: 0.04em;
-        line-height: 1;
-        margin: 0 0 0.35rem;
+        letter-spacing: 0.12em;
+        font-size: 0.95rem;
+        margin-right: 0.85rem;
+        color: #eafff8;
       }
-      .sub {
+      .shell-nav button {
+        appearance: none;
+        border: 1px solid transparent;
+        background: transparent;
         color: var(--muted);
-        font-size: 0.8rem;
-        letter-spacing: 0.14em;
+        font-family: inherit;
+        font-size: 0.68rem;
+        font-weight: 600;
+        letter-spacing: 0.16em;
         text-transform: uppercase;
-        margin: 0 0 2rem;
+        padding: 0.4rem 0.7rem;
+        cursor: pointer;
       }
-      nav {
-        display: grid;
-        gap: 0.75rem;
-      }
-      a {
-        display: block;
-        text-decoration: none;
+      .shell-nav button:hover {
         color: var(--fg);
-        border: 1px solid var(--line);
-        padding: 1rem 1.1rem;
-        background: rgba(12, 18, 26, 0.65);
-        transition:
-          border-color 0.15s ease,
-          transform 0.15s ease;
       }
-      a:hover {
-        border-color: var(--accent);
-        transform: translateY(-1px);
+      .shell-nav button.active {
+        color: var(--mint);
+        border-color: rgba(61, 255, 196, 0.35);
       }
-      a strong {
-        display: block;
-        font-family: Syne, sans-serif;
-        font-size: 1.1rem;
-        margin-bottom: 0.25rem;
-      }
-      a span {
+      .backronym {
+        margin-left: auto;
         color: var(--muted);
-        font-size: 0.78rem;
+        font-size: 0.62rem;
+        letter-spacing: 0.04em;
+        line-height: 1.25;
+        text-align: right;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        min-width: 0;
       }
-      footer {
-        margin-top: 1.75rem;
-        color: var(--muted);
-        font-size: 0.72rem;
+      .stage {
+        position: relative;
+        min-height: 0;
       }
-      footer a {
-        display: inline;
-        padding: 0;
+      iframe {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
         border: 0;
-        background: none;
-        color: var(--accent);
+        background: var(--bg);
       }
-      footer a:hover {
-        transform: none;
+      #voice-frame {
+        z-index: 1;
+      }
+      #voice-frame.is-front {
+        z-index: 3;
+      }
+      #content-frame {
+        z-index: 2;
+      }
+      #content-frame.is-hidden {
+        visibility: hidden;
+        pointer-events: none;
+        z-index: 0;
+      }
+      #voice-pip {
+        position: fixed;
+        right: 1rem;
+        bottom: 1rem;
+        z-index: 8;
+        width: min(22rem, calc(100vw - 2rem));
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 0.55rem;
+        align-items: center;
+        padding: 0.65rem 0.75rem;
+        border: 1px solid rgba(61, 255, 196, 0.28);
+        background: rgba(8, 14, 22, 0.92);
+        color: inherit;
+        cursor: pointer;
+        box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+      }
+      #voice-pip[hidden] {
+        display: none;
+      }
+      #voice-pip:hover {
+        border-color: var(--mint);
+      }
+      #voice-pip.speaking {
+        border-color: rgba(255, 179, 71, 0.55);
+      }
+      #pip-wave {
+        width: 100%;
+        height: 44px;
+        display: block;
+      }
+      .pip-meta {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-end;
+        gap: 0.2rem;
+        min-width: 5.5rem;
+      }
+      .pip-live {
+        display: flex;
+        align-items: center;
+        gap: 0.35rem;
+        font-size: 0.62rem;
+        letter-spacing: 0.16em;
+        color: var(--muted);
+      }
+      .pip-dot {
+        width: 0.45rem;
+        height: 0.45rem;
+        border-radius: 50%;
+        background: var(--muted);
+      }
+      .pip-dot.live {
+        background: var(--mint);
+        box-shadow: 0 0 10px rgba(61, 255, 196, 0.8);
+      }
+      .pip-dot.speaking {
+        background: var(--amber);
+        box-shadow: 0 0 10px rgba(255, 179, 71, 0.85);
+      }
+      #pip-caption {
+        margin: 0;
+        max-width: 9rem;
+        font-size: 0.68rem;
+        line-height: 1.3;
+        color: #cfe8f2;
+        text-align: right;
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
       }
     </style>
   </head>
-  <body>
-    <main>
-      <h1 class="brand">ALFRED</h1>
-      <p class="sub">Desktop // local host</p>
-      <nav>
-        <a href="/connect/claim">
-          <strong>Claim phone</strong>
-          <span>QR code + claim secret for iOS pairing</span>
-        </a>
-        <a href="/voice/">
-          <strong>Voice uplink</strong>
-          <span>Conversational agent · waveform · live captions</span>
-        </a>
-        <a href="/memory/graph">
-          <strong>Memory graph</strong>
-          <span>Browse entities, episodes, and assertions</span>
-        </a>
-        <a href="/memory/ingest">
-          <strong>Memory ingest</strong>
-          <span>Import knowledge exports or PDF documents into local memory</span>
-        </a>
-      </nav>
-      <footer>
-        Status JSON · <a href="/status">/status</a>
-        · claim · <a href="/connect/claim">/connect/claim</a>
-        · cloud · <a href="/connect/info">/connect/info</a>
-      </footer>
-    </main>
+  <body data-screen="voice">
+    <nav class="shell-nav" id="shell-nav">
+      <span class="brand">ALFRED</span>
+      <button type="button" data-screen="voice" class="active">Talk</button>
+      <button type="button" data-screen="brief">Brief</button>
+      <button type="button" data-screen="notes">Notes</button>
+      <button type="button" data-screen="graph">Graph</button>
+      <button type="button" data-screen="graphBeta">Graph (beta)</button>
+      <button type="button" data-screen="ingest">Ingest</button>
+      <button type="button" data-screen="claim">Claim</button>
+      <span class="backronym">Agentic Local Framework for Reasoning, Experience &amp; Doing</span>
+    </nav>
+    <div class="stage">
+      <iframe
+        id="voice-frame"
+        class="is-front"
+        title="Alfred talk"
+        allow="microphone; autoplay"
+      ></iframe>
+      <iframe id="content-frame" class="is-hidden" title="Alfred"></iframe>
+    </div>
+    <button id="voice-pip" type="button" hidden>
+      <canvas id="pip-wave" width="320" height="44" aria-hidden="true"></canvas>
+      <span class="pip-meta">
+        <span class="pip-live"><span id="pip-dot" class="pip-dot"></span> LIVE</span>
+        <span id="pip-caption">Listening…</span>
+      </span>
+    </button>
+    <script src="/alfred-base.js"></script>
+    <script src="/shell.js"></script>
   </body>
 </html>

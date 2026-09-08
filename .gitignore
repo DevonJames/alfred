@@ -7,8 +7,24 @@ coverage
 .DS_Store
 .turbo
 tmp
-data
 *.tsbuildinfo
+
+# Local runtime / memory stores (never commit OIP artifacts, sqlite, audio, etc.)
+/data/
+/data copy/
+**/data/
+**/memory-oip/
+*.alfred-memory.zip
+from-a.alfred-memory.zip
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+
+# Scratch / reference dumps that are not product source
+/alfred-notes-iOS/
+ChatGPT Image*
+*.zip
 
 # Expo / React Native native projects (regenerate with `npx expo prebuild`)
 apps/iOS-client/ios/Pods

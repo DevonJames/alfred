@@ -18,7 +18,6 @@ import { NoopVectorIndex, type VectorIndex } from "./indexes/vector-index.js";
 import { PackageStore } from "./package-store.js";
 import { defaultOipMemoryRoot } from "./paths.js";
 import { retrieveMemories, toNormalized } from "./retrieval.js";
-import { SCHEMA_ORG, schemaOrgPerson } from "./schema-org.js";
 import type { MemoryRevision } from "./schemas.js";
 
 export interface DueReminder {
@@ -159,6 +158,13 @@ export class OipLocalMemoryProvider implements MemoryProvider {
   async commitTurn(commit: MemoryTurnCommit): Promise<void> {
     await this.ensureReady();
     const now = new Date().toISOString();
+
+    // Do not store assistant replies as graph memories — they polluted the graph as
+    // "assistant turn" nodes. User turns stay as episodic Observations for provenance.
+    if (commit.role === "assistant") {
+      return;
+    }
+
     await this.packages.createPackage({
       type: "Observation",
       now,
@@ -168,7 +174,7 @@ export class OipLocalMemoryProvider implements MemoryProvider {
         schema: {
           "@type": "CreativeWork",
           text: commit.text,
-          name: `${commit.role} turn`,
+          name: "user turn",
         },
         schemaType: "https://schema.org/CreativeWork",
         alfred: {
@@ -179,7 +185,7 @@ export class OipLocalMemoryProvider implements MemoryProvider {
         provenance: {
           sourceType: "conversation_turn",
           learnedAt: now,
-          speaker: commit.role,
+          speaker: "user",
           extractionMethod: "commitTurn",
         },
         drefs: {
@@ -188,25 +194,21 @@ export class OipLocalMemoryProvider implements MemoryProvider {
       },
     });
 
-    // Light heuristic: "my name is X" → Person entity
-    const nameMatch = commit.text.match(/\bmy name is\s+([A-Z][a-zA-Z'-]+)/i);
-    if (commit.role === "user" && nameMatch) {
-      const name = nameMatch[1]!;
-      await this.packages.createPackage({
-        type: "Entity",
-        now,
-        body: {
-          name,
-          schemaType: SCHEMA_ORG.Person,
-          schema: schemaOrgPerson(name),
-          alfred: { entityClass: "Person", confidence: 0.9, visibility: "private" },
-          learnedAt: now,
-          provenance: { sourceType: "conversation_turn", learnedAt: now },
-        },
-      });
-    }
+    const { extractConversationalMemory, writeConversationalMemory } =
+      await import("../conversation-memory.js");
+    const extracted = extractConversationalMemory(commit.text);
+    const hasStructured =
+      (extracted.entities?.length ?? 0) > 0 ||
+      (extracted.assertions?.length ?? 0) > 0 ||
+      (extracted.notes?.length ?? 0) > 0;
 
-    await this.rebuildIndexes();
+    if (hasStructured) {
+      await writeConversationalMemory(this, extracted, {
+        sessionId: commit.sessionId,
+      });
+    } else {
+      await this.rebuildIndexes();
+    }
   }
 
   async inspect(limit = 100): Promise<NormalizedMemoryItem[]> {
