@@ -61,7 +61,9 @@ async function main(): Promise<void> {
     targetIdentity: process.env.LIVEKIT_TARGET_IDENTITY,
   });
 
-  await roomSession.start();
+  await roomSession.start().catch((err) => {
+    console.error("[voice] initial LiveKit connect failed; will keep retrying", err);
+  });
 
   console.log("ALFRED cascaded voice agent online");
   console.log(`  STT: ${runtime.config.pipeline.sttPriority?.orderedProviderIds[0]}`);
@@ -73,6 +75,7 @@ async function main(): Promise<void> {
   );
   console.log(`  LiveKit: ${process.env.LIVEKIT_URL} room=${roomName} identity=${identity}`);
   console.log("  Join with mic enabled; agent publishes assistant audio track.");
+  console.log("  LiveKit auto-reconnect is on (Mac sleep / network blips).");
 
   if (process.env.ALFRED_LOG_PLAYBACK === "1") {
     runtime.media.onPlayback((frame) => {

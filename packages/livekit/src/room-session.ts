@@ -30,11 +30,15 @@ export interface LiveKitRoomSessionOptions {
   inputSampleRate?: number;
   /** Sample rate for published assistant track (match ElevenLabs pcm_24000). */
   outputSampleRate?: number;
+  /** Agent join JWT lifetime. Default 24h (token only matters at connect). */
+  tokenTtlSeconds?: number;
   media: LiveKitMediaBridge;
   /** When set, only subscribe to this remote participant identity. */
   targetIdentity?: string;
   logger?: Pick<Console, "log" | "warn" | "error" | "debug">;
 }
+
+const RECONNECT_DELAYS_MS = [1_000, 2_000, 5_000, 10_000, 30_000, 60_000];
 
 /**
  * Full room subscriber/publisher graph.
@@ -44,24 +48,34 @@ export interface LiveKitRoomSessionOptions {
  * - media.onPlayback → AudioSource.captureFrame → published track
  *
  * Does NOT host conversation policy. VoiceSessionController remains authoritative.
+ *
+ * After Mac sleep / network blips LiveKit disconnects the agent. We auto-rejoin
+ * with a fresh token so iOS does not need `make alfred` after hours idle.
  */
 export class LiveKitRoomSession {
   private room?: Room;
   private audioSource?: AudioSource;
   private localTrack?: LocalAudioTrack;
-  private unsubPlayback?: () => void;
+  private mediaUnsubs: Array<() => void> = [];
   private inboundTasks = new Set<Promise<void>>();
+  /** True only after intentional stop() — blocks reconnect. */
   private closed = false;
+  /** True while start()/reconnectConnect() is in flight. */
+  private connecting = false;
+  private reconnectAttempt = 0;
+  private reconnectTimer?: ReturnType<typeof setTimeout>;
   /** Bumped on every stopPlayback so in-flight captureFrame results are discarded. */
   private playbackEpoch = 0;
   private readonly vad = new EnergyVad();
   private readonly inputSampleRate: number;
   private readonly outputSampleRate: number;
+  private readonly tokenTtlSeconds: number;
   private readonly log: Pick<Console, "log" | "warn" | "error" | "debug">;
 
   constructor(private readonly opts: LiveKitRoomSessionOptions) {
     this.inputSampleRate = opts.inputSampleRate ?? 16_000;
     this.outputSampleRate = opts.outputSampleRate ?? 24_000;
+    this.tokenTtlSeconds = opts.tokenTtlSeconds ?? 60 * 60 * 24;
     this.log = opts.logger ?? console;
   }
 
@@ -70,91 +84,181 @@ export class LiveKitRoomSession {
   }
 
   async start(): Promise<void> {
-    if (this.room) return;
-
-    const identity = this.opts.identity ?? "alfred-agent";
-    const token = await createLiveKitToken({
-      apiKey: this.opts.apiKey,
-      apiSecret: this.opts.apiSecret,
-      roomName: this.opts.roomName,
-      identity,
-    });
-
-    const room = new Room();
-    this.room = room;
-
-    room.on(
-      RoomEvent.TrackSubscribed,
-      (track: RemoteTrack, publication: RemoteTrackPublication, participant: RemoteParticipant) => {
-        void this.onTrackSubscribed(track, publication, participant);
-      },
-    );
-    room.on(RoomEvent.Disconnected, () => {
-      this.log.warn("[livekit] disconnected from room");
-    });
-    room.on(RoomEvent.ParticipantConnected, (p: RemoteParticipant) => {
-      this.log.log(`[livekit] participant connected: ${p.identity}`);
-      this.vad.reset();
-    });
-    room.on(RoomEvent.ParticipantDisconnected, (p: RemoteParticipant) => {
-      this.log.log(`[livekit] participant disconnected: ${p.identity}`);
-      this.vad.reset();
-    });
-    room.on(
-      RoomEvent.DataReceived,
-      (payload: Uint8Array, _participant?: RemoteParticipant, _kind?: unknown, topic?: string) => {
-        if (topic && topic !== "alfred.control") return;
-        const command = parseUiCommand(payload, topic);
-        if (command) this.opts.media.pushUiCommand(command);
-      },
-    );
-
-    await room.connect(this.opts.url, token, {
-      autoSubscribe: true,
-      dynacast: true,
-    });
-    this.log.log(
-      `[livekit] connected url=${this.opts.url} room=${this.opts.roomName} identity=${identity}`,
-    );
-
-    await this.publishAssistantTrack();
-
-    // Await captureFrame so the voice path cannot outrun the LiveKit playout queue.
-    this.unsubPlayback = this.opts.media.onPlayback(async (frame) => {
-      const gen = this.playbackEpoch;
-      if (this.opts.media.isPlaybackStopped()) return;
-      await this.publishFrame(frame);
-      // A stop that lands mid-captureFrame can re-queue audio after clearQueue —
-      // drop anything that made it through after the epoch advanced.
-      if (gen !== this.playbackEpoch || this.opts.media.isPlaybackStopped()) {
-        this.clearOutboundQueue();
-      }
-    });
-    this.opts.media.onStopPlayback(() => {
-      this.playbackEpoch += 1;
-      this.clearOutboundQueue();
-    });
-    this.opts.media.onCaption((event) => {
-      void this.publishCaption(event);
-    });
-    this.opts.media.onUserTranscript((event) => {
-      void this.publishUserTranscript(event);
-    });
-
-    // Attach to tracks already present.
-    for (const participant of room.remoteParticipants.values()) {
-      for (const pub of participant.trackPublications.values()) {
-        if (pub.track && pub.kind === TrackKind.KIND_AUDIO) {
-          void this.onTrackSubscribed(pub.track, pub, participant);
-        }
-      }
+    if (this.closed) {
+      throw new Error("LiveKitRoomSession was stopped");
+    }
+    if (this.room || this.connecting) return;
+    try {
+      await this.connectOnce();
+    } catch (err) {
+      // Stay alive and keep trying — same failure mode as a later disconnect.
+      this.scheduleReconnect();
+      throw err;
     }
   }
 
   async stop(): Promise<void> {
     this.closed = true;
-    this.unsubPlayback?.();
-    this.unsubPlayback = undefined;
+    this.clearReconnectTimer();
+    await this.teardownRoom({ disposeNative: true });
+  }
+
+  /** Clear outbound queue on barge-in (called after media.stopPlayback). */
+  clearOutboundQueue(): void {
+    this.audioSource?.clearQueue();
+  }
+
+  private async connectOnce(): Promise<void> {
+    if (this.closed) return;
+    this.connecting = true;
+    const identity = this.opts.identity ?? "alfred-agent";
+    try {
+      const token = await createLiveKitToken({
+        apiKey: this.opts.apiKey,
+        apiSecret: this.opts.apiSecret,
+        roomName: this.opts.roomName,
+        identity,
+        ttlSeconds: this.tokenTtlSeconds,
+      });
+
+      const room = new Room();
+      this.room = room;
+
+      room.on(
+        RoomEvent.TrackSubscribed,
+        (track: RemoteTrack, publication: RemoteTrackPublication, participant: RemoteParticipant) => {
+          void this.onTrackSubscribed(track, publication, participant);
+        },
+      );
+      room.on(RoomEvent.Disconnected, () => {
+        this.log.warn("[livekit] disconnected from room");
+        void this.onUnexpectedDisconnect();
+      });
+      room.on(RoomEvent.ParticipantConnected, (p: RemoteParticipant) => {
+        this.log.log(`[livekit] participant connected: ${p.identity}`);
+        this.vad.reset();
+      });
+      room.on(RoomEvent.ParticipantDisconnected, (p: RemoteParticipant) => {
+        this.log.log(`[livekit] participant disconnected: ${p.identity}`);
+        this.vad.reset();
+      });
+      room.on(
+        RoomEvent.DataReceived,
+        (payload: Uint8Array, _participant?: RemoteParticipant, _kind?: unknown, topic?: string) => {
+          if (topic && topic !== "alfred.control") return;
+          const command = parseUiCommand(payload, topic);
+          if (command) this.opts.media.pushUiCommand(command);
+        },
+      );
+
+      await room.connect(this.opts.url, token, {
+        autoSubscribe: true,
+        dynacast: true,
+      });
+      this.log.log(
+        `[livekit] connected url=${this.opts.url} room=${this.opts.roomName} identity=${identity}`,
+      );
+
+      await this.publishAssistantTrack();
+      this.wireMediaHandlers();
+
+      // Attach to tracks already present.
+      for (const participant of room.remoteParticipants.values()) {
+        for (const pub of participant.trackPublications.values()) {
+          if (pub.track && pub.kind === TrackKind.KIND_AUDIO) {
+            void this.onTrackSubscribed(pub.track, pub, participant);
+          }
+        }
+      }
+
+      this.reconnectAttempt = 0;
+    } catch (err) {
+      this.log.error("[livekit] connect failed", err);
+      await this.teardownRoom({ disposeNative: false });
+      throw err;
+    } finally {
+      this.connecting = false;
+    }
+  }
+
+  private wireMediaHandlers(): void {
+    this.clearMediaUnsubs();
+    // Await captureFrame so the voice path cannot outrun the LiveKit playout queue.
+    this.mediaUnsubs.push(
+      this.opts.media.onPlayback(async (frame) => {
+        const gen = this.playbackEpoch;
+        if (this.opts.media.isPlaybackStopped()) return;
+        await this.publishFrame(frame);
+        // A stop that lands mid-captureFrame can re-queue audio after clearQueue —
+        // drop anything that made it through after the epoch advanced.
+        if (gen !== this.playbackEpoch || this.opts.media.isPlaybackStopped()) {
+          this.clearOutboundQueue();
+        }
+      }),
+    );
+    this.mediaUnsubs.push(
+      this.opts.media.onStopPlayback(() => {
+        this.playbackEpoch += 1;
+        this.clearOutboundQueue();
+      }),
+    );
+    this.mediaUnsubs.push(
+      this.opts.media.onCaption((event) => {
+        void this.publishCaption(event);
+      }),
+    );
+    this.mediaUnsubs.push(
+      this.opts.media.onUserTranscript((event) => {
+        void this.publishUserTranscript(event);
+      }),
+    );
+  }
+
+  private clearMediaUnsubs(): void {
+    for (const unsub of this.mediaUnsubs) unsub();
+    this.mediaUnsubs = [];
+  }
+
+  private async onUnexpectedDisconnect(): Promise<void> {
+    if (this.closed || this.connecting) return;
+    // Drop dead room handles but keep the process alive for rejoin.
+    await this.teardownRoom({ disposeNative: false });
+    this.scheduleReconnect();
+  }
+
+  private scheduleReconnect(): void {
+    if (this.closed || this.reconnectTimer) return;
+    const delay =
+      RECONNECT_DELAYS_MS[Math.min(this.reconnectAttempt, RECONNECT_DELAYS_MS.length - 1)]!;
+    this.reconnectAttempt += 1;
+    this.log.warn(
+      `[livekit] reconnecting in ${delay / 1000}s (attempt ${this.reconnectAttempt})...`,
+    );
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = undefined;
+      void this.reconnectConnect();
+    }, delay);
+  }
+
+  private async reconnectConnect(): Promise<void> {
+    if (this.closed || this.connecting || this.room) return;
+    try {
+      await this.connectOnce();
+      this.log.log("[livekit] reconnected");
+    } catch {
+      this.scheduleReconnect();
+    }
+  }
+
+  private clearReconnectTimer(): void {
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = undefined;
+    }
+  }
+
+  private async teardownRoom(opts: { disposeNative: boolean }): Promise<void> {
+    this.clearMediaUnsubs();
     this.opts.media.reset();
     this.vad.reset();
 
@@ -167,23 +271,20 @@ export class LiveKitRoomSession {
         await this.localTrack.close();
       }
       if (this.room) {
-        await this.room.disconnect();
+        await this.room.disconnect().catch(() => {});
       }
     } finally {
       this.audioSource = undefined;
       this.localTrack = undefined;
       this.room = undefined;
-      try {
-        await dispose();
-      } catch {
-        /* native dispose best-effort */
+      if (opts.disposeNative) {
+        try {
+          await dispose();
+        } catch {
+          /* native dispose best-effort */
+        }
       }
     }
-  }
-
-  /** Clear outbound queue on barge-in (called after media.stopPlayback). */
-  clearOutboundQueue(): void {
-    this.audioSource?.clearQueue();
   }
 
   /** Broadcast assistant speech captions to the room (voice-client HUD). */

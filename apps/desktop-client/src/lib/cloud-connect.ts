@@ -25,6 +25,10 @@ const RELAY_WS_URL = process.env.ALFRD_RELAY_URL ?? "wss://api.alfrd.net";
 
 // Reconnect delay schedule (ms): 5s, 10s, 30s, 60s, 120s cap
 const RECONNECT_DELAYS = [5_000, 10_000, 30_000, 60_000, 120_000];
+/** App-level ping so idle proxies do not silently drop the relay tunnel. */
+const RELAY_PING_MS = 25_000;
+/** Refresh LAN/WAN candidates + desktop token periodically. */
+const REREGISTER_MS = 15 * 60_000;
 
 let currentSocket: WebSocket | null = null;
 let reconnectAttempt = 0;
@@ -32,6 +36,10 @@ let isShuttingDown = false;
 let currentDesktopClientId: string | null = null;
 let currentCloudDesktopToken: string | null = null;
 let relayListenPort = 3000;
+let pingTimer: ReturnType<typeof setInterval> | null = null;
+let reregisterTimer: ReturnType<typeof setInterval> | null = null;
+let claimSecretCached: string | null = null;
+let displayNameCached = "Alfred";
 
 function generateClaimSecret(): string {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no ambiguous chars
@@ -184,6 +192,25 @@ async function registerWithControlPlane(
   }
 }
 
+function clearPingTimer() {
+  if (pingTimer) {
+    clearInterval(pingTimer);
+    pingTimer = null;
+  }
+}
+
+function startPing(ws: WebSocket) {
+  clearPingTimer();
+  pingTimer = setInterval(() => {
+    if (ws.readyState !== WebSocket.OPEN) return;
+    try {
+      ws.send(JSON.stringify({ type: "ping", atMs: Date.now() }));
+    } catch {
+      /* close handler will reconnect */
+    }
+  }, RELAY_PING_MS);
+}
+
 function connectRelayTunnel(serverId: string, serverToken: string) {
   if (isShuttingDown) return;
 
@@ -204,6 +231,8 @@ function connectRelayTunnel(serverId: string, serverToken: string) {
   ws.addEventListener("open", () => {
     console.log(`[CloudConnect] Relay tunnel established (desktopClientId: ${serverId})`);
     reconnectAttempt = 0;
+    currentCloudDesktopToken = serverToken;
+    startPing(ws);
   });
 
   ws.addEventListener("message", async (event) => {
@@ -216,9 +245,14 @@ function connectRelayTunnel(serverId: string, serverToken: string) {
       body?: string | null;
     };
     try {
-      const data = typeof event.data === "string" ? event.data : Buffer.from(event.data as ArrayBuffer).toString();
+      const data =
+        typeof event.data === "string" ? event.data : Buffer.from(event.data as ArrayBuffer).toString();
       msg = JSON.parse(data);
     } catch {
+      return;
+    }
+
+    if (msg.type === "pong" || msg.type === "ping") {
       return;
     }
 
@@ -236,6 +270,7 @@ function connectRelayTunnel(serverId: string, serverToken: string) {
 
   ws.addEventListener("close", (event) => {
     console.log(`[CloudConnect] Relay tunnel closed (code: ${event.code})`);
+    clearPingTimer();
     currentSocket = null;
     if (!isShuttingDown) {
       scheduleReconnect(serverId, serverToken);
@@ -307,7 +342,51 @@ function scheduleReconnect(serverId: string, serverToken: string) {
   const delay = RECONNECT_DELAYS[Math.min(reconnectAttempt, RECONNECT_DELAYS.length - 1)]!;
   reconnectAttempt++;
   console.log(`[CloudConnect] Reconnecting in ${delay / 1000}s (attempt ${reconnectAttempt})...`);
-  setTimeout(() => connectRelayTunnel(serverId, serverToken), delay);
+  setTimeout(() => {
+    void (async () => {
+      // After repeated drops (or overnight sleep), refresh token + LAN candidates
+      // before opening the socket again — stale tokens never recover without restart.
+      if (reconnectAttempt >= 2 && claimSecretCached) {
+        const fresh = await registerWithControlPlane(
+          serverId,
+          claimSecretCached,
+          relayListenPort,
+          displayNameCached,
+        );
+        if (fresh) {
+          currentCloudDesktopToken = fresh;
+          connectRelayTunnel(serverId, fresh);
+          return;
+        }
+      }
+      connectRelayTunnel(serverId, currentCloudDesktopToken ?? serverToken);
+    })();
+  }, delay);
+}
+
+async function ensureRegisteredAndTunneled(): Promise<void> {
+  if (isShuttingDown || !currentDesktopClientId || !claimSecretCached) return;
+
+  const token = await registerWithControlPlane(
+    currentDesktopClientId,
+    claimSecretCached,
+    relayListenPort,
+    displayNameCached,
+  );
+  if (!token) {
+    console.warn("[CloudConnect] Registration failed — will retry");
+    const delay = RECONNECT_DELAYS[Math.min(reconnectAttempt, RECONNECT_DELAYS.length - 1)]!;
+    reconnectAttempt++;
+    setTimeout(() => void ensureRegisteredAndTunneled(), delay);
+    return;
+  }
+
+  currentCloudDesktopToken = token;
+  console.log(`[CloudConnect] Registered with control plane`);
+
+  if (!currentSocket || currentSocket.readyState !== WebSocket.OPEN) {
+    connectRelayTunnel(currentDesktopClientId, token);
+  }
 }
 
 export async function startCloudConnect(serverPort = 3000) {
@@ -328,28 +407,28 @@ export async function startCloudConnect(serverPort = 3000) {
 
   const { serverId, claimSecret, displayName } = identity;
   currentDesktopClientId = serverId;
+  claimSecretCached = claimSecret;
+  displayNameCached = displayName;
 
   console.log(`[CloudConnect] Desktop Client ID: ${serverId}`);
   console.log(`[CloudConnect] Claim secret: ${claimSecret}`);
-  console.log(
-    `[CloudConnect] Claim QR page: http://127.0.0.1:${serverPort}/connect/claim`,
-  );
+  console.log(`[CloudConnect] Claim QR page: http://127.0.0.1:${serverPort}/connect/claim`);
 
-  // Register with control plane and get/refresh desktop token
-  const token = await registerWithControlPlane(serverId, claimSecret, serverPort, displayName);
-  if (!token) {
-    console.warn("[CloudConnect] Could not register with control plane — relay unavailable");
-    console.warn(`[CloudConnect] Will retry registration on next startup`);
-    return;
-  }
+  await ensureRegisteredAndTunneled();
 
-  currentCloudDesktopToken = token;
-  console.log(`[CloudConnect] Registered with control plane`);
-  connectRelayTunnel(serverId, token);
+  if (reregisterTimer) clearInterval(reregisterTimer);
+  reregisterTimer = setInterval(() => {
+    void ensureRegisteredAndTunneled();
+  }, REREGISTER_MS);
 }
 
 export function stopCloudConnect() {
   isShuttingDown = true;
+  clearPingTimer();
+  if (reregisterTimer) {
+    clearInterval(reregisterTimer);
+    reregisterTimer = null;
+  }
   currentSocket?.close(1000, "Shutdown");
 }
 
