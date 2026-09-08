@@ -7,5 +7,6 @@
 export { LiveKitMediaBridge } from "./media-bridge.js";
 export { LiveKitRoomSession, type LiveKitRoomSessionOptions } from "./room-session.js";
 export { createLiveKitToken, type LiveKitTokenOptions } from "./tokens.js";
+export { isAgentInRoom, type AgentPresenceOptions } from "./agent-presence.js";
 export { EnergyVad } from "./energy-vad.js";
 export { int16ToUint8, uint8ToInt16 } from "./pcm.js";

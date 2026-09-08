@@ -377,6 +377,8 @@ export interface SessionStatus {
   /** Null when the desktop build predates the LiveKit status fields. */
   livekitConfigured: boolean | null;
   room: string | null;
+  /** Null when desktop predates agent presence checks. */
+  agentPresent: boolean | null;
   /** e.g. "Run `pnpm voice` on the Mac so alfred-agent joins the LiveKit room." */
   agentHint: string | null;
   sessionId: string | null;
@@ -393,6 +395,12 @@ export function sessionStatus() {
             ? (body.livekit_configured as boolean)
             : null,
       room: pick<string>(body, "room", "roomName", "room_name") ?? null,
+      agentPresent:
+        typeof body.agentPresent === "boolean"
+          ? body.agentPresent
+          : typeof body.agent_present === "boolean"
+            ? (body.agent_present as boolean)
+            : null,
       agentHint: pick<string>(body, "agentHint", "agent_hint") ?? null,
       sessionId: pick<string>(body, "sessionId", "session_id") ?? null,
       state: pick<string>(body, "state") ?? null,

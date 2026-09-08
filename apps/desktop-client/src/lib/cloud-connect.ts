@@ -205,8 +205,14 @@ function startPing(ws: WebSocket) {
     if (ws.readyState !== WebSocket.OPEN) return;
     try {
       ws.send(JSON.stringify({ type: "ping", atMs: Date.now() }));
-    } catch {
-      /* close handler will reconnect */
+    } catch (err) {
+      console.warn("[CloudConnect] Relay ping failed — forcing reconnect", err);
+      clearPingTimer();
+      try {
+        ws.close(4000, "ping_failed");
+      } catch {
+        /* close handler / scheduleReconnect */
+      }
     }
   }, RELAY_PING_MS);
 }

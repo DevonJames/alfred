@@ -19,6 +19,7 @@ import { createLiveKitToken } from "./tokens.js";
 import { LiveKitMediaBridge } from "./media-bridge.js";
 import { EnergyVad } from "./energy-vad.js";
 import { int16ToUint8, uint8ToInt16 } from "./pcm.js";
+import { nextReconnectDelayMs } from "./reconnect.js";
 
 export interface LiveKitRoomSessionOptions {
   url: string;
@@ -37,8 +38,6 @@ export interface LiveKitRoomSessionOptions {
   targetIdentity?: string;
   logger?: Pick<Console, "log" | "warn" | "error" | "debug">;
 }
-
-const RECONNECT_DELAYS_MS = [1_000, 2_000, 5_000, 10_000, 30_000, 60_000];
 
 /**
  * Full room subscriber/publisher graph.
@@ -228,8 +227,7 @@ export class LiveKitRoomSession {
 
   private scheduleReconnect(): void {
     if (this.closed || this.reconnectTimer) return;
-    const delay =
-      RECONNECT_DELAYS_MS[Math.min(this.reconnectAttempt, RECONNECT_DELAYS_MS.length - 1)]!;
+    const delay = nextReconnectDelayMs(this.reconnectAttempt);
     this.reconnectAttempt += 1;
     this.log.warn(
       `[livekit] reconnecting in ${delay / 1000}s (attempt ${this.reconnectAttempt})...`,

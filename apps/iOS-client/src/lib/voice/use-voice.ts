@@ -103,8 +103,8 @@ export function useSpokenCaption(): string {
  * Ask the Mac whether voice is even possible before offering the button.
  *
  * Three things must all be true: this build has the native SDK, the desktop has
- * LiveKit credentials, and `pnpm voice` is running. The first two are knowable
- * up front; the third only shows up as silence, so it's surfaced as a hint.
+ * LiveKit credentials, and `pnpm voice` is in the LiveKit room. The first two
+ * are knowable up front; agent presence comes from `/api/session/status`.
  */
 export function useVoiceAvailability(enabled: boolean) {
   const [checking, setChecking] = useState(false);
@@ -127,6 +127,10 @@ export function useVoiceAvailability(enabled: boolean) {
       .then((status) => {
         if (cancelled) return;
         setAgentHint(status.agentHint);
+        // Prefer desktop-reported presence when available (empty-room zombie).
+        if (typeof status.agentPresent === "boolean") {
+          setStore({ agentPresent: status.agentPresent });
+        }
         // `null` means an older desktop that doesn't report the field; let the
         // user try rather than refusing on a missing boolean.
         setStore({ blocker: status.livekitConfigured === false ? "not-configured" : "none" });
