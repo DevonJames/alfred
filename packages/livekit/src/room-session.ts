@@ -2,6 +2,7 @@ import {
   AudioFrame as LkAudioFrame,
   AudioSource,
   AudioStream,
+  ConnectionState,
   LocalAudioTrack,
   Room,
   RoomEvent,
@@ -20,6 +21,9 @@ import { LiveKitMediaBridge } from "./media-bridge.js";
 import { EnergyVad } from "./energy-vad.js";
 import { int16ToUint8, uint8ToInt16 } from "./pcm.js";
 import { nextReconnectDelayMs } from "./reconnect.js";
+
+/** How often to notice a zombie room that never fired Disconnected (e.g. after Mac wake). */
+const CONNECTION_WATCHDOG_MS = 15_000;
 
 export interface LiveKitRoomSessionOptions {
   url: string;
@@ -61,8 +65,10 @@ export class LiveKitRoomSession {
   private closed = false;
   /** True while start()/reconnectConnect() is in flight. */
   private connecting = false;
+  private handlingDisconnect = false;
   private reconnectAttempt = 0;
   private reconnectTimer?: ReturnType<typeof setTimeout>;
+  private watchdogTimer?: ReturnType<typeof setInterval>;
   /** Bumped on every stopPlayback so in-flight captureFrame results are discarded. */
   private playbackEpoch = 0;
   private readonly vad = new EnergyVad();
@@ -87,6 +93,7 @@ export class LiveKitRoomSession {
       throw new Error("LiveKitRoomSession was stopped");
     }
     if (this.room || this.connecting) return;
+    this.startWatchdog();
     try {
       await this.connectOnce();
     } catch (err) {
@@ -99,6 +106,7 @@ export class LiveKitRoomSession {
   async stop(): Promise<void> {
     this.closed = true;
     this.clearReconnectTimer();
+    this.clearWatchdog();
     await this.teardownRoom({ disposeNative: true });
   }
 
@@ -132,6 +140,14 @@ export class LiveKitRoomSession {
       room.on(RoomEvent.Disconnected, () => {
         this.log.warn("[livekit] disconnected from room");
         void this.onUnexpectedDisconnect();
+      });
+      room.on(RoomEvent.ConnectionStateChanged, (state: ConnectionState) => {
+        if (state === ConnectionState.CONN_DISCONNECTED) {
+          this.log.warn("[livekit] connection state → disconnected");
+          void this.onUnexpectedDisconnect();
+        } else if (state === ConnectionState.CONN_RECONNECTING) {
+          this.log.warn("[livekit] connection state → reconnecting (LiveKit native)");
+        }
       });
       room.on(RoomEvent.ParticipantConnected, (p: RemoteParticipant) => {
         this.log.log(`[livekit] participant connected: ${p.identity}`);
@@ -216,6 +232,31 @@ export class LiveKitRoomSession {
   private clearMediaUnsubs(): void {
     for (const unsub of this.mediaUnsubs) unsub();
     this.mediaUnsubs = [];
+  }
+
+  private startWatchdog(): void {
+    this.clearWatchdog();
+    this.watchdogTimer = setInterval(() => {
+      if (this.closed || this.connecting || this.reconnectTimer) return;
+      const room = this.room;
+      if (!room) {
+        this.log.warn("[livekit] watchdog: no room — scheduling reconnect");
+        this.scheduleReconnect();
+        return;
+      }
+      const state = (room as { state?: ConnectionState }).state;
+      if (state === ConnectionState.CONN_DISCONNECTED) {
+        this.log.warn("[livekit] watchdog: room still disconnected — forcing rejoin");
+        void this.onUnexpectedDisconnect();
+      }
+    }, CONNECTION_WATCHDOG_MS);
+  }
+
+  private clearWatchdog(): void {
+    if (this.watchdogTimer) {
+      clearInterval(this.watchdogTimer);
+      this.watchdogTimer = undefined;
+    }
   }
 
   private async onUnexpectedDisconnect(): Promise<void> {
