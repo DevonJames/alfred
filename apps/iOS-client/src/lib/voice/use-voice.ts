@@ -165,9 +165,12 @@ export function useVoiceSession() {
     startInFlight.current = null;
     const active = handle.current;
     handle.current = null;
+    // Clear keepalive so a later background tick cannot skip teardown logic
+    // that already ran, and so remints do not inherit a stale "stay up" flag.
+    store({ keepAliveInBackground: false });
     reset();
     if (active) await active.disconnect().catch(() => {});
-  }, [reset]);
+  }, [reset, store]);
 
   const start = useCallback(async (opts?: { mic?: boolean }) => {
     const wantMic = opts?.mic ?? true;

@@ -50,6 +50,13 @@ import type { UiLayout } from "@/lib/voice/protocol";
 /** Shared height for the voice control strip (mode, Shhh, mute, start/stop). */
 const CONTROL_SIZE = 56;
 
+/**
+ * After hold-to-talk release (mic off), leave LiveKit once Alfred has had time
+ * to finish speaking. Without this, muted peers sat in the SFU until the Talk
+ * tab blurred — stacking dozens of `alfred-ios-*` identities per long session.
+ */
+const HOLD_IDLE_DISCONNECT_MS = 90_000;
+
 const ICONS = {
   hold: require("../../../assets/voice-controls/hold.png") as ImageSourcePropType,
   continuous: require("../../../assets/voice-controls/continuous.png") as ImageSourcePropType,
@@ -174,9 +181,9 @@ export default function Talk() {
       Haptics.selectionAsync();
       setUiLayout(next);
       if (next === "chat") {
+        // Leave LiveKit entirely — chat uses HTTP turns, not a parked SFU peer.
         setContinuousActive(false);
-        if (phase === "live") await setLayout("chat");
-        else await stop().catch(() => {});
+        await stop().catch(() => {});
         return;
       }
       // voice — continuous arms the mic (desktop); hold joins quiet until PTT
@@ -191,7 +198,7 @@ export default function Talk() {
       await publishControl({ type: "mute", muted: micMuted });
       await setLayout("voice", { mic: armMic && !micMuted });
     },
-    [layout, micMode, micMuted, phase, publishControl, setLayout, start, stop, voiceBlocked]
+    [layout, micMode, micMuted, publishControl, setLayout, start, stop, voiceBlocked]
   );
 
   /** Arm the mic: PTT press, or continuous Start (desktop-style open listen). */
@@ -208,12 +215,20 @@ export default function Talk() {
     await setLayout("voice", { mic: wantMic });
   }, [micMode, micMuted, publishControl, setLayout, start]);
 
-  /** Release PTT, or continuous Stop — ends continuous listen; room stays for playback. */
+  /**
+   * Release PTT, or continuous Stop.
+   * Hold-to-talk only mutes (Alfred may still be speaking). Continuous Stop
+   * fully leaves the room — muting alone was leaking `alfred-ios-*` peers.
+   */
   const closeMic = useCallback(async () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    if (micMode === "continuous") setContinuousActive(false);
+    if (micMode === "continuous") {
+      setContinuousActive(false);
+      await stop().catch(() => {});
+      return;
+    }
     await setMic(false);
-  }, [micMode, setMic]);
+  }, [micMode, setMic, stop]);
 
   const toggleMute = useCallback(async () => {
     Haptics.selectionAsync();
@@ -261,6 +276,18 @@ export default function Talk() {
     setVoice({ keepAliveInBackground: keep });
   }, [continuousActive, micMode, setVoice]);
 
+  // Hold-to-talk (and continuous after Stop) must not park forever in the SFU
+  // with mic off — that stacked dozens of alfred-ios-* participants per week.
+  useEffect(() => {
+    if (phase !== "live") return;
+    if (micMode === "continuous" && continuousActive) return;
+    if (micEnabled) return;
+    const timer = setTimeout(() => {
+      void stop().catch(() => {});
+    }, HOLD_IDLE_DISCONNECT_MS);
+    return () => clearTimeout(timer);
+  }, [continuousActive, micEnabled, micMode, phase, stop]);
+
   // CallKit keep-alive is only needed once iOS would suspend WebRTC (lock / pocket).
   // Starting it in the foreground has crashed continuous mode on device builds, so
   // arm CallKit only when leaving the foreground while a continuous session is live.
@@ -287,8 +314,11 @@ export default function Talk() {
   useEffect(() => {
     setCallServiceHandlers({
       onEnd: () => {
+        // CallKit "End" must leave LiveKit, not just mute — otherwise the peer
+        // stays billed while the UI looks idle.
         setContinuousActive(false);
-        void setMic(false);
+        void stop().catch(() => {});
+        void stopCallService();
       },
       onMute: (muted) => {
         setMicMuted((prev) => (prev === muted ? prev : muted));
@@ -297,7 +327,7 @@ export default function Talk() {
       },
     });
     return () => setCallServiceHandlers({});
-  }, [continuousActive, publishControl, setMic]);
+  }, [continuousActive, publishControl, setMic, stop]);
 
   useEffect(() => {
     setCallServiceMuted(micMuted);

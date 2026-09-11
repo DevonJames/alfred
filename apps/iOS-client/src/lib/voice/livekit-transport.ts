@@ -207,6 +207,24 @@ export async function startVoiceSession(
     handlers.onAgentAudioTrack(null);
   };
 
+  /** Prefer alfred-agent; fall back to any remote audio (dev identities). */
+  const attachAgentAudioFromRoom = () => {
+    let fallback: RemoteTrack | null = null;
+    for (const participant of room.remoteParticipants.values()) {
+      for (const publication of participant.trackPublications.values()) {
+        const existing = publication.track;
+        if (!existing || !isAudio(publicationKind(publication))) continue;
+        const remote = existing as RemoteTrack;
+        if (participant.identity === AGENT_IDENTITY) {
+          setAgentTrack(remote);
+          return;
+        }
+        fallback ??= remote;
+      }
+    }
+    if (fallback) setAgentTrack(fallback);
+  };
+
   let tornDown = false;
   const runTeardown = async () => {
     if (tornDown) return;
@@ -223,6 +241,20 @@ export async function startVoiceSession(
     .on(RoomEvent.TrackUnsubscribed, ((track: RemoteTrack) => {
       if (isAudio(track.kind)) setAgentTrack(null);
     }) as (...args: never[]) => void)
+    .on(RoomEvent.TrackPublished, ((publication: LKTrackPublication & {
+      setSubscribed?: (subscribed: boolean) => void;
+      track?: LKTrack | null;
+    }, participant: { identity?: string }) => {
+      // After agent republishes post-reconnect, ensure we subscribe again.
+      if (!isAudio(publicationKind(publication))) return;
+      publication.setSubscribed?.(true);
+      if (publication.track) {
+        setAgentTrack(publication.track as RemoteTrack);
+      } else if (participant.identity === AGENT_IDENTITY || !participant.identity) {
+        // Subscribed event may follow; also re-scan in case track is already bound.
+        attachAgentAudioFromRoom();
+      }
+    }) as (...args: never[]) => void)
     .on(RoomEvent.ParticipantConnected, ((participant: {
       trackPublications?: Map<string, LKTrackPublication>;
     }) => {
@@ -233,6 +265,12 @@ export async function startVoiceSession(
           break;
         }
       }
+    }) as (...args: never[]) => void)
+    .on(RoomEvent.Reconnected, (() => {
+      // AVAudioSession can be in a bad state after ICE restart; re-arm + reattach.
+      void prepareLiveKitAudio(loaded.native).finally(() => {
+        attachAgentAudioFromRoom();
+      });
     }) as (...args: never[]) => void)
     .on(RoomEvent.DataReceived, ((
       payload: Uint8Array,
@@ -259,15 +297,7 @@ export async function startVoiceSession(
 
   // The agent usually joins before the phone does, and tracks published before
   // we connected raise no TrackSubscribed event for us to catch.
-  for (const participant of room.remoteParticipants.values()) {
-    for (const publication of participant.trackPublications.values()) {
-      const existing = publication.track;
-      if (existing && isAudio(publicationKind(publication))) {
-        setAgentTrack(existing as RemoteTrack);
-        break;
-      }
-    }
-  }
+  attachAgentAudioFromRoom();
 
   const publishControl = async (command: UiCommand) => {
     const payload = encodeControlCommand(command);
