@@ -11,6 +11,8 @@
  * POST /memory/graph/node/delete — delete a record (id in body)
  * POST /memory/graph/node/set-self — mark a Person as the profile self (id in body)
  * POST /memory/graph/clean-index — merge duplicate entities (SSE progress + result)
+ * GET  /memory/graph/embeddings — cached 3D embedding-space positions
+ * POST /memory/graph/embeddings/rebuild — OpenAI embed + PCA (SSE progress + result)
  */
 
 import { readFile } from "node:fs/promises";
@@ -21,9 +23,12 @@ import { streamSSE } from "hono/streaming";
 import {
   cleanMemoryIndex,
   deleteMemoryRecord,
+  loadMemoryEmbeddings,
   loadMemoryGraph,
   loadMemoryRecordDetail,
+  loadMemorySemanticMap,
   readMemoryArtifactBytes,
+  rebuildMemoryEmbeddings,
   setMemorySelf,
   updateMemoryRecord,
 } from "../lib/memory-graph.js";
@@ -203,6 +208,75 @@ memoryGraphRouter.post("/clean-index", (c) => {
       await stream.writeSSE({
         event: "error",
         data: JSON.stringify({ error: "clean_index_failed", message }),
+      });
+    }
+  });
+});
+
+memoryGraphRouter.get("/embeddings", async (c) => {
+  try {
+    const snapshot = await loadMemoryEmbeddings();
+    return c.json(snapshot);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return c.json({ error: "embeddings_load_failed", message }, 500);
+  }
+});
+
+memoryGraphRouter.post("/embeddings/semantic-map", async (c) => {
+  try {
+    const body = (await c.req.json().catch(() => ({}))) as {
+      nodeIds?: unknown;
+      categories?: unknown;
+      method?: unknown;
+      dims?: unknown;
+      knnK?: unknown;
+    };
+    const nodeIds = Array.isArray(body.nodeIds)
+      ? body.nodeIds.filter((id): id is string => typeof id === "string" && !!id.trim())
+      : [];
+    const categories = Array.isArray(body.categories)
+      ? body.categories.map((c) => (typeof c === "string" ? c : null))
+      : undefined;
+    const method =
+      body.method === "pca" || body.method === "directional-pca" || body.method === "mds-cosine"
+        ? body.method
+        : "mds-cosine";
+    const dims = body.dims === 3 ? 3 : 2;
+    const knnK = Math.max(1, Math.min(12, Number(body.knnK) || 3));
+
+    const result = await loadMemorySemanticMap({
+      nodeIds,
+      categories,
+      method,
+      dims,
+      knnK,
+    });
+    return c.json(result);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return c.json({ error: "semantic_map_failed", message }, 500);
+  }
+});
+
+memoryGraphRouter.post("/embeddings/rebuild", (c) => {
+  return streamSSE(c, async (stream) => {
+    try {
+      const result = await rebuildMemoryEmbeddings(undefined, async (progress) => {
+        await stream.writeSSE({
+          event: "progress",
+          data: JSON.stringify(progress),
+        });
+      });
+      await stream.writeSSE({
+        event: "done",
+        data: JSON.stringify(result),
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      await stream.writeSSE({
+        event: "error",
+        data: JSON.stringify({ error: "embeddings_rebuild_failed", message }),
       });
     }
   });

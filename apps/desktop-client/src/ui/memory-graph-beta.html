@@ -170,20 +170,137 @@
         border-color: transparent;
         background: var(--amber);
       }
+      .filters button[data-type="Entity"].on {
+        background: #d4a017;
+        color: #1a1410;
+      }
       .filters button[data-type="Organization"].on {
-        background: #6b9ac4;
+        background: #3d7ab8;
       }
       .filters button[data-type="Episode"].on {
-        background: var(--sage);
+        background: #3d8f5a;
       }
       .filters button[data-type="Assertion"].on {
-        background: var(--coral);
+        background: #c45a3a;
       }
       .filters button[data-type="Observation"].on {
-        background: var(--steel);
+        background: #3a9bb0;
       }
       .filters button[data-type="Artifact"].on {
-        background: var(--stone);
+        background: #8a7e6a;
+      }
+
+      .layout-mode {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.35rem;
+      }
+      .layout-mode button {
+        padding: 0.28rem 0.65rem;
+        border-radius: 999px;
+        border: 1px solid var(--line);
+        background: transparent;
+        color: var(--muted);
+        font: inherit;
+        font-size: 0.75rem;
+        cursor: pointer;
+      }
+      .layout-mode button.on {
+        color: var(--bg0);
+        border-color: transparent;
+        background: var(--amber);
+      }
+
+      .embed-controls {
+        display: none;
+        margin-top: 0.65rem;
+        padding-top: 0.55rem;
+        border-top: 1px solid var(--line);
+      }
+      .embed-controls.on {
+        display: block;
+      }
+      .seg {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.3rem;
+      }
+      .seg button {
+        padding: 0.26rem 0.5rem;
+        border-radius: 999px;
+        border: 1px solid var(--line);
+        background: transparent;
+        color: var(--muted);
+        font: inherit;
+        font-size: 0.7rem;
+        cursor: pointer;
+      }
+      .seg button.on {
+        background: var(--amber);
+        color: var(--bg0);
+        border-color: transparent;
+        font-weight: 600;
+      }
+      .range-row {
+        margin-top: 0.45rem;
+      }
+      .range-row .val {
+        float: right;
+        color: var(--amber-hot);
+        font-variant-numeric: tabular-nums;
+      }
+      .range-row input[type="range"] {
+        width: 100%;
+        accent-color: var(--amber);
+      }
+      .toggle-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.5rem;
+        margin-top: 0.4rem;
+        font-size: 0.75rem;
+        color: var(--ink);
+      }
+      .toggle-row input {
+        accent-color: var(--amber);
+      }
+      .embed-disclaimer {
+        margin-top: 0.5rem;
+        font-size: 0.68rem;
+        color: var(--muted);
+        line-height: 1.35;
+        border-left: 2px solid var(--amber-dim);
+        padding-left: 0.5rem;
+      }
+
+      /* ForceGraph3D hover tip — readable over bright bloomed nodes */
+      #graph-3d .scene-tooltip,
+      .scene-tooltip {
+        top: 0;
+        max-width: 260px;
+        padding: 0.5rem 0.7rem;
+        border-radius: 10px;
+        border: 1px solid rgba(232, 200, 120, 0.35);
+        background: rgba(0, 0, 0, 0.92);
+        color: #f3eee4;
+        font-family: "DM Sans", ui-sans-serif, system-ui, sans-serif;
+        font-size: 12px;
+        font-weight: 500;
+        line-height: 1.4;
+        letter-spacing: 0.01em;
+        white-space: pre-wrap;
+        pointer-events: none;
+        box-shadow: 0 10px 28px rgba(0, 0, 0, 0.55);
+      }
+      .scene-tooltip .tip-type {
+        display: block;
+        margin-top: 0.2rem;
+        color: rgba(232, 200, 120, 0.85);
+        font-size: 10px;
+        font-weight: 600;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
       }
 
       .row-actions {
@@ -655,11 +772,54 @@
         <p class="eyebrow">Alfred · beta</p>
         <h1>Memory nebula</h1>
         <p>
-          Same graph data, 3D amber layout. Orbit with drag · ⌘/⌥-drag to pan · ⇧-click to center ·
-          scroll to zoom.
+          Same graph data — toggle force layout vs Semantic Map (embedding neighborhoods). Orbit ·
+          ⌘/⌥-pan · ⇧-click center · scroll zoom.
         </p>
       </div>
       <div class="panel controls">
+        <label>Layout</label>
+        <div class="layout-mode" id="layout-mode" role="group" aria-label="Layout mode">
+          <button type="button" class="on" data-layout="graph">Graph</button>
+          <button type="button" data-layout="embedding">Embedding space</button>
+        </div>
+        <div class="embed-controls" id="embed-controls">
+          <label>Projection</label>
+          <div class="seg" id="embed-proj-seg">
+            <button type="button" data-proj="mds-cosine" class="on">MDS (cosine)</button>
+            <button type="button" data-proj="pca">PCA</button>
+            <button type="button" data-proj="directional-pca">Directional PCA</button>
+          </div>
+          <label>Map dimensions</label>
+          <div class="seg" id="embed-dim-seg">
+            <button type="button" data-dims="2" class="on">2D</button>
+            <button type="button" data-dims="3">3D</button>
+          </div>
+          <div class="range-row">
+            <label for="embed-knn-k"
+              >Nearest neighbors (k) <span class="val" id="embed-knn-k-val">3</span></label
+            >
+            <input id="embed-knn-k" type="range" min="1" max="8" step="1" value="3" />
+          </div>
+          <div class="range-row">
+            <label for="embed-sim-threshold"
+              >Edge cosine ≥ <span class="val" id="embed-sim-threshold-val">0.55</span></label
+            >
+            <input id="embed-sim-threshold" type="range" min="0" max="0.95" step="0.01" value="0.55" />
+          </div>
+          <div class="toggle-row">
+            <span>Show neighbor edges</span>
+            <input id="embed-show-edges" type="checkbox" checked />
+          </div>
+          <div class="toggle-row">
+            <span>Reveal expected groups</span>
+            <input id="embed-reveal-groups" type="checkbox" />
+          </div>
+          <div class="toggle-row">
+            <span>Highlight outliers</span>
+            <input id="embed-show-outliers" type="checkbox" />
+          </div>
+          <p class="embed-disclaimer" id="embed-disclaimer" hidden></p>
+        </div>
         <label for="q">From</label>
         <input id="q" type="search" placeholder="Devon, Sarah…" autocomplete="off" />
         <label for="q2">To</label>
@@ -687,6 +847,9 @@
           <button type="button" class="ghost" id="btn-rebuild">Rebuild index</button>
           <button type="button" class="ghost" id="btn-clean">Clean Index</button>
           <button type="button" class="ghost" id="btn-reset">Reset view</button>
+          <button type="button" class="ghost" id="btn-rebuild-embeddings" hidden>
+            Rebuild embeddings
+          </button>
           <button type="button" class="ghost" id="btn-ingest">Ingest</button>
         </div>
         <div class="stats" id="stats">Loading…</div>

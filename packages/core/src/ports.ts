@@ -58,6 +58,7 @@ export interface StructuredMemoryPort {
       summary?: string;
       email?: string;
       telephone?: string;
+      birthDate?: string;
     }>;
     assertions?: Array<{
       subjectName: string;

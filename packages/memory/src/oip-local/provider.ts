@@ -42,6 +42,10 @@ export class OipLocalMemoryProvider implements MemoryProvider {
   readonly vectors: VectorIndex;
 
   private ready = false;
+  /** Serializes rebuild / retrieve / commit against node:sqlite DatabaseSync. */
+  private opChain: Promise<void> = Promise.resolve();
+  /** Re-entrancy depth for nested exclusive calls on the same async turn. */
+  private opDepth = 0;
 
   constructor(
     readonly rootDir: string,
@@ -79,7 +83,39 @@ export class OipLocalMemoryProvider implements MemoryProvider {
     return new OipLocalMemoryProvider(defaultOipMemoryRoot(profileId));
   }
 
-  private async ensureReady(): Promise<void> {
+  /**
+   * Run sqlite-touching work exclusively. Nested calls from the same exclusive
+   * turn are allowed (commitTurn → writeConversationalMemory → rebuildIndexes).
+   * Concurrent callers queue so rebuild cannot close the DB under another op.
+   */
+  private runExclusive<T>(fn: () => Promise<T>): Promise<T> {
+    if (this.opDepth > 0) {
+      this.opDepth += 1;
+      return (async () => {
+        try {
+          return await fn();
+        } finally {
+          this.opDepth -= 1;
+        }
+      })();
+    }
+
+    const run = this.opChain.then(async () => {
+      this.opDepth = 1;
+      try {
+        return await fn();
+      } finally {
+        this.opDepth = 0;
+      }
+    });
+    this.opChain = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
+
+  private async ensureReadyUnlocked(): Promise<void> {
     if (this.ready) return;
     await this.packages.ensureRoot();
     // Open sqlite (create empty schema); rebuild if no records but packages exist
@@ -89,10 +125,15 @@ export class OipLocalMemoryProvider implements MemoryProvider {
       const sample = this.sqlite.listByType("Entity", 1);
       const any = this.sqlite.listByType("Episode", 1);
       if (!sample.length && !any.length && !this.sqlite.listByType("Observation", 1).length) {
-        await this.rebuildIndexes();
+        await this.rebuildIndexesUnlocked();
       }
     }
     this.ready = true;
+  }
+
+  private async ensureReady(): Promise<void> {
+    if (this.ready) return;
+    await this.runExclusive(() => this.ensureReadyUnlocked());
   }
 
   drefLookup(): DrefLookup {
@@ -112,10 +153,14 @@ export class OipLocalMemoryProvider implements MemoryProvider {
     return verifyStore(this.packages, this.artifacts);
   }
 
-  async rebuildIndexes(): Promise<void> {
+  private async rebuildIndexesUnlocked(): Promise<void> {
     await this.packages.ensureRoot();
     await this.sqlite.rebuild(this.packages, this.artifacts);
     this.ready = true;
+  }
+
+  async rebuildIndexes(): Promise<void> {
+    await this.runExclusive(() => this.rebuildIndexesUnlocked());
   }
 
   async createRecord(
@@ -124,10 +169,12 @@ export class OipLocalMemoryProvider implements MemoryProvider {
     logicalId?: string,
     opts?: { reindex?: boolean },
   ): Promise<MemoryRevision> {
-    await this.ensureReady();
-    const record = await this.packages.createPackage({ type, body, logicalId });
-    if (opts?.reindex !== false) await this.rebuildIndexes();
-    return record;
+    return this.runExclusive(async () => {
+      await this.ensureReadyUnlocked();
+      const record = await this.packages.createPackage({ type, body, logicalId });
+      if (opts?.reindex !== false) await this.rebuildIndexesUnlocked();
+      return record;
+    });
   }
 
   async updateRecord(
@@ -135,80 +182,85 @@ export class OipLocalMemoryProvider implements MemoryProvider {
     patch: Partial<MemoryRevision>,
     opts?: { reindex?: boolean },
   ): Promise<MemoryRevision> {
-    await this.ensureReady();
-    const record = await this.packages.appendRevision(didOrLogicalId, patch);
-    if (opts?.reindex !== false) await this.rebuildIndexes();
-    return record;
+    return this.runExclusive(async () => {
+      await this.ensureReadyUnlocked();
+      const record = await this.packages.appendRevision(didOrLogicalId, patch);
+      if (opts?.reindex !== false) await this.rebuildIndexesUnlocked();
+      return record;
+    });
   }
 
   async retrieve(query: MemoryQuery): Promise<MemoryRetrievalResult> {
-    await this.ensureReady();
-    const items = await retrieveMemories(query, {
-      packages: this.packages,
-      sqlite: this.sqlite,
-      providerId: this.manifest.id,
+    return this.runExclusive(async () => {
+      await this.ensureReadyUnlocked();
+      const items = await retrieveMemories(query, {
+        packages: this.packages,
+        sqlite: this.sqlite,
+        providerId: this.manifest.id,
+      });
+      return {
+        items,
+        providerId: this.manifest.id,
+        retrievedAt: new Date().toISOString(),
+      };
     });
-    return {
-      items,
-      providerId: this.manifest.id,
-      retrievedAt: new Date().toISOString(),
-    };
   }
 
   async commitTurn(commit: MemoryTurnCommit): Promise<void> {
-    await this.ensureReady();
-    const now = new Date().toISOString();
+    // Assistant turns are no-ops — skip the exclusive queue.
+    if (commit.role === "assistant") return;
 
-    // Do not store assistant replies as graph memories — they polluted the graph as
-    // "assistant turn" nodes. User turns stay as episodic Observations for provenance.
-    if (commit.role === "assistant") {
-      return;
-    }
+    await this.runExclusive(async () => {
+      await this.ensureReadyUnlocked();
+      const now = new Date().toISOString();
 
-    await this.packages.createPackage({
-      type: "Observation",
-      now,
-      body: {
-        text: commit.text,
-        observedAt: now,
-        schema: {
-          "@type": "CreativeWork",
+      // Do not store assistant replies as graph memories — they polluted the graph as
+      // "assistant turn" nodes. User turns stay as episodic Observations for provenance.
+      await this.packages.createPackage({
+        type: "Observation",
+        now,
+        body: {
           text: commit.text,
-          name: "user turn",
+          observedAt: now,
+          schema: {
+            "@type": "CreativeWork",
+            text: commit.text,
+            name: "user turn",
+          },
+          schemaType: "https://schema.org/CreativeWork",
+          alfred: {
+            visibility: "private",
+            confidence: 1,
+            assertionType: "explicit",
+          },
+          provenance: {
+            sourceType: "conversation_turn",
+            learnedAt: now,
+            speaker: "user",
+            extractionMethod: "commitTurn",
+          },
+          drefs: {
+            session: commit.sessionId,
+          },
         },
-        schemaType: "https://schema.org/CreativeWork",
-        alfred: {
-          visibility: "private",
-          confidence: 1,
-          assertionType: "explicit",
-        },
-        provenance: {
-          sourceType: "conversation_turn",
-          learnedAt: now,
-          speaker: "user",
-          extractionMethod: "commitTurn",
-        },
-        drefs: {
-          session: commit.sessionId,
-        },
-      },
-    });
-
-    const { extractConversationalMemory, writeConversationalMemory } =
-      await import("../conversation-memory.js");
-    const extracted = extractConversationalMemory(commit.text);
-    const hasStructured =
-      (extracted.entities?.length ?? 0) > 0 ||
-      (extracted.assertions?.length ?? 0) > 0 ||
-      (extracted.notes?.length ?? 0) > 0;
-
-    if (hasStructured) {
-      await writeConversationalMemory(this, extracted, {
-        sessionId: commit.sessionId,
       });
-    } else {
-      await this.rebuildIndexes();
-    }
+
+      const { extractConversationalMemory, writeConversationalMemory } =
+        await import("../conversation-memory.js");
+      const extracted = extractConversationalMemory(commit.text);
+      const hasStructured =
+        (extracted.entities?.length ?? 0) > 0 ||
+        (extracted.assertions?.length ?? 0) > 0 ||
+        (extracted.notes?.length ?? 0) > 0;
+
+      if (hasStructured) {
+        await writeConversationalMemory(this, extracted, {
+          sessionId: commit.sessionId,
+        });
+      } else {
+        await this.rebuildIndexesUnlocked();
+      }
+    });
   }
 
   async inspect(limit = 100): Promise<NormalizedMemoryItem[]> {
@@ -222,26 +274,30 @@ export class OipLocalMemoryProvider implements MemoryProvider {
   }
 
   async edit(id: string, content: string): Promise<void> {
-    await this.ensureReady();
-    const parsed = parseMemoryRef(id.startsWith("did:memory:") ? id : `did:memory:${id}`);
-    const current = await this.packages.readCurrent(parsed.logicalId);
-    if (!current) throw new Error(`Memory package not found: ${id}`);
-    await this.packages.appendRevision(parsed.logicalId, {
-      text: content,
-      name: current.type === "Entity" ? content : current.name,
-      schema: {
-        ...(current.schema ?? {}),
-        ...(current.type === "Entity" ? { name: content } : { text: content }),
-      },
+    await this.runExclusive(async () => {
+      await this.ensureReadyUnlocked();
+      const parsed = parseMemoryRef(id.startsWith("did:memory:") ? id : `did:memory:${id}`);
+      const current = await this.packages.readCurrent(parsed.logicalId);
+      if (!current) throw new Error(`Memory package not found: ${id}`);
+      await this.packages.appendRevision(parsed.logicalId, {
+        text: content,
+        name: current.type === "Entity" ? content : current.name,
+        schema: {
+          ...(current.schema ?? {}),
+          ...(current.type === "Entity" ? { name: content } : { text: content }),
+        },
+      });
+      await this.rebuildIndexesUnlocked();
     });
-    await this.rebuildIndexes();
   }
 
   async delete(id: string): Promise<void> {
-    await this.ensureReady();
-    const parsed = parseMemoryRef(id.startsWith("did:memory:") ? id : `did:memory:${id}`);
-    await this.packages.deletePackage(parsed.logicalId);
-    await this.rebuildIndexes();
+    await this.runExclusive(async () => {
+      await this.ensureReadyUnlocked();
+      const parsed = parseMemoryRef(id.startsWith("did:memory:") ? id : `did:memory:${id}`);
+      await this.packages.deletePackage(parsed.logicalId);
+      await this.rebuildIndexesUnlocked();
+    });
   }
 
   async exportCanonical(): Promise<CanonicalMemoryRecord[]> {
@@ -264,34 +320,36 @@ export class OipLocalMemoryProvider implements MemoryProvider {
   }
 
   async importCanonical(records: CanonicalMemoryRecord[]): Promise<void> {
-    await this.ensureReady();
-    for (const r of records) {
-      let rev: MemoryRevision | null = null;
-      try {
-        rev = JSON.parse(r.content) as MemoryRevision;
-      } catch {
-        continue;
+    await this.runExclusive(async () => {
+      await this.ensureReadyUnlocked();
+      for (const r of records) {
+        let rev: MemoryRevision | null = null;
+        try {
+          rev = JSON.parse(r.content) as MemoryRevision;
+        } catch {
+          continue;
+        }
+        if (!rev?.id || !rev.type) continue;
+        const logicalId = rev.id.replace(/^did:memory:/, "").split("#")[0]!;
+        const existing = await this.packages.readCurrent(logicalId);
+        if (existing) {
+          await this.packages.appendRevision(logicalId, rev);
+        } else {
+          const { id: _id, revision: _r, previousRevision: _p, type, createdAt, updatedAt, ...body } =
+            rev;
+          await this.packages.createPackage({
+            type,
+            logicalId,
+            body: {
+              ...body,
+              createdAt: createdAt ?? r.createdAt,
+              updatedAt: updatedAt ?? createdAt,
+            },
+          });
+        }
       }
-      if (!rev?.id || !rev.type) continue;
-      const logicalId = rev.id.replace(/^did:memory:/, "").split("#")[0]!;
-      const existing = await this.packages.readCurrent(logicalId);
-      if (existing) {
-        await this.packages.appendRevision(logicalId, rev);
-      } else {
-        const { id: _id, revision: _r, previousRevision: _p, type, createdAt, updatedAt, ...body } =
-          rev;
-        await this.packages.createPackage({
-          type,
-          logicalId,
-          body: {
-            ...body,
-            createdAt: createdAt ?? r.createdAt,
-            updatedAt: updatedAt ?? createdAt,
-          },
-        });
-      }
-    }
-    await this.rebuildIndexes();
+      await this.rebuildIndexesUnlocked();
+    });
   }
 
   /** Convenience for graph traversal tests / CLI. */
@@ -311,20 +369,23 @@ export class OipLocalMemoryProvider implements MemoryProvider {
     now?: Date;
     limit?: number;
   } = {}): Promise<DueReminder[]> {
-    await this.ensureReady();
-    const timezone = opts.timezone ?? "America/Los_Angeles";
-    const windowEnd =
-      opts.windowEnd ?? endOfLocalDateIso(opts.date ?? localDateKey(opts.now ?? new Date(), timezone), timezone);
-    const rows = this.sqlite.listDue({
-      windowEnd,
-      limit: opts.limit,
+    return this.runExclusive(async () => {
+      await this.ensureReadyUnlocked();
+      const timezone = opts.timezone ?? "America/Los_Angeles";
+      const windowEnd =
+        opts.windowEnd ??
+        endOfLocalDateIso(opts.date ?? localDateKey(opts.now ?? new Date(), timezone), timezone);
+      const rows = this.sqlite.listDue({
+        windowEnd,
+        limit: opts.limit,
+      });
+      const out: DueReminder[] = [];
+      for (const row of rows) {
+        const hydrated = await this.hydrateReminderRow(row);
+        if (hydrated) out.push(hydrated);
+      }
+      return out;
     });
-    const out: DueReminder[] = [];
-    for (const row of rows) {
-      const hydrated = await this.hydrateReminderRow(row);
-      if (hydrated) out.push(hydrated);
-    }
-    return out;
   }
 
   async markReminderSurfaced(recordId: string): Promise<MemoryRevision> {

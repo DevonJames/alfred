@@ -2,7 +2,7 @@
 
 ## Product Requirements Document
 
-**Status:** Draft v1  
+**Status:** Draft v1 — Talk / pairing / LiveKit / notes APIs shipped in `apps/iOS-client`; remaining PRD items (share-sheet ingest, full capture surface) are still open.  
 **Product:** Alfred  
 **Component:** iOS client  
 **Depends on:** [Conversation Core PRD](./alfred-conversation-core-prd.md), [ALFRED MEMORY PRD](./ALFRED-MEMORY-prd.md), [alfrd.net desktop handoff](./alfrd-net-desktop-handoff.md)  

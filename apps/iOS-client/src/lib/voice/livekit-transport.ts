@@ -3,8 +3,13 @@
  *
  * The phone is a microphone and a speaker on a WebRTC room. It publishes one
  * mic track, plays whatever `alfred-agent` publishes back, and renders the two
- * data topics. It runs no STT, holds no conversation state, and never decides
- * that a turn is over — `pnpm voice` on the Mac owns all of that.
+ * data topics (`alfred.caption` / `alfred.user`). It runs no STT, holds no
+ * conversation state, and never decides that a turn is over — the Mac voice
+ * worker owns that (`make alfred` cascade, or `make alfred VOICE=live`).
+ *
+ * The desktop mint decides the stack: cascade joins the fixed room; live mints
+ * a fresh room and dispatches the GPT-Live agent. Captions use the same topics
+ * either way (live tees GPT-Live transcripts onto them in parallel with audio).
  *
  * The SDK is loaded optionally. LiveKit is a native module, so on a build
  * without it every entry point here reports `unavailable` instead of throwing,
@@ -13,6 +18,7 @@
 import type { RemoteAudioTrack, RemoteTrack } from "livekit-client";
 import { requestMicPermission } from "../audio";
 import { endSession, sessionToken } from "../desktop-api";
+import type { VoiceStack } from "../types";
 import type {
   LKRoom,
   LKTrack,
@@ -136,6 +142,8 @@ export interface VoiceSessionHandlers {
 export interface VoiceSessionHandle {
   identity: string;
   room: string;
+  /** Which Mac voice worker minted this room (`cascade` | `live`). */
+  voiceStack: VoiceStack;
   /** False when the LiveKit room is gone or tearing down (zombie guard). */
   isConnected: () => boolean;
   setMicrophoneEnabled: (enabled: boolean) => Promise<void>;
@@ -299,6 +307,14 @@ export async function startVoiceSession(
   // we connected raise no TrackSubscribed event for us to catch.
   attachAgentAudioFromRoom();
 
+  const voiceStack: VoiceStack = minted.voiceStack === "live" ? "live" : "cascade";
+  // GPT-Live dispatches into a fresh room after mint — give the worker a moment
+  // to appear before the UI treats "no agent audio yet" as failure.
+  if (voiceStack === "live") {
+    await waitForRemoteAudio(room, RoomEvent, 12_000);
+    attachAgentAudioFromRoom();
+  }
+
   const publishControl = async (command: UiCommand) => {
     const payload = encodeControlCommand(command);
     await room.localParticipant.publishData?.(payload as Uint8Array<ArrayBuffer>, {
@@ -310,6 +326,7 @@ export async function startVoiceSession(
   return {
     identity: minted.identity || "",
     room: minted.room || "",
+    voiceStack,
     isConnected: () => {
       if (tornDown) return false;
       const state = room.state;
@@ -323,6 +340,49 @@ export async function startVoiceSession(
     publishControl,
     disconnect: () => runTeardown(),
   };
+}
+
+/** True when any remote participant already has an audio track we can attach. */
+function roomHasRemoteAudio(room: LKRoom): boolean {
+  for (const participant of room.remoteParticipants.values()) {
+    for (const publication of participant.trackPublications.values()) {
+      if (publication.track && publicationKind(publication) === "audio") return true;
+      // Kind string from LiveKit Track.Kind may be "audio" via publication.kind.
+      if (publicationKind(publication) === "audio" || publication.kind === "audio") return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Live stack: agent joins after RoomAgentDispatch. Cascade: agent is usually
+ * already in the room. Either way, resolve as soon as remote audio appears
+ * (or when the timeout elapses — caller still has a connected room).
+ */
+function waitForRemoteAudio(
+  room: LKRoom,
+  RoomEvent: Record<string, string>,
+  timeoutMs: number,
+): Promise<boolean> {
+  if (roomHasRemoteAudio(room)) return Promise.resolve(true);
+
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (ok: boolean) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      room.off(RoomEvent.ParticipantConnected, onMaybeReady);
+      room.off(RoomEvent.TrackSubscribed, onMaybeReady);
+      resolve(ok);
+    };
+    const onMaybeReady = () => {
+      if (roomHasRemoteAudio(room)) finish(true);
+    };
+    const timer = setTimeout(() => finish(false), timeoutMs);
+    room.on(RoomEvent.ParticipantConnected, onMaybeReady as (...args: never[]) => void);
+    room.on(RoomEvent.TrackSubscribed, onMaybeReady as (...args: never[]) => void);
+  });
 }
 
 function publicationKind(publication: LKTrackPublication): string | undefined {

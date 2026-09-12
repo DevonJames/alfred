@@ -354,6 +354,12 @@ export function revokePairing() {
  * decided by what came back — the presence of a URL and a token — rather than
  * by any field the client hopes to find (§10).
  */
+function parseVoiceStack(raw: unknown): import("./types").VoiceStack | null {
+  if (raw === "live" || raw === "gpt-live" || raw === "gptlive") return "live";
+  if (raw === "cascade" || raw === "cascaded") return "cascade";
+  return null;
+}
+
 export function sessionToken(mode: "voice" | "text" = "voice") {
   return call<Record<string, unknown>>("/api/session/token", {
     method: "POST",
@@ -369,6 +375,8 @@ export function sessionToken(mode: "voice" | "text" = "voice") {
       url,
       token,
       transport: url && token ? "livekit" : "http-capture",
+      voiceStack: parseVoiceStack(body.voiceStack ?? body.voice_stack),
+      agentName: pick<string>(body, "agentName", "agent_name") ?? null,
     };
   });
 }
@@ -379,8 +387,13 @@ export interface SessionStatus {
   room: string | null;
   /** Null when desktop predates agent presence checks. */
   agentPresent: boolean | null;
-  /** e.g. "Run `pnpm voice` on the Mac so alfred-agent joins the LiveKit room." */
+  /**
+   * Offline / setup hint from the Mac.
+   * Cascade: run `make alfred`. Live: run `make alfred VOICE=live`.
+   */
   agentHint: string | null;
+  /** Which voice worker the Mac is serving; null on older desktops. */
+  voiceStack: import("./types").VoiceStack | null;
   sessionId: string | null;
   state: string | null;
 }
@@ -402,6 +415,7 @@ export function sessionStatus() {
             ? (body.agent_present as boolean)
             : null,
       agentHint: pick<string>(body, "agentHint", "agent_hint") ?? null,
+      voiceStack: parseVoiceStack(body.voiceStack ?? body.voice_stack),
       sessionId: pick<string>(body, "sessionId", "session_id") ?? null,
       state: pick<string>(body, "state") ?? null,
     })

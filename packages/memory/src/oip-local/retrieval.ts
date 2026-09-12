@@ -6,6 +6,10 @@ import type { MemoryRevision } from "./schemas.js";
 import { FtsIndex } from "./indexes/fts-index.js";
 import { GraphIndex } from "./indexes/graph-index.js";
 import type { SqliteMemoryIndex } from "./indexes/sqlite-index.js";
+import {
+  relationshipRecallHits,
+  resolveRecordName,
+} from "./relationship-recall.js";
 
 export interface RetrievalDeps {
   packages: PackageStore;
@@ -16,6 +20,8 @@ export interface RetrievalDeps {
 /**
  * Hybrid retrieval: FTS + name/entity match + 1–2 hop graph expansion.
  * Enough for “wine at Sarah’s” without embeddings.
+ * Relationship-shaped questions (employer, boss, birthday, coworker∩place)
+ * also self-seed and walk structured assertions.
  */
 export async function retrieveMemories(
   query: MemoryQuery,
@@ -29,6 +35,11 @@ export async function retrieveMemories(
   const bump = (id: string, score: number) => {
     scores.set(id, Math.max(scores.get(id) ?? 0, score));
   };
+
+  // Relationship recall first so employer/boss/home facts outrank ask-turns
+  for (const hit of await relationshipRecallHits(query.text, deps)) {
+    bump(hit.id, hit.score);
+  }
 
   // Lexical
   for (const hit of fts.search(query.text, limit * 3)) {
@@ -175,7 +186,7 @@ export async function retrieveMemories(
       : id;
     const rev = await deps.packages.readCurrent(logicalId);
     if (!rev) continue;
-    items.push(toNormalized(rev, deps.providerId, relevance));
+    items.push(toNormalized(rev, deps.providerId, relevance, deps.sqlite));
   }
   return items;
 }
@@ -184,8 +195,9 @@ export function toNormalized(
   rev: MemoryRevision,
   providerId: string,
   relevance = 0.5,
+  sqlite?: SqliteMemoryIndex,
 ): NormalizedMemoryItem {
-  const content = formatContent(rev);
+  const content = formatContent(rev, sqlite);
   return {
     id: rev.id,
     content,
@@ -205,7 +217,7 @@ export function toNormalized(
   };
 }
 
-function formatContent(rev: MemoryRevision): string {
+function formatContent(rev: MemoryRevision, sqlite?: SqliteMemoryIndex): string {
   const label = displayLabel(rev);
   const meta: string[] = [];
   const srcType = rev.provenance?.sourceType;
@@ -252,11 +264,34 @@ function formatContent(rev: MemoryRevision): string {
   }
   if (rev.validFrom) meta.push(`published=${rev.validFrom}`);
   if (rev.learnedAt) meta.push(`learned=${rev.learnedAt}`);
+  const birthDate =
+    typeof rev.schema?.birthDate === "string" ? rev.schema.birthDate.trim() : "";
+  if (birthDate) meta.push(`birthDate=${birthDate}`);
+  const email = typeof rev.schema?.email === "string" ? rev.schema.email.trim() : "";
+  if (email) meta.push(`email=${email}`);
+  const telephone =
+    typeof rev.schema?.telephone === "string" ? rev.schema.telephone.trim() : "";
+  if (telephone) meta.push(`telephone=${telephone}`);
   const suffix = meta.length ? ` [${meta.join("; ")}]` : "";
   if (rev.type === "Assertion" && rev.subject && rev.predicate) {
-    return `${rev.predicate}: ${label || String(rev.object ?? "")} (${rev.subject})${suffix}`;
+    const subj =
+      (sqlite && resolveRecordName(sqlite, String(rev.subject))) || String(rev.subject);
+    const obj =
+      rev.object != null
+        ? (sqlite && resolveRecordName(sqlite, String(rev.object))) || String(rev.object)
+        : "";
+    return `${subj} ${rev.predicate} ${obj}${suffix}`;
   }
   if (rev.type === "Observation" && rev.text) return `${rev.text}${suffix}`;
+  // Prefer an explicit contact line for people so the model sees phone/email
+  if (rev.type === "Entity" && label && (email || telephone || birthDate)) {
+    const bits = [
+      email ? `email ${email}` : null,
+      telephone ? `phone ${telephone}` : null,
+      birthDate ? `birthday ${birthDate}` : null,
+    ].filter(Boolean);
+    return `Person: ${label} — ${bits.join("; ")}${suffix}`;
+  }
   if (label) return `${rev.type}: ${label}${suffix}`;
   return `${rev.type} ${rev.id}${suffix}`;
 }

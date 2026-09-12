@@ -159,6 +159,9 @@ export interface TurnResponse {
   audioUrl?: string | null;
 }
 
+/** Which Mac voice worker the desktop is serving for Talk. */
+export type VoiceStack = "cascade" | "live";
+
 export interface SessionToken {
   sessionId: string;
   room: string;
@@ -167,7 +170,16 @@ export interface SessionToken {
   token: string | null;
   transport: "livekit" | "http-capture";
   transportReason: string | null;
+  /** Legacy field from older desktops; prefer `voiceStack`. */
   voiceMode: "cascaded" | "unified";
+  /**
+   * `cascade` = Deepgram→LLM→ElevenLabs (`make alfred`).
+   * `live` = GPT-Live / Ripple (`make alfred VOICE=live`).
+   * Null on older desktops that omit the field.
+   */
+  voiceStack: VoiceStack | null;
+  /** LiveKit Agents dispatch name when `voiceStack === "live"` (e.g. alfred-live). */
+  agentName: string | null;
   profileId: string;
 }
 

@@ -1,43 +1,13 @@
 import {
-  AgentRouter,
-  createClaudeStub,
-  createCodexStub,
-  createDocsIngestHarness,
-  createHermesStub,
-  createOpenClawStub,
-  createXIngestHarness,
-} from "@alfred/agents";
-import { createPlaywrightCaptureAdapter } from "@alfred/browser";
-import {
-  createBriefingController,
-  lookupLiveWeatherForecast,
-  type GreetingLlm,
-} from "@alfred/briefing";
-import type { UserConfiguration } from "@alfred/contracts";
-import {
   EventLedger,
-  FakeClock,
   NoopObservability,
   ResponseLedger,
   ConversationStateMachine,
   SecretResolver,
-  SystemClock,
   VoiceSessionController,
   type Clock,
 } from "@alfred/core";
 import { LiveKitMediaBridge } from "@alfred/livekit";
-import {
-  defaultMemoryPath,
-  defaultOipMemoryRoot,
-  ensureAndLoadPersona,
-  LOCAL_MEMORY_PROVIDER_ID,
-  LocalFileMemoryProvider,
-  MemoryController,
-  OIP_LOCAL_MEMORY_PROVIDER_ID,
-  OipLocalMemoryProvider,
-  composeNotesCaptureAdapter,
-  type LoadedPersonaContext,
-} from "@alfred/memory";
 import { createInMemoryPersistence } from "@alfred/persistence";
 import {
   DEEPGRAM_FLUX_PROVIDER_ID,
@@ -56,8 +26,8 @@ import {
   RECOMMENDED_LLM_PRIORITY,
 } from "@alfred/provider-openai";
 import { ProviderRegistry } from "@alfred/providers";
-import { createElgatoLightsController } from "@alfred/elgato";
-import { createOipReminderPort } from "./reminder-port.js";
+import type { GreetingLlm } from "@alfred/briefing";
+import { createAlfredBrain, safeEnv, type AlfredBrain } from "./brain.js";
 
 const failoverSettings = {
   connectionTimeoutMs: 5_000,
@@ -73,12 +43,12 @@ export interface VoiceRuntime {
   media: LiveKitMediaBridge;
   voice: VoiceSessionController;
   registry: ProviderRegistry;
-  config: UserConfiguration;
+  config: AlfredBrain["config"];
   clock: Clock;
-  memory: MemoryController;
+  memory: AlfredBrain["memory"];
   memoryProviderId: string;
   memoryPath: string;
-  persona: LoadedPersonaContext;
+  persona: AlfredBrain["persona"];
 }
 
 export async function createCascadedVoiceRuntime(opts?: {
@@ -89,10 +59,7 @@ export async function createCascadedVoiceRuntime(opts?: {
   const openaiKey = safeEnv(secrets, "OPENAI_API_KEY");
   const elevenKey = safeEnv(secrets, "ELEVENLABS_API_KEY") || safeEnv(secrets, "ELEVEN_API_KEY");
 
-  const clock: Clock = opts?.useFakeClock ? new FakeClock() : new SystemClock();
-  const persistence = createInMemoryPersistence();
   const registry = new ProviderRegistry();
-
   registry.registerStt(
     new DeepgramFluxSTTProvider({
       apiKey: deepgramKey,
@@ -114,81 +81,6 @@ export async function createCascadedVoiceRuntime(opts?: {
     }),
   );
 
-  const profileId = process.env.ALFRED_PROFILE_ID ?? "profile.default";
-  const memoryProviderId = process.env.ALFRED_MEMORY_PROVIDER_ID ?? LOCAL_MEMORY_PROVIDER_ID;
-  const memoryPath = defaultMemoryPath(profileId);
-  const oipMemoryRoot = defaultOipMemoryRoot(profileId);
-  const localMemory = new LocalFileMemoryProvider(memoryPath, LOCAL_MEMORY_PROVIDER_ID);
-  const oipMemory = new OipLocalMemoryProvider(oipMemoryRoot, OIP_LOCAL_MEMORY_PROVIDER_ID);
-
-  const now = clock.nowIso();
-  const config: UserConfiguration = {
-    profile: {
-      id: profileId,
-      displayName: "ALFRED User",
-      activeMemoryProviderId: memoryProviderId,
-      createdAt: now,
-      updatedAt: now,
-    },
-    providerConfigs: [],
-    pipeline: {
-      mode: "cascaded",
-      allowCascadedFallback: false,
-      sttPriority: {
-        modality: "stt",
-        orderedProviderIds: [DEEPGRAM_FLUX_PROVIDER_ID, ...RECOMMENDED_STT_PRIORITY.slice(1)],
-        settings: { ...failoverSettings },
-      },
-      llmPriority: {
-        modality: "llm",
-        orderedProviderIds: [OPENAI_TERRA_PROVIDER_ID, ...RECOMMENDED_LLM_PRIORITY.slice(1)],
-        settings: { ...failoverSettings },
-      },
-      ttsPriority: {
-        modality: "tts",
-        orderedProviderIds: [ELEVENLABS_FLASH_PROVIDER_ID, ...RECOMMENDED_TTS_PRIORITY.slice(1)],
-        settings: { ...failoverSettings },
-      },
-    },
-    priorityLists: [],
-    agentRouting: [
-      { category: "coding", orderedHarnessIds: ["harness.codex"] },
-      { category: "email", orderedHarnessIds: ["harness.openclaw", "harness.hermes"] },
-      { category: "research", orderedHarnessIds: ["harness.docs-ingest", "harness.x-ingest", "harness.hermes"] },
-      { category: "browser", orderedHarnessIds: ["harness.x-ingest", "harness.hermes"] },
-      { category: "computer_use", orderedHarnessIds: ["harness.x-ingest", "harness.claude"] },
-    ],
-    systemInstructions:
-      "You are ALFRED. Follow SOUL.md, IDENTITY.md, and USER.md below. Prefer delegate_task for external actions. Keep spoken answers concise.",
-  };
-
-  const memory = new MemoryController(config.profile.id, persistence.memorySettings);
-  memory.register(localMemory);
-  memory.register(oipMemory);
-  await memory.initialize(memoryProviderId);
-
-  const persona = await ensureAndLoadPersona(profileId);
-
-  const agents = new AgentRouter();
-  agents.register(createOpenClawStub());
-  agents.register(createHermesStub());
-  agents.register(createCodexStub());
-  agents.register(createClaudeStub());
-  agents.register(createDocsIngestHarness({ profileId }));
-  agents.register(
-    createXIngestHarness({
-      profileId,
-      capture: composeNotesCaptureAdapter(createPlaywrightCaptureAdapter()),
-    }),
-  );
-  agents.setRoutingRules(config.agentRouting);
-
-  const sessionId = `sess_${Date.now().toString(36)}`;
-  const events = new EventLedger(persistence.events, clock, new NoopObservability());
-  const fsm = new ConversationStateMachine(sessionId, events);
-  const responseLedger = new ResponseLedger(persistence.responseLedgers, events, clock);
-  const media = new LiveKitMediaBridge();
-
   const greetingLlm: GreetingLlm = async (messages) => {
     const llm = registry.getLlm(OPENAI_TERRA_PROVIDER_ID);
     let text = "";
@@ -202,86 +94,66 @@ export async function createCascadedVoiceRuntime(opts?: {
     return text;
   };
 
-  // Always pass OIP memory for due reminders (independent of active chat memory provider).
-  const briefing = createBriefingController({
-    memory: oipMemory,
-    llm: greetingLlm,
-  });
-  const reminders = createOipReminderPort(oipMemory, briefing);
-  const structuredMemory = {
-    async remember(write: {
-      entities?: Array<{
-        name: string;
-        entityClass?: string;
-        summary?: string;
-        email?: string;
-        telephone?: string;
-      }>;
-      assertions?: Array<{
-        subjectName: string;
-        predicate: string;
-        objectName: string;
-        text?: string;
-      }>;
-      notes?: string[];
-    }) {
-      const { writeConversationalMemory } = await import("@alfred/memory");
-      return writeConversationalMemory(oipMemory, write);
-    },
-  };
-  const weather = {
-    async getForecast(opts?: { location?: string; days?: number }) {
-      return lookupLiveWeatherForecast({
-        location: opts?.location,
-        days: opts?.days,
-      });
-    },
-  };
-  const lights = createElgatoLightsController();
-  void lights.refresh().catch((err) => {
-    console.warn("[voice] Elgato light discovery failed:", err);
+  const brain = await createAlfredBrain({
+    useFakeClock: opts?.useFakeClock,
+    greetingLlm,
   });
 
+  brain.config.pipeline = {
+    mode: "cascaded",
+    allowCascadedFallback: false,
+    sttPriority: {
+      modality: "stt",
+      orderedProviderIds: [DEEPGRAM_FLUX_PROVIDER_ID, ...RECOMMENDED_STT_PRIORITY.slice(1)],
+      settings: { ...failoverSettings },
+    },
+    llmPriority: {
+      modality: "llm",
+      orderedProviderIds: [OPENAI_TERRA_PROVIDER_ID, ...RECOMMENDED_LLM_PRIORITY.slice(1)],
+      settings: { ...failoverSettings },
+    },
+    ttsPriority: {
+      modality: "tts",
+      orderedProviderIds: [ELEVENLABS_FLASH_PROVIDER_ID, ...RECOMMENDED_TTS_PRIORITY.slice(1)],
+      settings: { ...failoverSettings },
+    },
+  };
+
+  const persistence = createInMemoryPersistence();
+  const events = new EventLedger(persistence.events, brain.clock, new NoopObservability());
+  const fsm = new ConversationStateMachine(brain.sessionId, events);
+  const responseLedger = new ResponseLedger(persistence.responseLedgers, events, brain.clock);
+  const media = new LiveKitMediaBridge();
+
   const voice = new VoiceSessionController({
-    sessionId,
-    profileId: config.profile.id,
-    config,
-    clock,
+    sessionId: brain.sessionId,
+    profileId: brain.profileId,
+    config: brain.config,
+    clock: brain.clock,
     events,
     fsm,
     responseLedger,
     providers: registry,
-    memory,
-    agents,
+    memory: brain.memory,
+    agents: brain.agents,
     media,
-    personaContext: persona,
-    briefing,
-    reminders,
-    structuredMemory,
-    weather,
-    lights,
+    personaContext: brain.persona,
+    briefing: brain.briefing,
+    reminders: brain.reminders,
+    structuredMemory: brain.structuredMemory,
+    weather: brain.weather,
+    lights: brain.lights,
   });
 
   return {
     media,
     voice,
     registry,
-    config,
-    clock,
-    memory,
-    memoryProviderId: memory.getActiveProviderId() ?? memoryProviderId,
-    memoryPath:
-      (memory.getActiveProviderId() ?? memoryProviderId) === OIP_LOCAL_MEMORY_PROVIDER_ID
-        ? oipMemory.path
-        : localMemory.path,
-    persona,
+    config: brain.config,
+    clock: brain.clock,
+    memory: brain.memory,
+    memoryProviderId: brain.memoryProviderId,
+    memoryPath: brain.memoryPath,
+    persona: brain.persona,
   };
-}
-
-function safeEnv(resolver: SecretResolver, name: string): string {
-  try {
-    return resolver.resolve({ kind: "env", name });
-  } catch {
-    return process.env[name] ?? "";
-  }
 }

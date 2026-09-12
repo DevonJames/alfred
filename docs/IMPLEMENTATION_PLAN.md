@@ -6,12 +6,13 @@ Conversation is the primary runtime. Memory and agency are modular services invo
 
 ## Milestones overview
 
-| Milestone          | Goal                                                                             |
-| ------------------ | -------------------------------------------------------------------------------- |
-| **M1**             | Text-only conversation-core simulator with fake providers                        |
-| **M2** (this pass) | Cascaded voice: Deepgram Flux → OpenAI Terra → ElevenLabs Flash + LiveKit bridge |
-| **M3**             | Unified realtime providers, Postgres persistence, OTel exporters                 |
-| **M4**             | Vendor memory adapters (Mem0 etc.) and real agent harness wiring                 |
+| Milestone            | Goal                                                                             |
+| -------------------- | -------------------------------------------------------------------------------- |
+| **M1**               | Text-only conversation-core simulator with fake providers                        |
+| **M2**               | Cascaded voice: Deepgram Flux → OpenAI Terra → ElevenLabs Flash + LiveKit bridge |
+| **Post-M2 (shipped)** | Desktop host, iOS Talk, OIP-local memory, ingest, briefing, notes, Graph / embeddings |
+| **M3**               | Unified realtime providers, Postgres persistence, OTel exporters                 |
+| **M4**               | Vendor memory adapters (Mem0 etc.) and real agent harness wiring                 |
 
 ---
 
@@ -42,11 +43,11 @@ Conversation is the primary runtime. Memory and agency are modular services invo
 
 ## Milestone 1 — Intentionally deferred
 
-- LiveKit WebRTC / VAD / turn detection wiring
-- Real LLM, STT, TTS, and unified speech-to-speech APIs
-- Mem0, Letta, Graphiti, Zep, and other production memory products (local JSONL LTM is the current default on the voice path)
+- LiveKit WebRTC / VAD / turn detection wiring — **done in M2**
+- Real LLM, STT, TTS APIs — **done in M2** (unified speech-to-speech still deferred)
+- Mem0, Letta, Graphiti, Zep, and other production memory products (voice path still defaults to JSONL; product store is OIP-local)
 - Real OpenClaw Gateway, Hermes JSON-RPC, Codex CLI, Claude Agent SDK integrations
-- HTTP API, UI, authentication product surface
+- HTTP API, UI, authentication product surface — **done post-M2** (`apps/desktop-client`, `apps/iOS-client`)
 - Robot control, embodiment, sensors, navigation, hardware
 - Kubernetes, microservices, Kafka, and similar infrastructure
 
@@ -65,7 +66,7 @@ See [DECISIONS.md](./DECISIONS.md) for ADR-style rationale.
 
 ---
 
-## Milestone 2 — Cascaded voice stack (current)
+## Milestone 2 — Cascaded voice stack (shipped)
 
 **Locked providers**
 
@@ -101,9 +102,24 @@ See [DECISIONS.md](./DECISIONS.md) for ADR-style rationale.
 - OpenAI GPT-Realtime unified adapter → M3
 - Mem0 and other vendor memory adapters → M4
 
+## Post-M2 — Product host (shipped)
+
+Not a numbered Conversation Core milestone; these landed on top of M2 and are in the tree today.
+
+- `apps/desktop-client` on port 3000: Talk (`/voice/`), Brief, Notes, Graph, Graph (beta), Vector Explorer, ingest, claim/pair
+- `apps/iOS-client`: alfrd.net link + PIN pair, LiveKit Talk (hold / continuous / chat), CallKit for backgrounded continuous, notes + memory APIs
+- `memory.oip-local` as canonical store for desktop HTTP / iOS; JSONL remains the voice-agent default
+- Ingest: knowledge export, PDF, photo (Grok/OpenAI), markdown folders, X / YouTube from Apple Notes, audio notes, `.alfred-memory.zip` merge
+- Daily briefing Stage 1 (`@alfred/briefing`, `/briefing`, voice soft offer)
+- Graph (beta) embedding space: OpenAI embeddings + `FileVectorIndex` + MDS/PCA Semantic Map ([embedding-space.md](./embedding-space.md))
+- LiveKit transport hygiene: reconnect + TTS buffer/republish; iOS 90s hold-idle leave; browser Start/Stop race guard
+
 ## Milestone 3 — Recommended next
 
 1. OpenAI GPT-Realtime unified adapter behind `UnifiedRealtimeProvider`
 2. Postgres implementations of repository interfaces
 3. OTel exporters for FSM + provider spans
 4. Optional multilingual STT primary (ElevenLabs Scribe) for non-English profiles
+5. Local / offline embeddings (swap embed step only — [local-embeddings-mac-mini.md](./local-embeddings-mac-mini.md))
+6. Live desktop↔desktop OIP sync (offline bundle merge already ships — [multi-desktop-memory-sync.md](./multi-desktop-memory-sync.md))
+7. Daily briefing Stage 2 ([DAILY-BRIEFING-STAGE-2.md](./DAILY-BRIEFING-STAGE-2.md))

@@ -4,18 +4,22 @@ This repo hosts the **desktop client**: a local HTTP process that registers with
 `api.alfrd.net`, advertises LAN/WAN/relay candidates, and maintains an outbound
 WebSocket relay tunnel.
 
-The **mobile client** (iOS) is built separately. Use this document plus the
-alfred-home iOS spec as the implementation guide:
+The **mobile client** lives in this repo at `apps/iOS-client`. Pairing and Talk
+protocols:
 
-- `/Users/devon/Documents/development/alfred-home/docs/toBuild/ios-alfrd-net-connectivity.md`
-- `/Users/devon/Documents/development/alfred-home/docs/alfrd-net-canonical-reference.md`
+- [ios-desktop-pairing.md](./ios-desktop-pairing.md)
+- [ios-livekit-voice.md](./ios-livekit-voice.md)
+- [accountless-alfrd-net.md](./accountless-alfrd-net.md)
+
+alfred-home docs remain historical reference for the control plane field names,
+not the product client.
 
 ## Product naming
 
 | Product term | Meaning |
 |--------------|---------|
 | Desktop client | This Mac-hosted process (`pnpm desktop`) |
-| Mobile client | iOS app (separate agent / repo work) |
+| Mobile client | `apps/iOS-client` (Expo Dev Client) |
 
 The control plane API still uses `serverId` / `/servers/*` / `/proxy/:serverId`.
 Do **not** rename those remote fields — only local logs/UI use “desktop client”.

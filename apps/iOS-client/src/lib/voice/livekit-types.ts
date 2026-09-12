@@ -28,6 +28,7 @@ export type LKRoom = {
   /** LiveKit ConnectionState when available (`connected`, `disconnected`, …). */
   state?: string;
   on: (event: string, handler: (...args: never[]) => void) => LKRoom;
+  off: (event: string, handler: (...args: never[]) => void) => LKRoom;
   connect: Room["connect"];
   disconnect: Room["disconnect"];
 };

@@ -36,6 +36,8 @@ function loadDatabaseSync(): DatabaseSyncCtor {
 
 export class SqliteMemoryIndex {
   private db: SqliteDatabase | null = null;
+  /** Bumped on each rebuild so overlapping rebuilds can detect invalidation. */
+  private rebuildGeneration = 0;
 
   constructor(readonly rootDir: string) {}
 
@@ -153,8 +155,14 @@ export class SqliteMemoryIndex {
 
   async rebuild(packages: PackageStore, _artifacts: ArtifactStore): Promise<void> {
     await mkdir(path.join(this.rootDir, "indexes"), { recursive: true });
+    const generation = ++this.rebuildGeneration;
     await this.deleteDatabase();
     const db = this.open();
+    const assertCurrent = () => {
+      if (this.rebuildGeneration !== generation || this.db !== db) {
+        throw new Error("sqlite rebuild aborted: index was closed or superseded");
+      }
+    };
 
     const insertRecord = db.prepare(`
       INSERT INTO records (
@@ -190,6 +198,7 @@ export class SqliteMemoryIndex {
     `);
 
     for (const logicalId of await packages.listLogicalIds()) {
+      assertCurrent();
       const manifest = await packages.readManifest(logicalId);
       if (!manifest) continue;
       const current = await packages.readCurrent(logicalId);
@@ -199,6 +208,7 @@ export class SqliteMemoryIndex {
       const searchText = buildSearchText(current);
       const logicalOnly = logicalId;
 
+      assertCurrent();
       insertRecord.run(
         current.id,
         logicalOnly,
@@ -217,6 +227,7 @@ export class SqliteMemoryIndex {
       insertFts.run(current.id, name, searchText, current.type);
 
       for (const revHash of await packages.listRevisions(logicalId)) {
+        assertCurrent();
         const rev = await packages.readRevision(logicalId, revHash);
         if (!rev) continue;
         insertRev.run(
@@ -266,6 +277,7 @@ export class SqliteMemoryIndex {
         );
       }
     }
+    assertCurrent();
   }
 
   searchFts(query: string, limit = 20): Array<{ record_id: string; rank: number }> {

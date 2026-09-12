@@ -2,8 +2,8 @@
 
 ## Implementation Guide for the Mobile Client
 
-**Status:** Ready for iOS implementation  
-**Audience:** Coding agent building the Alfred iOS client  
+**Status:** Implemented in `apps/iOS-client` (claim → discover → PIN pair). Keep this doc as the protocol contract.  
+**Audience:** Coding agent changing pairing or desktop connect APIs  
 **Source of truth for desktop behavior:** this repo’s `apps/desktop-client` + [alfrd-net-desktop-handoff.md](./alfrd-net-desktop-handoff.md)  
 **Control plane:** already deployed at `https://api.alfrd.net`
 

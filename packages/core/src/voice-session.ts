@@ -1610,6 +1610,7 @@ export class VoiceSessionController {
             summary: typeof e.summary === "string" ? e.summary : undefined,
             email: typeof e.email === "string" ? e.email.trim() : undefined,
             telephone: typeof e.telephone === "string" ? e.telephone.trim() : undefined,
+            birthDate: typeof e.birthDate === "string" ? e.birthDate.trim() : undefined,
           }))
           .filter((e) => e.name)
       : [];

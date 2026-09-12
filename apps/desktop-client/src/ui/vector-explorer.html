@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Alfred — Vector Explorer</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,400&family=Fraunces:opsz,wght@9..144,500;9..144,600&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg0: #030201;
+        --panel: rgba(22, 18, 14, 0.94);
+        --ink: #f3eee4;
+        --muted: #9a9080;
+        --line: #3a3228;
+        --amber: #c4a35a;
+        --amber-hot: #e8c878;
+        --c1: #d4a017;
+        --c2: #c45a3a;
+        --c3: #3d8f5a;
+        --c4: #3a9bb0;
+        --c5: #c44a9a;
+      }
+      * { box-sizing: border-box; }
+      html, body {
+        margin: 0; height: 100%;
+        background: var(--bg0); color: var(--ink);
+        font-family: "DM Sans", ui-sans-serif, system-ui, sans-serif;
+        overflow: hidden;
+      }
+      #stage { position: absolute; inset: 0; }
+      #graph-3d { width: 100%; height: 100%; }
+      .chrome.top {
+        position: absolute; top: 0.75rem; left: 0.75rem; right: 0.75rem;
+        display: flex; gap: 0.75rem; align-items: flex-start;
+        pointer-events: none; z-index: 5;
+      }
+      .brand { max-width: 18rem; pointer-events: none; }
+      .eyebrow {
+        margin: 0; font-size: 0.68rem; letter-spacing: 0.14em;
+        text-transform: uppercase; color: var(--amber);
+      }
+      .brand h1 {
+        margin: 0.1rem 0 0.3rem; font-family: Fraunces, Georgia, serif;
+        font-weight: 600; font-size: 1.45rem; color: var(--amber-hot);
+      }
+      .brand p { margin: 0; color: var(--muted); font-size: 0.78rem; line-height: 1.35; }
+      .panel {
+        pointer-events: auto; background: var(--panel);
+        border: 1px solid var(--line); border-radius: 14px;
+        backdrop-filter: blur(12px); box-shadow: 0 16px 40px rgba(0,0,0,0.45);
+      }
+      .controls {
+        margin-left: auto; width: min(26rem, 100%);
+        max-height: calc(100vh - 1.5rem); overflow: auto;
+        padding: 0.85rem 0.95rem 1rem;
+      }
+      .controls label, .sec-label {
+        display: block; margin: 0.7rem 0 0.3rem;
+        font-size: 0.65rem; letter-spacing: 0.1em;
+        text-transform: uppercase; color: var(--muted);
+      }
+      .controls label:first-child { margin-top: 0; }
+      .seg {
+        display: flex; flex-wrap: wrap; gap: 0.3rem;
+      }
+      .seg button {
+        padding: 0.28rem 0.55rem; border-radius: 999px;
+        border: 1px solid var(--line); background: transparent;
+        color: var(--muted); font: inherit; font-size: 0.72rem; cursor: pointer;
+      }
+      .seg button.on {
+        background: var(--amber); color: #1a1410; border-color: transparent; font-weight: 600;
+      }
+      .slot { margin-bottom: 0.45rem; }
+      .slot-head {
+        display: flex; align-items: center; gap: 0.35rem;
+        margin-bottom: 0.2rem; font-size: 0.7rem; font-weight: 600;
+      }
+      .swatch { width: 0.6rem; height: 0.6rem; border-radius: 999px; flex: none; }
+      textarea, select, input[type="range"] {
+        width: 100%;
+      }
+      textarea {
+        min-height: 2.8rem; resize: vertical; border-radius: 10px;
+        border: 1px solid var(--line); background: rgba(0,0,0,0.35);
+        color: var(--ink); font: inherit; font-size: 0.78rem;
+        line-height: 1.35; padding: 0.45rem 0.55rem;
+      }
+      textarea:focus, select:focus { outline: none; border-color: var(--amber); }
+      select {
+        border-radius: 8px; border: 1px solid var(--line);
+        background: rgba(0,0,0,0.35); color: var(--ink);
+        font: inherit; font-size: 0.78rem; padding: 0.4rem 0.5rem;
+      }
+      .row-actions { display: flex; flex-wrap: wrap; gap: 0.35rem; margin-top: 0.7rem; }
+      .row-actions button, .detail-actions button {
+        padding: 0.4rem 0.65rem; border-radius: 8px;
+        border: 1px solid var(--amber); background: var(--amber);
+        color: #1a1410; font: inherit; font-size: 0.76rem; font-weight: 600; cursor: pointer;
+      }
+      .row-actions button.ghost, .detail-actions button.ghost {
+        background: transparent; color: var(--amber-hot); border-color: #7a6238;
+      }
+      .row-actions button:disabled { opacity: 0.5; cursor: wait; }
+      .toggle-row {
+        display: flex; align-items: center; justify-content: space-between;
+        gap: 0.5rem; margin-top: 0.55rem; font-size: 0.78rem; color: var(--ink);
+      }
+      .toggle-row input { accent-color: var(--amber); }
+      .range-row { margin-top: 0.35rem; }
+      .range-row .val { float: right; color: var(--amber-hot); font-variant-numeric: tabular-nums; }
+      .stats, .disclaimer, .metrics, .pairwise, .inspect {
+        margin-top: 0.65rem; font-size: 0.72rem; color: var(--muted); line-height: 1.4;
+      }
+      .disclaimer {
+        border-left: 2px solid var(--amber-dim, #7a6238);
+        padding-left: 0.55rem; color: #b5aa96;
+      }
+      .metrics strong, .pairwise strong, .inspect strong { color: var(--amber-hot); font-weight: 600; }
+      .inspect {
+        border-top: 1px solid var(--line); padding-top: 0.55rem; margin-top: 0.75rem;
+      }
+      .inspect h3 {
+        margin: 0 0 0.35rem; font-size: 0.72rem; letter-spacing: 0.08em;
+        text-transform: uppercase; color: var(--amber);
+      }
+      .inspect .body { color: var(--ink); font-size: 0.8rem; margin-bottom: 0.45rem; }
+      .nb-list { margin: 0; padding-left: 1rem; }
+      .nb-list li { margin: 0.2rem 0; }
+      .hint {
+        position: absolute; left: 50%; bottom: 0.75rem; transform: translateX(-50%);
+        color: var(--muted); font-size: 0.7rem; z-index: 4; pointer-events: none; text-align: center;
+      }
+      .empty {
+        position: absolute; inset: 0; display: none; place-items: center;
+        text-align: center; pointer-events: none; z-index: 3;
+      }
+      .empty.show { display: grid; }
+      .empty h2 {
+        margin: 0 0 0.35rem; font-family: Fraunces, Georgia, serif; color: var(--amber-hot);
+      }
+      .empty p { margin: 0; color: var(--muted); max-width: 24rem; font-size: 0.9rem; }
+      #graph-3d .scene-tooltip, .scene-tooltip {
+        top: 0; max-width: 300px; padding: 0.5rem 0.7rem; border-radius: 10px;
+        border: 1px solid rgba(232, 200, 120, 0.35); background: rgba(0,0,0,0.92);
+        color: #f3eee4; font-size: 12px; line-height: 1.4; white-space: pre-wrap;
+        pointer-events: none; box-shadow: 0 10px 28px rgba(0,0,0,0.55);
+      }
+      .custom-panel { display: none; }
+      .custom-panel.on { display: block; }
+      @media (max-width: 960px) {
+        .chrome.top { flex-direction: column; }
+        .controls { margin-left: 0; width: 100%; max-height: 48vh; }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="stage"><div id="graph-3d"></div></div>
+
+    <header class="chrome top">
+      <div class="brand">
+        <p class="eyebrow">Alfred · demo</p>
+        <h1>Vector Explorer</h1>
+        <p>
+          Semantically related observations tend to occupy related regions of embedding space.
+          This map is a lossy projection — original cosine similarity is authoritative.
+        </p>
+      </div>
+
+      <div class="panel controls">
+        <label>Mode</label>
+        <div class="seg" id="mode-seg">
+          <button type="button" data-mode="semantic-map" class="on">Semantic Map</button>
+          <button type="button" data-mode="vectors">Vectors (arrows)</button>
+        </div>
+
+        <label>Dataset</label>
+        <select id="dataset">
+          <option value="custom-five">Custom / five-sentence demo</option>
+          <option value="cluster-ops">Cluster demo (~37 ops notes)</option>
+          <option value="emerging-cluster">Emerging cluster (over time)</option>
+        </select>
+
+        <div class="custom-panel on" id="custom-panel">
+          <label>Examples (up to 5)</label>
+          <div id="slots"></div>
+        </div>
+
+        <div id="map-controls">
+          <label>Projection</label>
+          <div class="seg" id="proj-seg">
+            <button type="button" data-proj="mds-cosine" class="on">MDS (cosine)</button>
+            <button type="button" data-proj="pca">PCA</button>
+            <button type="button" data-proj="directional-pca">Directional PCA</button>
+          </div>
+          <label>Map dimensions</label>
+          <div class="seg" id="dim-seg">
+            <button type="button" data-dims="2" class="on">2D</button>
+            <button type="button" data-dims="3">3D</button>
+          </div>
+          <div class="range-row">
+            <label for="knn-k">Nearest neighbors (k) <span class="val" id="knn-k-val">3</span></label>
+            <input id="knn-k" type="range" min="1" max="8" step="1" value="3" />
+          </div>
+          <div class="range-row">
+            <label for="sim-threshold">Edge cosine ≥ <span class="val" id="sim-threshold-val">0.55</span></label>
+            <input id="sim-threshold" type="range" min="0" max="0.95" step="0.01" value="0.55" />
+          </div>
+          <div class="toggle-row">
+            <span>Show neighbor edges</span>
+            <input id="show-edges" type="checkbox" checked />
+          </div>
+          <div class="toggle-row">
+            <span>Reveal expected groups</span>
+            <input id="reveal-groups" type="checkbox" />
+          </div>
+          <div class="toggle-row">
+            <span>Highlight outliers</span>
+            <input id="show-outliers" type="checkbox" />
+          </div>
+          <div id="time-controls" hidden>
+            <div class="range-row">
+              <label for="time-slider">Time reveal <span class="val" id="time-slider-val">all</span></label>
+              <input id="time-slider" type="range" min="0" max="100" step="1" value="100" />
+            </div>
+          </div>
+        </div>
+
+        <div class="row-actions">
+          <button type="button" id="btn-visualize">Visualize</button>
+          <button type="button" class="ghost" id="btn-demo">Load rain demo</button>
+          <button type="button" class="ghost" id="btn-demo-tm">Load trademark demo</button>
+          <button type="button" class="ghost" id="btn-clear">Clear selection</button>
+          <button type="button" class="ghost" id="btn-reset">Reset camera</button>
+        </div>
+
+        <div class="stats" id="stats">Choose Semantic Map + a dataset, then Visualize.</div>
+        <div class="disclaimer" id="disclaimer" hidden></div>
+        <div class="metrics" id="metrics" hidden></div>
+        <div class="inspect" id="inspect" hidden></div>
+        <div class="pairwise" id="pairwise" hidden></div>
+      </div>
+    </header>
+
+    <div class="empty show" id="empty">
+      <div>
+        <h2>No map yet</h2>
+        <p>
+          Load the cluster demo to see neighborhoods form from meaning alone — then reveal the expected groups.
+        </p>
+      </div>
+    </div>
+    <div class="hint" id="hint">
+      Drag to orbit · scroll to zoom · click a point to inspect original-space neighbors
+    </div>
+
+    <script src="/alfred-base.js"></script>
+    <script src="/embed-bridge.js"></script>
+    <script src="/vector-explorer/vendor/three.min.js"></script>
+    <script src="/vector-explorer/vendor/CopyShader.js"></script>
+    <script src="/vector-explorer/vendor/EffectComposer.js"></script>
+    <script src="/vector-explorer/vendor/ShaderPass.js"></script>
+    <script src="/vector-explorer/vendor/RenderPass.js"></script>
+    <script src="/vector-explorer/vendor/LuminosityHighPassShader.js"></script>
+    <script src="/vector-explorer/vendor/UnrealBloomPass.js"></script>
+    <script src="/vector-explorer/vendor/3d-force-graph.min.js"></script>
+    <script src="/vector-explorer/app.js" defer></script>
+  </body>
+</html>

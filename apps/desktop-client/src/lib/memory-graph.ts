@@ -2,13 +2,22 @@ import { readFile } from "node:fs/promises";
 import {
   defaultOipMemoryRoot,
   dedupeMemoryGraph,
+  FileVectorIndex,
   isPhotoFilename,
   OipLocalMemoryProvider,
+  openaiApiKey,
   photoMimeFromFilename,
+  rebuildOpenAiEmbeddings,
+  buildSemanticMap,
   setSelfPerson,
   type DedupeProgressHandler,
+  type EmbeddingRebuildProgress,
+  type EmbeddingSpaceSnapshot,
   type MemoryRevision,
+  type SemanticMapMethod,
+  type SemanticMapResult,
   type TaggedHash,
+  type VectorManifest,
 } from "@alfred/memory";
 
 export interface GraphNode {
@@ -236,8 +245,8 @@ export async function loadMemoryGraph(opts?: {
     rebuilt = true;
   }
 
-  const records = sqlite.listAllRecords();
-  const edges = sqlite.listAllEdges();
+  const records = sqlite.listAllRecords(Math.max(100_000, sqlite.countRecords()));
+  const edges = sqlite.listAllEdges(Math.max(200_000, sqlite.countEdges()));
 
   const nodes: GraphNode[] = [];
   const nodeIds = new Set<string>();
@@ -499,4 +508,114 @@ export async function cleanMemoryIndex(
 ) {
   const provider = getProvider(profileId);
   return dedupeMemoryGraph(provider, { includeDocuments: true, onProgress });
+}
+
+export type { EmbeddingSpaceSnapshot, EmbeddingRebuildProgress, VectorManifest };
+
+/** Load cached embedding-space positions (PCA) for Graph (beta). */
+export async function loadMemoryEmbeddings(opts?: {
+  profileId?: string;
+}): Promise<EmbeddingSpaceSnapshot> {
+  const graph = await loadMemoryGraph({
+    profileId: opts?.profileId,
+    hideArtifacts: true,
+    hideConversationTurns: true,
+    hideProvenanceEdges: true,
+  });
+  const store = new FileVectorIndex(graph.root);
+  const expected = new Set(graph.nodes.map((n) => n.id));
+  return store.snapshot(expected);
+}
+
+/** Build OpenAI embeddings + PCA projection for current graph-visible records. */
+export async function rebuildMemoryEmbeddings(
+  profileId?: string,
+  onProgress?: (p: EmbeddingRebuildProgress) => void | Promise<void>,
+): Promise<{ manifest: VectorManifest; embedded: number }> {
+  if (!openaiApiKey()) {
+    throw new Error("OPENAI_API_KEY is required to build embedding space");
+  }
+  const graph = await loadMemoryGraph({
+    profileId,
+    hideArtifacts: true,
+    hideConversationTurns: true,
+    hideProvenanceEdges: true,
+  });
+  const provider = getProvider(profileId);
+  provider.sqlite.open();
+  const records = graph.nodes.map((n) => {
+    const row = provider.sqlite.getRecord(n.id);
+    return {
+      id: n.id,
+      revision: row?.current_revision ?? "",
+      name: n.label,
+      searchText: n.searchText,
+    };
+  });
+  return rebuildOpenAiEmbeddings({
+    rootDir: graph.root,
+    records,
+    onProgress,
+  });
+}
+
+/**
+ * Semantic Map for Graph (beta): project stored embeddings with MDS/PCA and
+ * attach original-space k-NN. Categories (types) are for reveal/metrics only.
+ */
+export async function loadMemorySemanticMap(opts: {
+  profileId?: string;
+  nodeIds: string[];
+  categories?: Array<string | null | undefined>;
+  method?: SemanticMapMethod;
+  dims?: 2 | 3;
+  knnK?: number;
+}): Promise<
+  | { missing: true; stale?: boolean; manifest: VectorManifest | null }
+  | {
+      missing: false;
+      stale: boolean;
+      manifest: VectorManifest | null;
+      map: SemanticMapResult;
+    }
+> {
+  const graph = await loadMemoryGraph({
+    profileId: opts.profileId,
+    hideArtifacts: true,
+    hideConversationTurns: true,
+    hideProvenanceEdges: true,
+  });
+  const store = new FileVectorIndex(graph.root);
+  const expected = new Set(graph.nodes.map((n) => n.id));
+  const snap = await store.snapshot(expected);
+  if (snap.missing) {
+    return { missing: true, stale: snap.stale, manifest: snap.manifest };
+  }
+
+  const wanted = opts.nodeIds.length ? opts.nodeIds : [...expected];
+  const pairs = await store.getEmbeddings(wanted);
+  if (pairs.length < 2) {
+    return { missing: true, stale: snap.stale, manifest: snap.manifest };
+  }
+
+  const catById = new Map<string, string | null | undefined>();
+  for (let i = 0; i < wanted.length; i++) {
+    catById.set(wanted[i]!, opts.categories?.[i] ?? null);
+  }
+
+  const map = buildSemanticMap({
+    ids: pairs.map((p) => p.id),
+    embeddings: pairs.map((p) => p.embedding),
+    method: opts.method ?? "mds-cosine",
+    dims: opts.dims ?? 2,
+    knnK: opts.knnK ?? 3,
+    categories: pairs.map((p) => catById.get(p.id) ?? null),
+  });
+
+  return {
+    missing: false,
+    stale: snap.stale,
+    manifest: snap.manifest,
+    map,
+  };
 }

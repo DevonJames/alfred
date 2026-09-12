@@ -1,6 +1,6 @@
 const CHANNEL = "alfred.shell";
 
-/** @typedef {"voice" | "brief" | "notes" | "graph" | "graphBeta" | "ingest" | "claim"} Screen */
+/** @typedef {"voice" | "brief" | "notes" | "graph" | "graphBeta" | "vectors" | "ingest" | "claim"} Screen */
 
 const SCREENS = {
   voice: { title: "Talk", src: null },
@@ -8,6 +8,7 @@ const SCREENS = {
   notes: { title: "Notes", src: "/notes" },
   graph: { title: "Graph", src: "/memory/graph" },
   graphBeta: { title: "Graph (beta)", src: "/memory/graph-beta" },
+  vectors: { title: "Vector Explorer", src: "/vector-explorer" },
   ingest: { title: "Ingest", src: "/memory/ingest" },
   claim: { title: "Claim", src: "/connect/claim" },
 };
@@ -43,9 +44,14 @@ function isGraphBetaPath(path) {
   return path === "/memory/graph-beta" || path.startsWith("/memory/graph-beta/");
 }
 
+function isVectorExplorerPath(path) {
+  return path === "/vector-explorer" || path.startsWith("/vector-explorer/");
+}
+
 function screenFromHash() {
   const raw = (location.hash || "#voice").replace(/^#/, "").toLowerCase();
   if (raw === "graphbeta" || raw === "graph-beta") return "graphBeta";
+  if (raw === "vectors" || raw === "vector" || raw === "vector-explorer") return "vectors";
   if (raw === "graph" || raw === "ingest" || raw === "claim" || raw === "voice" || raw === "brief" || raw === "notes")
     return raw;
   return "voice";
@@ -84,6 +90,7 @@ function applyScreen(next, opts = {}) {
       (next === "notes" && current.startsWith("/notes")) ||
       (next === "graphBeta" && isGraphBetaPath(current)) ||
       (next === "graph" && isClassicGraphPath(current)) ||
+      (next === "vectors" && isVectorExplorerPath(current)) ||
       (next === "ingest" && current.startsWith("/memory/ingest")) ||
       (next === "claim" && current.startsWith("/connect/claim"));
     if (!already && src) contentFrame.src = url(src);
@@ -196,8 +203,10 @@ contentFrame.addEventListener("load", () => {
     if (path.startsWith("/briefing")) applyScreen("brief", { persistHash: true });
     else if (isGraphBetaPath(path)) applyScreen("graphBeta", { persistHash: true });
     else if (isClassicGraphPath(path)) applyScreen("graph", { persistHash: true });
+    else if (isVectorExplorerPath(path)) applyScreen("vectors", { persistHash: true });
     else if (path.startsWith("/memory/ingest")) applyScreen("ingest", { persistHash: true });
     else if (path.startsWith("/connect/claim")) applyScreen("claim", { persistHash: true });
+    else if (path.startsWith("/notes")) applyScreen("notes", { persistHash: true });
     else if (path === "/" || path === "") applyScreen("voice");
   } catch {
     /* cross-origin — ignore */

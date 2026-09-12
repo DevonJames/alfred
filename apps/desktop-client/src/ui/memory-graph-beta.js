@@ -7,14 +7,14 @@
     return typeof alfredUrl === "function" ? alfredUrl(path) : path;
   }
 
-  // Amber nebula family — slight hue shifts only, no rainbow types
+  // Saturated type hues — dark enough to survive bloom without washing to white
   const COLORS = {
-    Entity: "#e8c878",
-    Organization: "#d4a84a",
-    Episode: "#c9a05c",
-    Assertion: "#b8893e",
-    Observation: "#a87c48",
-    Artifact: "#8f6d40",
+    Entity: "#d4a017", // people / gold
+    Organization: "#3d7ab8",
+    Episode: "#3d8f5a",
+    Assertion: "#c45a3a",
+    Observation: "#3a9bb0",
+    Artifact: "#8a7e6a",
   };
 
   const ACCENT_A = "#ffe9a8";
@@ -43,10 +43,28 @@
     links: [],
     graph: null,
     bloomReady: false,
+    bloomPass: null,
     cameraKey: "",
     pathCore: null,
     cameraPrimed: false,
     labelIds: new Set(),
+    /** @type {"graph" | "embedding"} */
+    layoutMode: "graph",
+    embeddingPositions: null,
+    embeddingMeta: null,
+    embeddingMissing: true,
+    embeddingStale: false,
+    /** @type {null | { method: string, dims: number, disclaimer: string, points: any[], metrics: any }} */
+    semanticMap: null,
+    embedMethod: "mds-cosine",
+    embedDims: 2,
+    embedKnnK: 3,
+    embedSimThreshold: 0.55,
+    embedShowEdges: true,
+    embedRevealGroups: false,
+    embedShowOutliers: false,
+    forcesWired: false,
+    layoutEngineApplied: null,
   };
 
   const elStage = document.getElementById("graph-3d");
@@ -92,12 +110,24 @@
     return COLORS[t] || "#c4a35a";
   }
 
-  function amberForNode(node) {
+  function lightenHex(hex, amount) {
+    const raw = String(hex || "").replace("#", "");
+    if (raw.length !== 6) return hex;
+    const n = Number.parseInt(raw, 16);
+    if (!Number.isFinite(n)) return hex;
+    const mix = (c) => Math.min(255, Math.round(c + (255 - c) * amount));
+    const r = mix((n >> 16) & 255);
+    const g = mix((n >> 8) & 255);
+    const b = mix(n & 255);
+    return `#${((r << 16) | (g << 8) | b).toString(16).padStart(6, "0")}`;
+  }
+
+  function colorForNode(node) {
     const base = typeColor(displayType(node));
     const deg = node.degree || 0;
-    // Hubs run hotter / brighter within the amber family
-    if (deg >= 24) return "#ffe29a";
-    if (deg >= 12) return "#e8c878";
+    // Mild hub brightening — keep chroma so bloom doesn't flatten to white
+    if (deg >= 24) return lightenHex(base, 0.18);
+    if (deg >= 12) return lightenHex(base, 0.1);
     return base;
   }
 
@@ -168,10 +198,11 @@
     const canvas = document.createElement("canvas");
     const ctx = canvas.getContext("2d");
     const dpr = Math.min(2, window.devicePixelRatio || 1);
-    const fontSize = 32;
-    const padX = 14;
-    const height = 48;
-    const font = `700 ${fontSize}px ui-sans-serif, -apple-system, "Segoe UI", sans-serif`;
+    const fontSize = 30;
+    const padX = 16;
+    const padY = 10;
+    const height = fontSize + padY * 2;
+    const font = `650 ${fontSize}px ui-monospace, SFMono-Regular, Menlo, monospace`;
     ctx.font = font;
     const width = Math.ceil(ctx.measureText(text).width) + padX * 2;
     canvas.width = Math.ceil(width * dpr);
@@ -179,24 +210,21 @@
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.font = font;
     ctx.textBaseline = "middle";
-    ctx.fillStyle = "rgba(8, 6, 4, 0.92)";
-    ctx.strokeStyle = "rgba(255, 236, 190, 0.4)";
-    ctx.lineWidth = 1.25;
-    fillRoundRect(ctx, 0.75, 0.75, width - 1.5, height - 1.5, 8);
+    // Fully opaque black pill — survives bloom better than translucent fills
+    ctx.fillStyle = "#000000";
+    ctx.strokeStyle = "rgba(232, 200, 120, 0.55)";
+    ctx.lineWidth = 1.5;
+    fillRoundRect(ctx, 1, 1, width - 2, height - 2, 10);
     const x = padX;
     const y = height / 2 + 1;
-    ctx.lineJoin = "round";
-    ctx.miterLimit = 2;
-    ctx.lineWidth = 7;
-    ctx.strokeStyle = "rgba(6, 4, 2, 0.95)";
-    ctx.strokeText(text, x, y);
-    ctx.fillStyle = "#fff6de";
+    ctx.fillStyle = "#f5f0e6";
     ctx.fillText(text, x, y);
     const tex = new THREE.CanvasTexture(canvas);
     tex.needsUpdate = true;
     if ("colorSpace" in tex && THREE.SRGBColorSpace) tex.colorSpace = THREE.SRGBColorSpace;
     const mat = new THREE.SpriteMaterial({
       map: tex,
+      depthTest: false,
       depthWrite: false,
       transparent: true,
       opacity: 1,
@@ -205,7 +233,7 @@
     const sprite = new THREE.Sprite(mat);
     sprite.scale.set(width / 9.5, height / 9.5, 1);
     sprite.position.y = 22;
-    sprite.renderOrder = 2;
+    sprite.renderOrder = 10;
     return sprite;
   }
 
@@ -255,10 +283,8 @@
     const t = String(node.type || "").trim();
     if (t === "Entity") {
       const isOrg = isOrganizationNode(node);
-      if (types.has("Organization") && !types.has("Entity")) return isOrg;
-      if (types.has("Organization") && types.has("Entity")) return isOrg;
-      if (types.has("Entity")) return true;
-      return false;
+      if (isOrg) return types.has("Organization");
+      return types.has("Entity");
     }
     return types.has(t);
   }
@@ -712,6 +738,14 @@
   }
 
   function nodeVisualColor(node, highlight, pathMode) {
+    if (state.layoutMode === "embedding") {
+      if (state.embedShowOutliers && state.semanticMap?.points) {
+        const hit = state.semanticMap.points.find((p) => p.id === node.id);
+        if (hit?.isOutlier) return "#ff6b8a";
+      }
+      if (state.embedRevealGroups) return typeColor(displayType(node));
+      return "#c4a35a";
+    }
     if (state.matchA.has(node.id) && state.matchB.has(node.id)) return ACCENT_A;
     if (state.matchA.has(node.id)) return ACCENT_A;
     if (state.matchB.has(node.id)) return ACCENT_B;
@@ -722,7 +756,7 @@
       return DIM;
     }
     if (highlight && !highlight.has(node.id)) return DIM;
-    return amberForNode(node);
+    return colorForNode(node);
   }
 
   function linkVisualColor(link, pathLinks, highlight, pathMode) {
@@ -743,6 +777,41 @@
     return LINK_BASE;
   }
 
+  function buildSemanticMapLinks(nodes) {
+    if (!state.embedShowEdges || !state.semanticMap?.points?.length) return [];
+    const visible = new Set(nodes.map((n) => n.id));
+    const seen = new Set();
+    const links = [];
+    for (const p of state.semanticMap.points) {
+      if (!visible.has(p.id)) continue;
+      for (const nb of p.neighbors || []) {
+        if (nb.cosine < state.embedSimThreshold) continue;
+        if (!visible.has(nb.id)) continue;
+        const a = p.id;
+        const b = nb.id;
+        const key = a < b ? `${a}::${b}` : `${b}::${a}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        const t = Math.max(
+          0,
+          Math.min(1, (nb.cosine - state.embedSimThreshold) / Math.max(0.01, 1 - state.embedSimThreshold)),
+        );
+        links.push({
+          source: a,
+          target: b,
+          predicate: "knn",
+          key,
+          __hot: false,
+          __highway: false,
+          __spark: false,
+          __width: 0.35 + t * 2.2,
+          __color: `rgba(232, 200, 120, ${0.12 + t * 0.7})`,
+        });
+      }
+    }
+    return links;
+  }
+
   function ensureGraph() {
     if (state.graph) return state.graph;
     if (typeof ForceGraph3D !== "function") {
@@ -756,11 +825,14 @@
       .d3AlphaDecay(0.022)
       .d3VelocityDecay(0.32)
       .nodeId("id")
-      .nodeLabel((n) => `${n.label}\n${displayType(n)}`)
+      .nodeLabel(
+        (n) =>
+          `<div>${escapeHtml(n.label)}</div><span class="tip-type">${escapeHtml(displayType(n))}</span>`,
+      )
       .nodeRelSize(3.6)
       .nodeVal((n) => Math.max(0.8, Math.sqrt(n.degree || 1)))
       .nodeOpacity(0.95)
-      .nodeColor((n) => n.__color || amberForNode(n))
+      .nodeColor((n) => n.__color || colorForNode(n))
       .linkColor((l) => l.__color || LINK_BASE)
       .linkWidth((l) => (l.__hot ? 2.6 : l.__highway ? 0.7 : 0.18))
       .linkOpacity(0.92)
@@ -785,15 +857,24 @@
         paintGraph();
       });
 
-    // Dense intra-type nebulae; long faint bridges between clusters
+    wireOrbitPan(Graph);
+    tryEnableBloom(Graph);
+    state.graph = Graph;
+    wireGraphForces(Graph);
+    return Graph;
+  }
+
+  function wireGraphForces(Graph) {
     Graph.d3Force("center")?.strength?.(0.12);
     Graph.d3Force("charge")?.strength((node) => {
+      if (state.layoutMode === "embedding") return 0;
       const deg = node.degree || 1;
       return -42 - Math.min(100, deg * 3.2);
     });
     Graph.d3Force("charge")?.distanceMax?.(420);
     Graph.d3Force("link")
       ?.distance((link) => {
+        if (state.layoutMode === "embedding") return 1;
         const s = typeof link.source === "object" ? link.source : null;
         const t = typeof link.target === "object" ? link.target : null;
         if (!s || !t) return 48;
@@ -803,16 +884,35 @@
         return 120 + Math.min(100, ((s.degree || 0) + (t.degree || 0)) * 0.8);
       })
       ?.strength((link) => {
+        if (state.layoutMode === "embedding") return 0;
         const s = typeof link.source === "object" ? link.source : null;
         const t = typeof link.target === "object" ? link.target : null;
         if (!s || !t) return 0.35;
         return displayType(s) === displayType(t) ? 1.15 : 0.1;
       });
+    Graph.d3Force("center")?.strength?.(state.layoutMode === "embedding" ? 0 : 0.12);
+    state.forcesWired = true;
+  }
 
-    wireOrbitPan(Graph);
-    tryEnableBloom(Graph);
-    state.graph = Graph;
-    return Graph;
+  function applyLayoutEngine(mode) {
+    const Graph = ensureGraph();
+    if (state.layoutEngineApplied === mode) {
+      // Still refresh force strengths that close over layoutMode
+      wireGraphForces(Graph);
+      return;
+    }
+    if (mode === "embedding") {
+      Graph.cooldownTicks(0);
+      Graph.enableNodeDrag?.(false);
+    } else {
+      Graph.cooldownTicks(160);
+      Graph.d3AlphaDecay(0.022);
+      Graph.d3VelocityDecay(0.32);
+      Graph.enableNodeDrag?.(true);
+      Graph.d3ReheatSimulation?.();
+    }
+    wireGraphForces(Graph);
+    state.layoutEngineApplied = mode;
   }
 
   /** ⌘ / ⌥ + drag pans; plain drag orbits. Right-drag also pans. */
@@ -855,17 +955,34 @@
       if (typeof THREE === "undefined" || !THREE.UnrealBloomPass) return;
       const composer = Graph.postProcessingComposer?.();
       if (!composer) return;
-      // Keep bloom subtle so dense clusters stay readable
+      // Low strength + high threshold so type colors stay visible in dense clouds
       const bloom = new THREE.UnrealBloomPass(
         new THREE.Vector2(window.innerWidth, window.innerHeight),
-        0.7,
-        0.28,
-        0.32,
+        0.22,
+        0.4,
+        0.82,
       );
       composer.addPass(bloom);
+      state.bloomPass = bloom;
       state.bloomReady = true;
+      syncBloomForLayout();
     } catch (err) {
       console.warn("Bloom unavailable:", err);
+    }
+  }
+
+  function syncBloomForLayout() {
+    const bloom = state.bloomPass;
+    if (!bloom) return;
+    // Embedding space is dense — bloom turns every type into white otherwise
+    if (state.layoutMode === "embedding") {
+      bloom.strength = 0.08;
+      bloom.threshold = 0.92;
+      bloom.radius = 0.25;
+    } else {
+      bloom.strength = 0.28;
+      bloom.threshold = 0.78;
+      bloom.radius = 0.35;
     }
   }
 
@@ -881,7 +998,15 @@
     const nodeCount = filtered.nodes.length;
 
     const highwayBudget =
-      pathMode ? 0 : nodeCount > 1200 ? 28 : nodeCount > 600 ? 40 : 56;
+      state.layoutMode === "embedding"
+        ? 0
+        : pathMode
+          ? 0
+          : nodeCount > 1200
+            ? 28
+            : nodeCount > 600
+              ? 40
+              : 56;
     const highwayKeys = pickHighwayKeys(filtered.nodes, filtered.links, highwayBudget);
     const hubLabelIds = pickLabelIds(filtered.nodes, pathMode ? 8 : 16);
     state.labelIds = new Set([
@@ -901,9 +1026,11 @@
     }
 
     // Tiny ambient sparks (stable), separate from highways
-    const sparkBudget = pathMode ? 0 : nodeCount > 800 ? 24 : 48;
+    const sparkBudget =
+      state.layoutMode === "embedding" || pathMode ? 0 : nodeCount > 800 ? 24 : 48;
 
     const prevById = new Map((state.nodes || []).map((n) => [n.id, n]));
+    const embedPos = state.layoutMode === "embedding" ? state.embeddingPositions : null;
     const nodes = filtered.nodes.map((n) => {
       const onPath = !!(state.pathCore?.has(n.id) || highlight?.has(n.id));
       const prev = prevById.get(n.id);
@@ -914,50 +1041,97 @@
         __label: state.labelIds.has(n.id),
         __valBoost: pathMode && onPath ? 2.4 : n.degree >= 20 ? 1.35 : 1,
       };
-      // Keep sim positions so camera / layout don't jump to origin
-      if (prev && Number.isFinite(prev.x)) {
-        next.x = prev.x;
-        next.y = prev.y;
-        next.z = prev.z;
-        if (Number.isFinite(prev.vx)) next.vx = prev.vx;
-        if (Number.isFinite(prev.vy)) next.vy = prev.vy;
-        if (Number.isFinite(prev.vz)) next.vz = prev.vz;
+      if (embedPos) {
+        const p = embedPos[n.id];
+        if (p && Number.isFinite(p.x)) {
+          next.x = p.x;
+          next.y = p.y;
+          next.z = state.embedDims === 2 ? 0 : p.z;
+          next.fx = next.x;
+          next.fy = next.y;
+          next.fz = next.z;
+          next.vx = 0;
+          next.vy = 0;
+          next.vz = 0;
+        } else {
+          // Unembedded nodes park near origin so the cloud stays readable
+          const h = hashStr(n.id);
+          next.x = ((h % 40) - 20) * 0.4;
+          next.y = (((h >> 8) % 40) - 20) * 0.4;
+          next.z = (((h >> 16) % 40) - 20) * 0.4;
+          next.fx = next.x;
+          next.fy = next.y;
+          next.fz = next.z;
+        }
+      } else {
+        next.fx = undefined;
+        next.fy = undefined;
+        next.fz = undefined;
+        // Keep sim positions so camera / layout don't jump to origin
+        if (prev && Number.isFinite(prev.x)) {
+          next.x = prev.x;
+          next.y = prev.y;
+          next.z = prev.z;
+          if (Number.isFinite(prev.vx)) next.vx = prev.vx;
+          if (Number.isFinite(prev.vy)) next.vy = prev.vy;
+          if (Number.isFinite(prev.vz)) next.vz = prev.vz;
+        }
       }
       return next;
     });
 
-    const links = filtered.links.map((l) => {
-      const key = l.key || linkKey(l.source, l.target, l.predicate);
-      const s = linkEndId(l.source);
-      const t = linkEndId(l.target);
-      const hot = !!(pathMode && state.pathCore?.has(s) && state.pathCore?.has(t));
-      const highway = !hot && highwayKeys.has(key);
-      const spark =
-        !hot &&
-        !highway &&
-        sparkBudget > 0 &&
-        hashStr(key) % Math.max(8, Math.floor(filtered.links.length / sparkBudget)) === 0;
-      const linkObj = {
-        ...l,
-        key,
-        __hot: hot,
-        __highway: highway,
-        __near: false,
-        __spark: spark,
-      };
-      linkObj.__color = hot
-        ? LINK_HOT
-        : pathMode
-          ? LINK_DIM
-          : linkVisualColor(linkObj, pathLinks, highlight, pathMode);
-      return linkObj;
-    });
+    const links =
+      state.layoutMode === "embedding"
+        ? buildSemanticMapLinks(nodes)
+        : filtered.links.map((l) => {
+            const key = l.key || linkKey(l.source, l.target, l.predicate);
+            const s = linkEndId(l.source);
+            const t = linkEndId(l.target);
+            const hot = !!(pathMode && state.pathCore?.has(s) && state.pathCore?.has(t));
+            const highway = !hot && highwayKeys.has(key);
+            const spark =
+              !hot &&
+              !highway &&
+              sparkBudget > 0 &&
+              hashStr(key) % Math.max(8, Math.floor(filtered.links.length / sparkBudget)) === 0;
+            const linkObj = {
+              ...l,
+              key,
+              __hot: hot,
+              __highway: highway,
+              __near: false,
+              __spark: spark,
+            };
+            linkObj.__color = hot
+              ? LINK_HOT
+              : pathMode
+                ? LINK_DIM
+                : linkVisualColor(linkObj, pathLinks, highlight, pathMode);
+            return linkObj;
+          });
 
     state.nodes = nodes;
     state.links = links;
 
     const Graph = ensureGraph();
+    applyLayoutEngine(state.layoutMode);
+    syncBloomForLayout();
+    if (state.layoutMode === "embedding") {
+      Graph.numDimensions?.(state.embedDims);
+      Graph.linkVisibility(true);
+      Graph.linkWidth((l) => l.__width || 0.4);
+      Graph.linkDirectionalParticles(0);
+    } else {
+      Graph.numDimensions?.(3);
+      Graph.linkWidth((l) => (l.__hot ? 2.6 : l.__highway ? 0.7 : 0.18));
+      Graph.linkDirectionalParticles((l) =>
+        l.__hot ? 7 : l.__highway ? 4 : l.__spark ? 1 : 0,
+      );
+    }
     Graph.nodeVal((n) => Math.max(0.8, Math.sqrt(n.degree || 1) * (n.__valBoost || 1)));
+    // Larger / more opaque spheres so type hue reads through density
+    Graph.nodeRelSize(state.layoutMode === "embedding" ? 4.8 : 3.6);
+    Graph.nodeOpacity(state.layoutMode === "embedding" ? 0.98 : 0.95);
 
     // Floating cluster labels (hubs / search / path) — hover tooltip stays on nodeLabel
     Graph.nodeThreeObject((node) => {
@@ -966,7 +1140,19 @@
       return makeClusterLabelSprite(formatClusterLabel(node.label));
     });
     Graph.nodeThreeObjectExtend(true);
+    Graph.nodeColor((n) => n.__color || colorForNode(n));
+    Graph.linkColor((l) => l.__color || LINK_BASE);
     Graph.graphData({ nodes, links });
+
+    if (state.layoutMode === "embedding" && state.embedDims === 2 && nodes.length) {
+      window.setTimeout(() => {
+        try {
+          state.graph?.cameraPosition({ x: 0, y: 0, z: 720 }, { x: 0, y: 0, z: 0 }, 700);
+        } catch {
+          /* ignore */
+        }
+      }, 60);
+    }
 
     setEmpty(
       nodes.length === 0,
@@ -977,6 +1163,7 @@
     );
 
     const cameraKey = [
+      state.layoutMode,
       state.query.trim(),
       state.queryB.trim(),
       state.queryDate.trim(),
@@ -1008,20 +1195,167 @@
       requestAnimationFrame(() => flyToNode(focusId, { dist: 260, ms: 900 }));
     } else if (!state.cameraPrimed && nodes.length) {
       state.cameraPrimed = true;
-      // Wait for force layout to spread, then fit the whole cloud in view
+      const delay = state.layoutMode === "embedding" ? 120 : 1400;
       window.setTimeout(() => {
         if (!state.graph || state.query || state.queryB || state.queryDate || state.egoId) return;
         try {
-          state.graph.zoomToFit(1400, 110);
+          state.graph.zoomToFit(state.layoutMode === "embedding" ? 900 : 1400, 110);
         } catch {
           state.graph.cameraPosition({ x: 140, y: 980, z: 720 }, { x: 0, y: 0, z: 0 }, 1400);
         }
-      }, 1400);
+      }, delay);
     }
   }
 
   function render(opts) {
     paintGraph(opts);
+  }
+
+  function syncLayoutModeUi() {
+    document.querySelectorAll("#layout-mode button").forEach((btn) => {
+      btn.classList.toggle("on", btn.getAttribute("data-layout") === state.layoutMode);
+    });
+    const rebuildBtn = document.getElementById("btn-rebuild-embeddings");
+    if (rebuildBtn) rebuildBtn.hidden = state.layoutMode !== "embedding";
+    const embedControls = document.getElementById("embed-controls");
+    if (embedControls) embedControls.classList.toggle("on", state.layoutMode === "embedding");
+    document.querySelectorAll("#embed-proj-seg button").forEach((btn) => {
+      btn.classList.toggle("on", btn.getAttribute("data-proj") === state.embedMethod);
+    });
+    document.querySelectorAll("#embed-dim-seg button").forEach((btn) => {
+      btn.classList.toggle("on", Number(btn.getAttribute("data-dims")) === state.embedDims);
+    });
+  }
+
+  function nodesForSemanticMap() {
+    // Type-filtered nodes (ignore search path focus for the map corpus)
+    const typed = (state.raw?.nodes || []).filter((n) => nodePassesTypeFilter(n, state.types));
+    const sorted = typed
+      .slice()
+      .sort((a, b) => (b.degree || 0) - (a.degree || 0) || String(a.label).localeCompare(String(b.label)));
+    const MAX = 2500;
+    return sorted.slice(0, MAX);
+  }
+
+  async function fetchEmbeddingSnapshot() {
+    const res = await fetch(apiUrl("/memory/graph/embeddings"));
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.message || data.error || "Failed to load embeddings");
+    state.embeddingMeta = data.manifest || null;
+    state.embeddingMissing = !!data.missing;
+    state.embeddingStale = !!data.stale;
+    return data;
+  }
+
+  async function loadSemanticMap() {
+    const nodes = nodesForSemanticMap();
+    if (nodes.length < 2) {
+      throw new Error("Need at least 2 visible nodes for Semantic Map (check type filters).");
+    }
+    elStats.textContent = `Building Semantic Map for ${nodes.length} nodes…`;
+    const res = await fetch(apiUrl("/memory/graph/embeddings/semantic-map"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        nodeIds: nodes.map((n) => n.id),
+        categories: nodes.map((n) => displayType(n)),
+        method: state.embedMethod,
+        dims: state.embedDims,
+        knnK: state.embedKnnK,
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.message || data.error || "Semantic map failed");
+    if (data.missing) {
+      state.embeddingMissing = true;
+      state.semanticMap = null;
+      state.embeddingPositions = null;
+      return data;
+    }
+    state.embeddingMissing = false;
+    state.embeddingStale = !!data.stale;
+    state.embeddingMeta = data.manifest || state.embeddingMeta;
+    state.semanticMap = data.map;
+    const positions = {};
+    for (const p of data.map?.points || []) {
+      positions[p.id] = { x: p.x, y: p.y, z: p.z };
+    }
+    state.embeddingPositions = positions;
+    const disc = document.getElementById("embed-disclaimer");
+    if (disc) {
+      disc.hidden = !data.map?.disclaimer;
+      disc.textContent = data.map?.disclaimer || "";
+    }
+    return data;
+  }
+
+  async function rebuildEmbeddingsJob() {
+    showJobProgress("Embedding space");
+    const res = await fetch(apiUrl("/memory/graph/embeddings/rebuild"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
+      body: "{}",
+    });
+    const data = await readCleanIndexResponse(res, setJobProgress);
+    await fetchEmbeddingSnapshot();
+    setJobProgress({ label: "Projecting Semantic Map…", percent: 92, current: 1, total: 1 });
+    await loadSemanticMap();
+    setJobProgress({ label: "Done", percent: 100, current: 1, total: 1 });
+    hideJobProgress();
+    const model = data?.manifest?.model || state.embeddingMeta?.model || "embeddings";
+    const n = data?.embedded ?? state.semanticMap?.points?.length ?? 0;
+    elStats.textContent = `Embedded ${n} nodes · ${model} · ${state.semanticMap?.method || "map"}`;
+    return data;
+  }
+
+  async function switchLayoutMode(mode) {
+    if (mode !== "graph" && mode !== "embedding") return;
+    if (mode === state.layoutMode) return;
+    state.layoutMode = mode;
+    syncLayoutModeUi();
+    state.cameraPrimed = false;
+    state.cameraKey = "";
+
+    if (mode === "embedding") {
+      elStats.textContent = "Loading embedding space…";
+      try {
+        const snap = await fetchEmbeddingSnapshot();
+        if (snap.missing || snap.stale) {
+          const reason = snap.missing
+            ? "No embedding index yet. Build OpenAI embeddings for the current graph?"
+            : "Embedding index looks stale vs the graph. Rebuild now?";
+          const ok = window.confirm(
+            `${reason}\n\nUses OPENAI_API_KEY · text-embedding-3-small (~$0.02 for ~5K records).`,
+          );
+          if (!ok) {
+            state.layoutMode = "graph";
+            syncLayoutModeUi();
+            render({ forceCamera: true });
+            return;
+          }
+          await rebuildEmbeddingsJob();
+        } else {
+          await loadSemanticMap();
+        }
+        render({ forceCamera: true });
+        if (state.semanticMap) {
+          elStats.textContent =
+            `Semantic Map · ${state.semanticMap.points.length} nodes · ` +
+            `${state.semanticMap.method} → ${state.semanticMap.dims}D` +
+            (state.embeddingStale ? " · stale" : "");
+        }
+      } catch (err) {
+        const message = err.message || String(err);
+        elStats.textContent = message;
+        failJobProgress(message);
+        state.layoutMode = "graph";
+        syncLayoutModeUi();
+        render({ forceCamera: true });
+      }
+      return;
+    }
+
+    render({ forceCamera: true });
   }
 
   async function selectNode(id) {
@@ -1485,7 +1819,80 @@
       state.types.add(t);
       btn.classList.add("on");
     }
-    render();
+    if (state.layoutMode === "embedding") {
+      loadSemanticMap()
+        .then(() => render({ forceCamera: true }))
+        .catch((err) => {
+          elStats.textContent = err.message || String(err);
+        });
+    } else {
+      render();
+    }
+  });
+
+  document.getElementById("layout-mode")?.addEventListener("click", (e) => {
+    const btn = e.target.closest("button[data-layout]");
+    if (!btn) return;
+    switchLayoutMode(btn.getAttribute("data-layout")).catch((err) => {
+      elStats.textContent = err.message || String(err);
+    });
+  });
+  syncLayoutModeUi();
+
+  async function reloadSemanticMapAndPaint() {
+    if (state.layoutMode !== "embedding") return;
+    try {
+      await loadSemanticMap();
+      state.cameraPrimed = false;
+      render({ forceCamera: true });
+      if (state.semanticMap) {
+        elStats.textContent =
+          `Semantic Map · ${state.semanticMap.points.length} nodes · ` +
+          `${state.semanticMap.method} → ${state.semanticMap.dims}D`;
+      }
+    } catch (err) {
+      elStats.textContent = err.message || String(err);
+    }
+  }
+
+  document.getElementById("embed-proj-seg")?.addEventListener("click", (e) => {
+    const btn = e.target.closest("button[data-proj]");
+    if (!btn) return;
+    state.embedMethod = btn.getAttribute("data-proj");
+    syncLayoutModeUi();
+    reloadSemanticMapAndPaint();
+  });
+  document.getElementById("embed-dim-seg")?.addEventListener("click", (e) => {
+    const btn = e.target.closest("button[data-dims]");
+    if (!btn) return;
+    state.embedDims = Number(btn.getAttribute("data-dims"));
+    syncLayoutModeUi();
+    reloadSemanticMapAndPaint();
+  });
+  const knnEl = document.getElementById("embed-knn-k");
+  knnEl?.addEventListener("input", () => {
+    state.embedKnnK = Number(knnEl.value);
+    document.getElementById("embed-knn-k-val").textContent = String(state.embedKnnK);
+  });
+  knnEl?.addEventListener("change", () => reloadSemanticMapAndPaint());
+  const thrEl = document.getElementById("embed-sim-threshold");
+  thrEl?.addEventListener("input", () => {
+    state.embedSimThreshold = Number(thrEl.value);
+    document.getElementById("embed-sim-threshold-val").textContent =
+      state.embedSimThreshold.toFixed(2);
+    if (state.layoutMode === "embedding") render();
+  });
+  document.getElementById("embed-show-edges")?.addEventListener("change", (e) => {
+    state.embedShowEdges = !!e.target.checked;
+    if (state.layoutMode === "embedding") render();
+  });
+  document.getElementById("embed-reveal-groups")?.addEventListener("change", (e) => {
+    state.embedRevealGroups = !!e.target.checked;
+    if (state.layoutMode === "embedding") render();
+  });
+  document.getElementById("embed-show-outliers")?.addEventListener("change", (e) => {
+    state.embedShowOutliers = !!e.target.checked;
+    if (state.layoutMode === "embedding") render();
   });
 
   let searchTimer = 0;
@@ -1540,6 +1947,25 @@
         `collapsed ${data.assertionsSuperseded ?? 0} duplicate assertions. `;
       elStats.textContent = summary + (elStats.textContent || "");
       hideJobProgress();
+    } catch (err) {
+      const message = err.message || String(err);
+      elStats.textContent = message;
+      failJobProgress(message);
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  });
+  document.getElementById("btn-rebuild-embeddings")?.addEventListener("click", async () => {
+    const ok = window.confirm(
+      "Rebuild embedding index with OpenAI?\n\nUses OPENAI_API_KEY · re-embeds graph-visible nodes, then rebuilds the Semantic Map.",
+    );
+    if (!ok) return;
+    const btn = document.getElementById("btn-rebuild-embeddings");
+    if (btn) btn.disabled = true;
+    try {
+      await rebuildEmbeddingsJob();
+      state.cameraPrimed = false;
+      render({ forceCamera: true });
     } catch (err) {
       const message = err.message || String(err);
       elStats.textContent = message;

@@ -1381,14 +1381,128 @@ const MONTH_NAMES = [
   "December",
 ];
 
+/** Spoken day ordinals / cardinals → 1–31 (longest phrases first). */
+const SPOKEN_DAY: Array<[RegExp, number]> = [
+  [/\bthirty[\s-]?first\b/gi, 31],
+  [/\bthirtieth\b/gi, 30],
+  [/\btwenty[\s-]?ninth\b/gi, 29],
+  [/\btwenty[\s-]?eighth\b/gi, 28],
+  [/\btwenty[\s-]?seventh\b/gi, 27],
+  [/\btwenty[\s-]?sixth\b/gi, 26],
+  [/\btwenty[\s-]?fifth\b/gi, 25],
+  [/\btwenty[\s-]?fourth\b/gi, 24],
+  [/\btwenty[\s-]?third\b/gi, 23],
+  [/\btwenty[\s-]?second\b/gi, 22],
+  [/\btwenty[\s-]?first\b/gi, 21],
+  [/\btwentieth\b/gi, 20],
+  [/\bnineteenth\b/gi, 19],
+  [/\beighteenth\b/gi, 18],
+  [/\bseventeenth\b/gi, 17],
+  [/\bsixteenth\b/gi, 16],
+  [/\bfifteenth\b/gi, 15],
+  [/\bfourteenth\b/gi, 14],
+  [/\bthirteenth\b/gi, 13],
+  [/\btwelfth\b/gi, 12],
+  [/\beleventh\b/gi, 11],
+  [/\btenth\b/gi, 10],
+  [/\bninth\b/gi, 9],
+  [/\beighth\b/gi, 8],
+  [/\bseventh\b/gi, 7],
+  [/\bsixth\b/gi, 6],
+  [/\bfifth\b/gi, 5],
+  [/\bfourth\b/gi, 4],
+  [/\bthird\b/gi, 3],
+  [/\bsecond\b/gi, 2],
+  [/\bfirst\b/gi, 1],
+  // cardinals sometimes used without -th
+  [/\btwenty[\s-]?nine\b/gi, 29],
+  [/\btwenty[\s-]?eight\b/gi, 28],
+  [/\btwenty[\s-]?seven\b/gi, 27],
+  [/\btwenty[\s-]?six\b/gi, 26],
+  [/\btwenty[\s-]?five\b/gi, 25],
+  [/\btwenty[\s-]?four\b/gi, 24],
+  [/\btwenty[\s-]?three\b/gi, 23],
+  [/\btwenty[\s-]?two\b/gi, 22],
+  [/\btwenty[\s-]?one\b/gi, 21],
+];
+
+const SPOKEN_ONES: Record<string, number> = {
+  zero: 0,
+  oh: 0,
+  one: 1,
+  two: 2,
+  three: 3,
+  four: 4,
+  five: 5,
+  six: 6,
+  seven: 7,
+  eight: 8,
+  nine: 9,
+  ten: 10,
+  eleven: 11,
+  twelve: 12,
+  thirteen: 13,
+  fourteen: 14,
+  fifteen: 15,
+  sixteen: 16,
+  seventeen: 17,
+  eighteen: 18,
+  nineteen: 19,
+};
+
+const SPOKEN_TENS: Record<string, number> = {
+  twenty: 20,
+  thirty: 30,
+  forty: 40,
+  fifty: 50,
+  sixty: 60,
+  seventy: 70,
+  eighty: 80,
+  ninety: 90,
+};
+
+/**
+ * Turn spoken date phrases into digit forms the numeric parsers understand.
+ * e.g. "August twenty ninth nineteen eighty" → "August 29 1980"
+ */
+export function normalizeSpokenDatePhrase(raw: string): string {
+  let s = raw;
+  for (const [re, n] of SPOKEN_DAY) {
+    s = s.replace(re, String(n));
+  }
+  s = s.replace(
+    /\b(nineteen|twenty)\s+([a-z]+)(?:[\s-]([a-z]+))?\b/gi,
+    (full, century: string, a: string, b?: string) => {
+      const base = century.toLowerCase() === "nineteen" ? 1900 : 2000;
+      const al = a.toLowerCase();
+      const bl = b?.toLowerCase();
+      const tens = SPOKEN_TENS[al];
+      if (tens != null) {
+        if (!bl) return String(base + tens);
+        const ones = SPOKEN_ONES[bl];
+        if (ones == null || ones > 9) return full;
+        return String(base + tens + ones);
+      }
+      const teen = SPOKEN_ONES[al];
+      if (teen != null && teen >= 10 && !bl) return String(base + teen);
+      const onesOnly = SPOKEN_ONES[al];
+      if (onesOnly != null && onesOnly < 10 && !bl) return String(base + onesOnly);
+      return full;
+    },
+  );
+  return s;
+}
+
 /** Parse a spoken/written calendar date into schema.org birthDate + display label. */
 export function parseSpokenDate(
   raw: string,
 ): { iso: string; label: string } | null {
-  const t = cleanPhrase(raw)
-    .replace(/[.].*$/, "")
-    .replace(/\b(?:this\s+year|last\s+year)\b/gi, "")
-    .trim();
+  const t = normalizeSpokenDatePhrase(
+    cleanPhrase(raw)
+      .replace(/[.].*$/, "")
+      .replace(/\b(?:this\s+year|last\s+year)\b/gi, "")
+      .trim(),
+  );
   if (!t) return null;
 
   const monthToken = Object.keys(MONTH_INDEX).join("|");

@@ -72,6 +72,11 @@ export class LiveKitRoomSession {
   private watchdogTimer?: ReturnType<typeof setInterval>;
   /** True while LiveKit reports CONN_RECONNECTING — defer our remint. */
   private nativeReconnecting = false;
+  /** TTS PCM held while the SFU path is down so captions don't outrun audio. */
+  private outboundBuffer: AudioFrame[] = [];
+  private static readonly MAX_OUTBOUND_BUFFER = 400;
+  /** Prevents double force-republish when CONN_CONNECTED and Reconnected both fire. */
+  private recoveringTransport = false;
   /** Bumped on every stopPlayback so in-flight captureFrame results are discarded. */
   private playbackEpoch = 0;
   private readonly vad = new EnergyVad();
@@ -116,6 +121,7 @@ export class LiveKitRoomSession {
 
   /** Clear outbound queue on barge-in (called after media.stopPlayback). */
   clearOutboundQueue(): void {
+    this.outboundBuffer = [];
     this.audioSource?.clearQueue();
   }
 
@@ -163,9 +169,13 @@ export class LiveKitRoomSession {
           return;
         }
         if (state === ConnectionState.CONN_CONNECTED) {
+          const wasReconnecting = this.nativeReconnecting;
           this.nativeReconnecting = false;
           this.clearNativeReconnectTimer();
           this.reconnectAttempt = 0;
+          if (wasReconnecting) {
+            void this.afterTransportRecovered("connection_state_connected");
+          }
           return;
         }
         if (state === ConnectionState.CONN_DISCONNECTED) {
@@ -180,6 +190,11 @@ export class LiveKitRoomSession {
         this.nativeReconnecting = false;
         this.clearNativeReconnectTimer();
         this.reconnectAttempt = 0;
+        void this.afterTransportRecovered("native_reconnected");
+      });
+      room.on(RoomEvent.LocalTrackRepublished, () => {
+        this.log.log("[livekit] local track republished after reconnect");
+        void this.flushOutboundBuffer();
       });
       room.on(RoomEvent.ParticipantConnected, (p: RemoteParticipant) => {
         this.log.log(`[livekit] participant connected: ${p.identity}`);
@@ -345,6 +360,7 @@ export class LiveKitRoomSession {
     this.clearMediaUnsubs();
     this.opts.media.reset();
     this.vad.reset();
+    this.outboundBuffer = [];
 
     try {
       if (this.audioSource) {
@@ -409,6 +425,90 @@ export class LiveKitRoomSession {
     }
   }
 
+  private async afterTransportRecovered(reason: string): Promise<void> {
+    if (this.closed || this.recoveringTransport) return;
+    this.recoveringTransport = true;
+    try {
+      this.log.log(
+        `[livekit] transport recovered (${reason}) — republishing assistant track + flushing TTS`,
+      );
+      // Force a fresh publish so iOS gets TrackSubscribed again. Native reconnect
+      // often leaves a live local AudioSource whose packets never reach remotes.
+      await this.ensureAssistantTrack({ forceRepublish: true });
+      await this.flushOutboundBuffer();
+    } catch (err) {
+      this.log.warn("[livekit] post-reconnect audio recovery failed", err);
+    } finally {
+      this.recoveringTransport = false;
+    }
+  }
+
+  private async ensureAssistantTrack(
+    opts: { forceRepublish?: boolean } = {},
+  ): Promise<void> {
+    if (this.closed || !this.room?.localParticipant) return;
+    const participant = this.room.localParticipant;
+
+    let publishedSid: string | undefined;
+    for (const pub of participant.trackPublications.values()) {
+      if (pub.kind === TrackKind.KIND_AUDIO && pub.sid) {
+        publishedSid = pub.sid;
+        break;
+      }
+    }
+
+    if (!opts.forceRepublish && publishedSid && this.audioSource && this.localTrack) {
+      return;
+    }
+
+    if (publishedSid) {
+      try {
+        // Keep the LocalAudioTrack alive until we replace it — stopOnUnpublish=false.
+        await participant.unpublishTrack(publishedSid, false);
+      } catch (err) {
+        this.log.warn("[livekit] unpublish before republish failed", err);
+      }
+    }
+
+    try {
+      this.audioSource?.clearQueue();
+      await this.audioSource?.close();
+    } catch {
+      /* best-effort */
+    }
+    try {
+      await this.localTrack?.close();
+    } catch {
+      /* best-effort */
+    }
+    this.audioSource = undefined;
+    this.localTrack = undefined;
+
+    await this.publishAssistantTrack();
+  }
+
+  private bufferOutbound(frame: AudioFrame): void {
+    this.outboundBuffer.push(frame);
+    while (this.outboundBuffer.length > LiveKitRoomSession.MAX_OUTBOUND_BUFFER) {
+      this.outboundBuffer.shift();
+    }
+  }
+
+  private async flushOutboundBuffer(): Promise<void> {
+    if (!this.audioSource || this.nativeReconnecting) return;
+    const pending = this.outboundBuffer.splice(0);
+    if (pending.length) {
+      this.log.log(`[livekit] flushing ${pending.length} buffered TTS frames`);
+    }
+    for (let i = 0; i < pending.length; i++) {
+      if (this.closed || this.nativeReconnecting || !this.audioSource) {
+        this.outboundBuffer.unshift(...pending.slice(i));
+        return;
+      }
+      await this.captureOutbound(pending[i]!);
+    }
+  }
+
   private async publishAssistantTrack(): Promise<void> {
     if (!this.room?.localParticipant) {
       throw new Error("Room not connected");
@@ -423,6 +523,17 @@ export class LiveKitRoomSession {
   }
 
   private async publishFrame(frame: AudioFrame): Promise<void> {
+    if (this.closed) return;
+    // During SFU reconnect, captureFrame is accepted locally but never reaches
+    // the phone — buffer until transport is healthy again.
+    if (!this.audioSource || this.nativeReconnecting) {
+      this.bufferOutbound(frame);
+      return;
+    }
+    await this.captureOutbound(frame);
+  }
+
+  private async captureOutbound(frame: AudioFrame): Promise<void> {
     if (!this.audioSource || this.closed) return;
     // Resample is not implemented here; callers should match outputSampleRate (24 kHz).
     // If rates differ, capture at frame rate (LiveKit will handle clock skew poorly —
@@ -437,7 +548,8 @@ export class LiveKitRoomSession {
         new LkAudioFrame(samples, sampleRate, channels, samplesPerChannel),
       );
     } catch (err) {
-      this.log.warn("[livekit] captureFrame failed", err);
+      this.log.warn("[livekit] captureFrame failed — buffering", err);
+      this.bufferOutbound(frame);
     }
   }
 

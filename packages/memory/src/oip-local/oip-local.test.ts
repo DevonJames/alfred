@@ -280,6 +280,32 @@ describe("memory.oip-local", () => {
     expect(again?.reminderStatus).toBe("surfaced");
     expect(again?.reminderLastSurfacedAt).toBeTruthy();
   });
+
+  it("serializes concurrent commitTurn + retrieve without finalized-statement errors", async () => {
+    const p = await tempProvider();
+    await p.createRecord("Entity", {
+      name: "Seed Person",
+      schemaType: SCHEMA_ORG.Person,
+      schema: schemaOrgPerson("Seed Person"),
+      alfred: { entityClass: "Person" },
+    });
+
+    const turns = Array.from({ length: 8 }, (_, i) =>
+      p.commitTurn({
+        profileId: "test",
+        sessionId: "sess_concurrent",
+        turnId: `turn_${i}`,
+        role: "user",
+        text: `Hello concurrent turn ${i}. My boss is James Nosal.`,
+      }),
+    );
+    const retrieves = Array.from({ length: 8 }, (_, i) =>
+      p.retrieve({ text: `who is my boss turn ${i}`, limit: 5 }),
+    );
+
+    await expect(Promise.all([...turns, ...retrieves])).resolves.toBeDefined();
+    expect(p.sqlite.findByName("James Nosal").length).toBeGreaterThan(0);
+  });
 });
 
 function displayName(rev: { schema?: Record<string, unknown>; name?: string } | null): string {

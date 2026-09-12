@@ -120,7 +120,7 @@ export default function Talk() {
   const sessionUnavailable = useSession((s) => s.unavailable);
   useConversationSession(focused);
 
-  const { agentHint } = useVoiceAvailability(focused);
+  const { agentHint, voiceStack } = useVoiceAvailability(focused);
   const blocker = useVoice((s) => s.blocker);
   const phase = useVoice((s) => s.phase);
   const micEnabled = useVoice((s) => s.micEnabled);
@@ -430,9 +430,11 @@ export default function Talk() {
             {notice}
           </Notice>
         ) : null}
-        {agentHint && phase === "live" && !agentPresent ? (
+        {phase === "live" && !agentPresent ? (
           <Notice tone="info" testID="agent-hint">
-            {agentHint}
+            {voiceStack === "live"
+              ? "Waiting for Alfred to join…"
+              : agentHint ?? "Waiting for Alfred…"}
           </Notice>
         ) : null}
       </View>

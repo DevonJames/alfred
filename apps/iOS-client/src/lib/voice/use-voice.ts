@@ -10,6 +10,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { AppState, type AppStateStatus } from "react-native";
 import { create } from "zustand";
 import { isNotBuiltYet, sessionStatus } from "../desktop-api";
+import type { VoiceStack } from "../types";
 import {
   VoiceUnavailableError,
   isLiveKitAvailable,
@@ -43,6 +44,8 @@ interface VoiceStore {
   agentAudioTrack: RemoteAudioTrack | null;
   identity: string | null;
   room: string | null;
+  /** Which Mac voice worker is serving Talk; null until status/token says. */
+  voiceStack: VoiceStack | null;
   caption: CaptionState;
   /** Live STT of the user, replaced until the agent marks it final. */
   userPartial: string | null;
@@ -65,6 +68,7 @@ const EMPTY = {
   agentAudioTrack: null as RemoteAudioTrack | null,
   identity: null,
   room: null,
+  voiceStack: null as VoiceStack | null,
   caption: IDLE_CAPTION,
   userPartial: null,
   userFinal: [] as string[],
@@ -103,14 +107,17 @@ export function useSpokenCaption(): string {
  * Ask the Mac whether voice is even possible before offering the button.
  *
  * Three things must all be true: this build has the native SDK, the desktop has
- * LiveKit credentials, and `pnpm voice` is in the LiveKit room. The first two
- * are knowable up front; agent presence comes from `/api/session/status`.
+ * LiveKit credentials, and a voice worker is ready. Cascade probes `alfred-agent`
+ * in the fixed room; live (`make alfred VOICE=live`) reports ready when the
+ * GPT-Live stack is configured (the agent joins on Talk dispatch). Captions
+ * always arrive on `alfred.caption` / `alfred.user` for either stack.
  */
 export function useVoiceAvailability(enabled: boolean) {
   const [checking, setChecking] = useState(false);
   const [agentHint, setAgentHint] = useState<string | null>(null);
   const setStore = useVoice((s) => s.set);
   const blocker = useVoice((s) => s.blocker);
+  const voiceStack = useVoice((s) => s.voiceStack);
 
   useEffect(() => {
     if (!enabled) return;
@@ -131,6 +138,9 @@ export function useVoiceAvailability(enabled: boolean) {
         if (typeof status.agentPresent === "boolean") {
           setStore({ agentPresent: status.agentPresent });
         }
+        if (status.voiceStack) {
+          setStore({ voiceStack: status.voiceStack });
+        }
         // `null` means an older desktop that doesn't report the field; let the
         // user try rather than refusing on a missing boolean.
         setStore({ blocker: status.livekitConfigured === false ? "not-configured" : "none" });
@@ -146,7 +156,7 @@ export function useVoiceAvailability(enabled: boolean) {
     };
   }, [enabled, setStore]);
 
-  return { checking, agentHint, blocker };
+  return { checking, agentHint, blocker, voiceStack };
 }
 
 /**
@@ -193,7 +203,7 @@ export function useVoiceSession() {
     if (startInFlight.current) return startInFlight.current;
 
     const pending = (async () => {
-      store({ phase: "connecting", error: null });
+      store({ phase: "connecting", error: null, agentPresent: false, agentAudioTrack: null });
       try {
         const session = await startVoiceSession(
           {
@@ -214,6 +224,7 @@ export function useVoiceSession() {
           micEnabled: wantMic,
           identity: session.identity,
           room: session.room,
+          voiceStack: session.voiceStack,
         });
         return true;
       } catch (err) {

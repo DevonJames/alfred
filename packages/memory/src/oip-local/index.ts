@@ -44,7 +44,15 @@ export {
   remindAtSortKey,
   type ReminderRow,
 } from "./indexes/sqlite-index.js";
-export { NoopVectorIndex, type VectorIndex } from "./indexes/vector-index.js";
+export {
+  FileVectorIndex,
+  VECTORS_DIR_NAME,
+  type EmbeddingSpaceSnapshot,
+  type StoredVectorRow,
+  type VectorManifest,
+} from "./indexes/file-vector-index.js";
+export { NoopVectorIndex, type VectorHit, type VectorIndex } from "./indexes/vector-index.js";
+export { projectEmbeddingsPca, projectEmbeddingsDirectional, type PcaProjection3d } from "./pca.js";
 export {
   computeRevisionHash,
   verifyStore,
@@ -62,6 +70,12 @@ export {
   type DueReminder,
 } from "./provider.js";
 export { retrieveMemories, toNormalized } from "./retrieval.js";
+export {
+  detectRelationshipIntents,
+  findSelfEntity,
+  relationshipRecallHits,
+  resolveRecordName,
+} from "./relationship-recall.js";
 export {
   SCHEMA_ORG,
   displayLabel,

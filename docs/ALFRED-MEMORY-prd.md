@@ -4,7 +4,7 @@
 
 ### Private, Temporal, Graph-Based Personal Memory and Retrieval System
 
-**Status:** Draft v1
+**Status:** Draft v1 — OIP-local packages, SQLite/FTS/graph, ingest, Graph UIs, and OpenAI `FileVectorIndex` are implemented; ANN retrieval in Talk, live multi-desktop sync, and local embedders are not.
 **Product:** Alfred
 **Component:** Memory and Retrieval System
 **Primary use case:** Long-term personal memory for conversational AI

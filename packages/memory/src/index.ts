@@ -13,6 +13,7 @@ export * from "./knowledge-ingest.js";
 export * from "./link-discovery.js";
 export * from "./document-ingest.js";
 export * from "./audio-note-ingest.js";
+export * from "./embeddings/index.js";
 export * from "./photo-analyze.js";
 export * from "./photo-heic.js";
 export * from "./photo-ingest.js";

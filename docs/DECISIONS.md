@@ -97,3 +97,24 @@
 **Context:** LiveKit Agents can host full agent graphs; ALFRED must not surrender policy.  
 **Decision:** `@alfred/livekit` exposes `LiveKitMediaBridge` (PCM in/out, VAD signals). Conversation policy remains in `@alfred/core`.  
 **Consequences:** Sticky failover, ledger, and arbitration stay inspectable and provider-replaceable.
+
+## ADR-015: Dual memory providers
+
+**Status:** Accepted  
+**Context:** Voice needed durable LTM early (JSONL). Desktop/iOS later needed typed OIP packages, artifacts, graph, and rebuildable indexes.  
+**Decision:** Keep `memory.local` as the **voice-agent default** (`ALFRED_MEMORY_PROVIDER_ID`). Desktop HTTP, ingest, Graph, Notes, and iOS always use `memory.oip-local`. Reminders/briefing read OIP regardless of the voice active provider.  
+**Consequences:** Two on-disk corpora until voice is pointed at OIP. Do not assume `/api/memory` and `pnpm voice` retrieve from the same store unless `ALFRED_MEMORY_PROVIDER_ID=memory.oip-local`.
+
+## ADR-016: Embeddings are a rebuildable index
+
+**Status:** Accepted  
+**Context:** Graph (beta) needs a neighborhood view; Talk retrieval still uses FTS/graph, not ANN.  
+**Decision:** Store OpenAI embeddings + a cached PCA projection in `{oipRoot}/indexes/vectors/` via `FileVectorIndex`. Semantic Map (MDS/PCA) projects on demand; original-space cosine is authoritative. Categories/types are for reveal and metrics only.  
+**Consequences:** Deleting `indexes/vectors/` loses no memory. Local embedders can replace the OpenAI call without changing store, routes, or UI. Hybrid retrieval in Talk is deferred.
+
+## ADR-017: Leave idle LiveKit peers; republish after reconnect
+
+**Status:** Accepted  
+**Context:** Muted iOS/desktop participants parked in the SFU until tab blur, stacking `alfred-ios-*` / `alfred-client` identities. Native reconnect often left a live local AudioSource whose packets never reached remotes.  
+**Decision:** iOS hold-to-talk disconnects after 90s with mic off; chat, continuous Stop, and CallKit End leave immediately. Browser Talk uses a connect/disconnect state machine and `pagehide` leave. Agent buffers TTS during SFU outage and force-republishes the assistant track on recovery.  
+**Consequences:** Hold-to-talk may drop before a long reply finishes if the user stays muted past 90s; reconnect audio is an implementation concern in `@alfred/livekit`, not Conversation Core policy.

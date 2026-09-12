@@ -70,6 +70,8 @@ let layout: UiLayout = "voice";
 /** Voice-layout mic mute — conversation stays open; unmute resumes listening. */
 let micMuted = false;
 let lastCaption = "";
+/** Prevents Start/Stop races from leaving a LiveKit participant orphaned. */
+let sessionOp: "idle" | "connecting" | "disconnecting" = "idle";
 
 function publishShell(rms = 0): void {
   postShellState({
@@ -181,98 +183,120 @@ function alfredApiPath(path: string): string {
 }
 
 async function connect(): Promise<void> {
+  if (sessionOp !== "idle" || room) return;
+  sessionOp = "connecting";
   connectBtn.disabled = true;
   setStatus("Minting token…");
 
-  const res = await fetch(alfredApiPath("/api/token"));
-  const payload = (await res.json()) as {
-    url?: string;
-    room?: string;
-    identity?: string;
-    token?: string;
-    error?: string;
-  };
-  if (!res.ok || !payload.url || !payload.token) {
-    throw new Error(payload.error ?? `Token request failed (${res.status})`);
-  }
+  let next: Room | undefined;
+  try {
+    const res = await fetch(alfredApiPath("/api/token"));
+    const payload = (await res.json()) as {
+      url?: string;
+      room?: string;
+      identity?: string;
+      token?: string;
+      error?: string;
+    };
+    if (!res.ok || !payload.url || !payload.token) {
+      throw new Error(payload.error ?? `Token request failed (${res.status})`);
+    }
 
-  setStatus("Connecting…");
-  const next = new Room({
-    adaptiveStream: true,
-    dynacast: true,
-    audioCaptureDefaults: {
-      echoCancellation: true,
-      noiseSuppression: true,
-      autoGainControl: true,
-      channelCount: 1,
-    },
-  });
-
-  next
-    .on(
-      RoomEvent.TrackSubscribed,
-      (track: RemoteTrack, _pub: RemoteTrackPublication, participant: RemoteParticipant) => {
-        if (track.kind === Track.Kind.Audio) {
-          attachRemoteAudio(track);
-          setStatus(`Linked // ${participant.identity}`);
-        }
+    setStatus("Connecting…");
+    next = new Room({
+      adaptiveStream: true,
+      dynacast: true,
+      disconnectOnPageLeave: true,
+      audioCaptureDefaults: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+        channelCount: 1,
       },
-    )
-    .on(RoomEvent.TrackUnsubscribed, (track: RemoteTrack) => {
-      track.detach().forEach((el) => el.remove());
-      if (track.kind === Track.Kind.Audio) {
-        waveform.detach();
-      }
-    })
-    .on(RoomEvent.DataReceived, (payload, _participant, _kind, topic) => {
-      if (!topic || topic === "alfred.caption") {
-        const msg = parseCaptionPayload(payload);
-        if (msg) {
-          captions.handle(msg);
-          thread.handleCaption(msg);
-          if ((msg.type === "start" || msg.type === "reveal") && msg.text) {
-            lastCaption = msg.text;
-          }
-          publishShell();
-        }
-      }
-      if (!topic || topic === "alfred.user") {
-        const msg = parseUserTranscriptPayload(payload);
-        if (!msg) return;
-        if (layout === "chat" && composer.dictationActive) {
-          composer.applyDictation(msg.text);
-          return;
-        }
-        userTranscript.handle(msg);
-        if (msg.type === "final") thread.handleUserFinal(msg.text);
-      }
-    })
-    .on(RoomEvent.Disconnected, () => {
-      teardownUi("Offline");
     });
 
-  await next.connect(payload.url, payload.token);
-  room = next;
-  micMuted = false;
-  await publishControl(next, { type: "layout", layout });
-  await publishControl(next, { type: "mute", muted: false });
-  await syncMicForLayout();
+    next
+      .on(
+        RoomEvent.TrackSubscribed,
+        (track: RemoteTrack, _pub: RemoteTrackPublication, participant: RemoteParticipant) => {
+          if (track.kind === Track.Kind.Audio) {
+            attachRemoteAudio(track);
+            setStatus(`Linked // ${participant.identity}`);
+          }
+        },
+      )
+      .on(RoomEvent.TrackUnsubscribed, (track: RemoteTrack) => {
+        track.detach().forEach((el) => el.remove());
+        if (track.kind === Track.Kind.Audio) {
+          waveform.detach();
+        }
+      })
+      .on(RoomEvent.DataReceived, (payload, _participant, _kind, topic) => {
+        if (!topic || topic === "alfred.caption") {
+          const msg = parseCaptionPayload(payload);
+          if (msg) {
+            captions.handle(msg);
+            thread.handleCaption(msg);
+            if ((msg.type === "start" || msg.type === "reveal") && msg.text) {
+              lastCaption = msg.text;
+            }
+            publishShell();
+          }
+        }
+        if (!topic || topic === "alfred.user") {
+          const msg = parseUserTranscriptPayload(payload);
+          if (!msg) return;
+          if (layout === "chat" && composer.dictationActive) {
+            composer.applyDictation(msg.text);
+            return;
+          }
+          userTranscript.handle(msg);
+          if (msg.type === "final") thread.handleUserFinal(msg.text);
+        }
+      })
+      .on(RoomEvent.Disconnected, () => {
+        // Only tear down if this is still the active room — a superseded
+        // connect/disconnect race must not clear a newer session.
+        if (room === next) teardownUi("Offline");
+      });
 
-  for (const participant of next.remoteParticipants.values()) {
-    for (const pub of participant.trackPublications.values()) {
-      if (pub.track && pub.kind === Track.Kind.Audio) {
-        attachRemoteAudio(pub.track);
+    await next.connect(payload.url, payload.token);
+    // Stop clicked while connect was in flight — leave immediately.
+    if (sessionOp !== "connecting") {
+      await forceLeave(next);
+      teardownUi("Offline");
+      sessionOp = "idle";
+      return;
+    }
+    room = next;
+    micMuted = false;
+    await publishControl(next, { type: "layout", layout });
+    await publishControl(next, { type: "mute", muted: false });
+    await syncMicForLayout();
+
+    for (const participant of next.remoteParticipants.values()) {
+      for (const pub of participant.trackPublications.values()) {
+        if (pub.track && pub.kind === Track.Kind.Audio) {
+          attachRemoteAudio(pub.track);
+        }
       }
     }
-  }
 
-  connectBtn.disabled = false;
-  setSessionToggle(true);
-  document.body.classList.add("linked");
-  linkDot.classList.add("live");
-  metaEl.textContent = `${payload.identity} @ ${payload.room}`;
-  updateSessionControls(true);
-  publishShell();
+    connectBtn.disabled = false;
+    setSessionToggle(true);
+    document.body.classList.add("linked");
+    linkDot.classList.add("live");
+    metaEl.textContent = `${payload.identity} @ ${payload.room}`;
+    updateSessionControls(true);
+    publishShell();
+    sessionOp = "idle";
+  } catch (err) {
+    // Joined LiveKit but a later step failed — do not leave a ghost participant.
+    if (next) await forceLeave(next);
+    if (room === next) room = undefined;
+    sessionOp = "idle";
+    throw err;
+  }
 }
 
 function teardownUi(status: string): void {
@@ -297,10 +321,47 @@ function teardownUi(status: string): void {
   publishShell();
 }
 
+/** Best-effort leave: mute, stop tracks, send Leave even if something throws. */
+async function forceLeave(target: Room): Promise<void> {
+  try {
+    await target.localParticipant.setMicrophoneEnabled(false);
+  } catch {
+    /* ignore */
+  }
+  try {
+    await target.disconnect(true);
+  } catch (err) {
+    console.error("[voice-client] room.disconnect failed", err);
+  }
+}
+
 async function disconnect(): Promise<void> {
+  if (sessionOp === "disconnecting") return;
+  // Connecting: flip the op so connect()'s post-join check leaves immediately.
+  if (sessionOp === "connecting") {
+    sessionOp = "disconnecting";
+    connectBtn.disabled = true;
+    setStatus("Canceling…");
+    return;
+  }
+  const active = room;
+  if (!active) {
+    teardownUi("Offline");
+    sessionOp = "idle";
+    return;
+  }
+  sessionOp = "disconnecting";
   connectBtn.disabled = true;
-  await room?.disconnect();
-  teardownUi("Offline");
+  setStatus("Leaving…");
+  // Clear the handle first so a late Disconnected event is harmless, but keep
+  // `active` so we always call disconnect on the real Room instance.
+  room = undefined;
+  try {
+    await forceLeave(active);
+  } finally {
+    teardownUi("Offline");
+    sessionOp = "idle";
+  }
 }
 
 async function toggleDictate(): Promise<void> {
@@ -343,8 +404,8 @@ document.querySelector<HTMLFormElement>("#composer")!.addEventListener("submit",
 });
 
 connectBtn.addEventListener("click", () => {
-  if (room) {
-    void disconnect();
+  if (room || sessionOp === "connecting") {
+    void disconnect().catch((err) => console.error(err));
     return;
   }
   void connect().catch((err) => {
@@ -352,6 +413,7 @@ connectBtn.addEventListener("click", () => {
     setStatus(err instanceof Error ? err.message : String(err));
     connectBtn.disabled = false;
     setSessionToggle(false);
+    sessionOp = "idle";
   });
 });
 
@@ -362,6 +424,20 @@ shhhBtn.addEventListener("click", () => {
 muteBtn.addEventListener("click", () => {
   void toggleMute().catch((err) => console.error(err));
 });
+
+// Belt-and-suspenders with LiveKit's disconnectOnPageLeave — iframe teardown /
+// desktop shell close must not leave a published mic in alfred-dev.
+function leaveOnPageHide(): void {
+  const active = room;
+  if (!active) return;
+  room = undefined;
+  void forceLeave(active).finally(() => {
+    teardownUi("Offline");
+    sessionOp = "idle";
+  });
+}
+window.addEventListener("pagehide", leaveOnPageHide);
+window.addEventListener("beforeunload", leaveOnPageHide);
 
 if (isEmbedded()) document.documentElement.classList.add("embedded");
 waveform.detach();

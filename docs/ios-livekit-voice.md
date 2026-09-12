@@ -1,12 +1,16 @@
 # iOS LiveKit Voice — Implementation Guide
 
+**Status:** Implemented in `apps/iOS-client` (Talk tab). Keep this doc as the protocol contract.  
 **Audience:** iOS coding agent  
-**Purpose:** Implement speaking Talk mode by joining the same LiveKit room the Mac voice stack uses.  
+**Purpose:** Speak in Talk by joining the LiveKit room the Mac voice stack mints.  
 **Do not** implement HTTP mic upload (`/api/conversation/audio-turn`). That path does not exist and is not the product architecture.
 
 Reference client (browser): [`apps/voice-client/src/main.ts`](../apps/voice-client/src/main.ts)  
+Phone transport: [`apps/iOS-client/src/lib/voice/livekit-transport.ts`](../apps/iOS-client/src/lib/voice/livekit-transport.ts)  
 Desktop token API: `POST /api/session/token` (device bearer required)  
-Mac agent process: `pnpm voice` (must be running)
+Mac agent: `make alfred` (cascade) **or** `make alfred VOICE=live` (GPT-Live). iOS follows
+`voiceStack` from `/api/session/status` + the minted token — same `alfred.caption` /
+`alfred.user` topics either way (see [gpt-live.md](./gpt-live.md)).
 
 ---
 
@@ -203,7 +207,8 @@ Implement this sequence exactly:
 
 ```text
 1. Disable microphone
-2. room.disconnect()
+2. room.disconnect()  — also required for chat layout, continuous Stop, CallKit End,
+   and 90s hold-idle (do not mute-and-park)
 3. POST /api/session/end  (best-effort; desktop ack only)
 4. Clear captions / waveform / “linked” state
 ```
@@ -215,6 +220,8 @@ On network blip or app foreground:
 1. If room disconnected, mint a **fresh** token (don’t reuse expired JWT)
 2. Reconnect with backoff
 3. Re-enable mic only if session still intended active
+4. On `RoomEvent.Reconnected`, re-arm AVAudioSession and re-attach remote audio (`attachAgentAudioFromRoom` in `livekit-transport.ts`). Prefer identity `alfred-agent`; fall back to any remote audio.
+5. After agent republish, subscribe again (`TrackPublished` → `setSubscribed(true)`). The Mac force-republishes the assistant track after SFU recovery so the phone gets a new `TrackSubscribed`.
 
 ---
 
@@ -301,31 +308,38 @@ Ignore payloads whose `channel` doesn’t match the topic you’re handling. Tre
 
 ## Hold-to-talk (recommended default on cellular / first launch)
 
-- Connect room on session start (or on first hold)  
+- Connect room on first hold  
 - Enable mic only while control is held / toggled on  
-- Disable mic on release (stay in room so assistant audio can still play)  
-- Note: very short holds may truncate STT; prefer ≥ ~400ms or use toggle-to-talk  
+- Disable mic on release so Alfred can still finish speaking  
+- **Leave LiveKit after 90s with mic off** (`HOLD_IDLE_DISCONNECT_MS` in `talk.tsx`). Parking muted peers until tab blur stacked dozens of `alfred-ios-*` identities.  
+- Very short holds may truncate STT; prefer ≥ ~400ms or use toggle-to-talk  
 
-## Text fallback
+## Continuous
 
-Keep `/api/conversation/turn` for typing. It is a **separate** desktop text orchestrator from the LiveKit voice session — not a substitute for mic audio. After voice ships, product may later unify history; for now do not assume text turns appear in LiveKit captions or vice versa.
+- Mic stays enabled while Start is active  
+- **Stop leaves the room** (do not mute-and-park)  
+- CallKit is armed only when a continuous session **backgrounds** (lock / pocket). Foreground CallKit has crashed continuous on device builds. CallKit End must `stop()` the room, not only mute.
+
+## Text / chat layout
+
+Keep `/api/conversation/turn` for typing. Switching Talk to **chat** leaves LiveKit entirely — chat is HTTP turns, not a parked SFU peer. Do not assume text turns appear in LiveKit captions or vice versa.
 
 ---
 
-# 10. Suggested module layout
+# 10. Module layout (as shipped)
 
 ```text
-src/lib/voice/
-  livekit-session.ts     # connect/disconnect, mic enable, track attach
+apps/iOS-client/src/lib/voice/
+  livekit-transport.ts   # Room.connect, mic, track attach, Reconnected re-arm
+  use-voice.ts           # start/stop; clear keepAliveInBackground on disconnect
   session-token.ts       # POST /api/session/token via desktopFetch
-  captions.ts            # parse alfred.caption
-  user-transcript.ts     # parse alfred.user
-  audio-session.ts       # AVAudioSession configure / interruption handlers
+  captions / protocol    # alfred.caption + alfred.user
+  call-service.ts        # CallKit for backgrounded continuous only
 
-src/screens/TalkScreen.tsx
-  - transport: 'text' | 'livekit'
-  - if livekitConfigured / token ok → offer Speak
-  - else → typing only + explanation
+apps/iOS-client/src/app/(tabs)/talk.tsx
+  - layout: voice | chat
+  - micMode: hold | continuous
+  - 90s hold-idle disconnect; chat / Stop / CallKit End leave the room
 ```
 
 Detect transport from a successful token response (presence of `url` + `token`), not from guessing. You can also gate Speak behind `GET /api/session/status` → `livekitConfigured`.
@@ -411,6 +425,7 @@ Before testing Speak on device:
 - [ ] Captions render from `alfred.caption`  
 - [ ] User partial/final STT renders from `alfred.user`  
 - [ ] Disconnect cleans up tracks and calls `/api/session/end`  
+- [ ] Hold-to-talk leaves the room after ~90s idle (mic off); continuous Stop and chat leave immediately  
 - [ ] No dependency on `/api/conversation/audio-turn` or `/transcript` for voice  
 - [ ] Text Talk still works when mic denied or LiveKit misconfigured  
 
@@ -418,11 +433,13 @@ Before testing Speak on device:
 
 # 14. Explicit non-goals for this iOS pass
 
-- HTTP upload of recorded audio buffers to desktop  
+- HTTP upload of recorded audio buffers to desktop (notes use a separate `/api/notes` path)  
 - On-device Apple Speech as primary STT  
 - Hosting Conversation Core or memory on the phone  
-- CallKit / always-on hotword  
+- Always-on hotword  
 - Unifying text-orchestrator history with vault voice session history (follow-up)
+
+CallKit for **backgrounded continuous** is implemented; do not start it in the foreground.
 
 ---
 

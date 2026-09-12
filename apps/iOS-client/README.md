@@ -32,13 +32,16 @@ Talk when `isLiveKitAvailable()` is false (`no-sdk`).
 
 End-to-end Speak (physical device):
 
-1. Mac: `pnpm desktop` + `pnpm voice` (same LiveKit env as desktop)
+1. Mac: `make alfred` (cascade) **or** `make alfred VOICE=live` (GPT-Live / Ripple)
 2. Phone: claim → discover → pair → grant mic
-3. Talk → Speak: blocker leaves `no-sdk`; hold-to-talk publishes mic
-4. Captions on topics `alfred.caption` / `alfred.user`
-5. Text Talk still works if mic denied
+3. Talk → Speak: blocker leaves `no-sdk`; the phone joins whatever room the Mac
+   minted (fixed room for cascade, fresh `*-live-*` room for GPT-Live)
+4. Captions on topics `alfred.caption` / `alfred.user` in **both** stacks
+   (live tees GPT-Live transcripts onto those topics in parallel with audio)
+5. Text Talk still works if mic denied; chat layout leaves the room
 
-Details: [ios-livekit-voice.md](../../docs/ios-livekit-voice.md).
+Details: [ios-livekit-voice.md](../../docs/ios-livekit-voice.md) and
+[gpt-live.md](../../docs/gpt-live.md).
 
 ## App Store
 

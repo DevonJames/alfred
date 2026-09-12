@@ -315,6 +315,20 @@ describe("extractConversationalMemory", () => {
           a.objectName === "December 1",
       ),
     ).toBe(true);
+
+    const spoken = extractConversationalMemory(
+      "My birthday is August twenty ninth nineteen eighty.",
+    );
+    expect(
+      spoken.entities?.some((e) => e.name === "__user__" && e.birthDate === "1980-08-29"),
+    ).toBe(true);
+
+    const amySpoken = extractConversationalMemory(
+      "Amy's birthday is July twenty first nineteen eighty one.",
+    );
+    expect(
+      amySpoken.entities?.some((e) => e.name === "Amy" && e.birthDate === "1981-07-21"),
+    ).toBe(true);
   });
 
   it("extracts multi-level org hierarchy from a networking utterance", () => {

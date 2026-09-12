@@ -36,6 +36,7 @@ import { pairRouter } from "./routes/pair.js";
 import { sessionRouter } from "./routes/session.js";
 import { tokenRouter } from "./routes/token.js";
 import { voiceRouter } from "./routes/voice.js";
+import { vectorExplorerRouter } from "./routes/vector-explorer.js";
 
 // Load repo-root .env when started from apps/desktop-client.
 loadEnv({ path: resolve(process.cwd(), "../../.env") });
@@ -150,6 +151,9 @@ app.route("/notes", notesUiRouter);
 // Local browser UIs (ingest/graph) stay public; iOS uses authenticated /api/memory.
 app.route("/memory", memoryRouter);
 
+// Session-only embedding demo (not written to the memory corpus).
+app.route("/vector-explorer", vectorExplorerRouter);
+
 // Voice SPA assets stay public; token mint for SPA is /api/token above.
 app.route("/voice", voiceRouter);
 
@@ -175,6 +179,7 @@ const server = serve({ fetch: app.fetch, port, hostname }, (info) => {
   console.log(`  Memory ingest: http://127.0.0.1:${info.port}/memory/ingest`);
   console.log(`  Memory graph:  http://127.0.0.1:${info.port}/memory/graph`);
   console.log(`  Graph (beta):  http://127.0.0.1:${info.port}/memory/graph-beta`);
+  console.log(`  Vector explorer: http://127.0.0.1:${info.port}/vector-explorer`);
   console.log(`  Briefing:      http://127.0.0.1:${info.port}/api/briefing`);
   console.log(`  Brief prefs:   http://127.0.0.1:${info.port}/briefing`);
   console.log(`  Notes:         http://127.0.0.1:${info.port}/notes`);

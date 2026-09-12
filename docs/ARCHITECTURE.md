@@ -17,7 +17,7 @@ Adapters beneath the core (never the other way around):
 - LLM / STT / TTS / unified realtime providers
 - Memory products
 - Agent harnesses (OpenClaw, Hermes, Codex, Claude, …)
-- LiveKit (future media transport)
+- LiveKit (media transport — implemented)
 - Databases and UIs
 
 LiveKit is a real-time media layer. It must not become the domain model. Conversation policy lives in `@alfred/core`.
@@ -25,13 +25,24 @@ LiveKit is a real-time media layer. It must not become the domain model. Convers
 ## Package layout
 
 ```
-packages/contracts     Provider-neutral Zod schemas and types
-packages/core          FSM, ledgers, failover, prompt assembly, session orchestrator
-packages/providers     Registry + fake (later real) speech/LLM adapters
-packages/memory        Memory controller + fake/local providers
-packages/agents        Harness router + stub adapters
-packages/persistence   Repository interfaces + in-memory implementations
-apps/simulator         Deterministic text-only CLI scenarios
+packages/contracts              Provider-neutral Zod schemas and types
+packages/core                   FSM, ledgers, failover, prompt assembly, session orchestrator
+packages/providers              Registry + fake speech/LLM adapters
+packages/provider-deepgram      Deepgram Flux STT
+packages/provider-openai        OpenAI Responses LLM
+packages/provider-elevenlabs    ElevenLabs Flash TTS
+packages/livekit                Room session + media bridge (transport only)
+packages/memory                 Memory controller + JSONL + OIP-local + embeddings
+packages/browser                Playwright / Computer Use (X capture)
+packages/briefing               Daily briefing
+packages/agents                 Harness router + ingest harnesses
+packages/persistence            Repository interfaces + in-memory implementations
+packages/elgato                 Local Key Light control
+apps/simulator                  Deterministic text-only CLI scenarios
+apps/voice-agent                Cascaded voice runtime
+apps/voice-client               Browser Talk UI
+apps/desktop-client             Local host (UI, pairing, memory/notes HTTP)
+apps/iOS-client                 Expo Talk / notes / memory client
 ```
 
 Dependency rule: adapters and apps depend on `contracts` / `core`. Core depends on `contracts` and persistence interfaces. Vendor SDKs never appear in `contracts`.
@@ -97,12 +108,14 @@ Configurable: connection / first-token / total timeouts, consecutive-failure thr
 ## Memory
 
 - Short-term context: owned by the conversation core.
-- Long-term memory: exactly one active provider per user profile.
-- **Current default (voice):** `LocalFileMemoryProvider` (`memory.local`) — durable JSONL under `ALFRED_MEMORY_PATH` or `./data/memory/{profileId}.jsonl`. Stores `fact` / `turn` / `note` via provenance; heuristic fact extraction on user commits; keyword/token retrieve with facts preferred. Inspect/export/import via `pnpm memory`.
+- Long-term memory: exactly one **active** provider per user profile for the voice agent. Desktop HTTP / iOS always use `memory.oip-local`.
+- **`memory.local` (voice default):** `LocalFileMemoryProvider` — durable JSONL under `ALFRED_MEMORY_PATH` or `./data/memory/{profileId}.jsonl`. Stores `fact` / `turn` / `note` via provenance; heuristic fact extraction on user commits; keyword/token retrieve with facts preferred. Inspect/export/import via `pnpm memory`.
+- **`memory.oip-local` (canonical product store):** filesystem packages + content-addressed artifacts. SQLite/FTS, graph adjacency, and `FileVectorIndex` (`indexes/vectors/`) are disposable rebuildable indexes. Used by ingest, Graph, Notes, `/api/memory`, and iOS.
+- **Embeddings:** OpenAI `text-embedding-3-small` (override `OPENAI_EMBEDDING_MODEL`) for Graph (beta) Semantic Map and Vector Explorer. Cosine in original space is authoritative; PCA/MDS projections are lossy viz. Local/offline embedders are not wired yet — see [embedding-space.md](./embedding-space.md).
 - **Persona bootstrap (OpenClaw-style):** always-injected markdown under `ALFRED_PERSONA_DIR` or `./data/persona/{profileId}/` — `SOUL.md` (tone/boundaries), `IDENTITY.md` (agent self-record), `USER.md` (user model directives). Seeded on first voice start; not retrieved via JSONL. Edit files on disk; `pnpm memory -- persona` to print.
-- Mem0 / Letta / Graphiti / Zep and vector/ANN indexes are deferred.
-- Normalized retrieve / commit / optional inspect-edit-delete / canonical JSONL import-export.
-- Not assumed to be a vector database.
+- Mem0 / Letta / Graphiti / Zep and ANN retrieval in Talk are deferred.
+- Normalized retrieve / commit / optional inspect-edit-delete / JSONL import-export plus OIP bundle export/merge.
+- Not assumed to be a vector database. Vectors are an index, not truth.
 
 ## Agency
 
@@ -171,3 +184,18 @@ LiveKitMediaBridge → VoiceSessionController
 ## LiveKit
 
 `LiveKitRoomSession` joins the room, subscribes to remote audio, and publishes the assistant track. Conversation policy remains in `@alfred/core`. We intentionally use `@livekit/rtc-node` rather than LiveKit Agents' `AgentSession` voice pipeline so STT/LLM/TTS are not owned by LiveKit.
+
+Shipped transport hygiene (still not policy):
+
+- Auto-reconnect after disconnect / Mac sleep (backoff + watchdog); native reconnect grace before remint
+- Buffer outbound TTS PCM while the SFU path is down; flush and **force-republish** the assistant track on recovery so iOS gets `TrackSubscribed` again
+- Browser `/voice/` uses a connect/disconnect state machine and `pagehide` leave so Start/Stop races do not orphan `alfred-client` peers
+- iOS hold-to-talk leaves the room after 90s with mic off; chat layout, continuous Stop, and CallKit End disconnect instead of parking muted peers
+
+Default identities: agent `alfred-agent`, desktop browser `alfred-client`, phone `alfred-ios-*`. Room default `alfred-dev`.
+
+## Desktop and iOS surfaces
+
+`apps/desktop-client` is the local product host (`127.0.0.1:3000`): Talk UI, briefing, notes, classic graph, Graph (beta), Vector Explorer, ingest, claim/pair, and authenticated `/api/*` for the phone.
+
+`apps/iOS-client` is a LiveKit participant + device-bearer API client. It does not host Conversation Core or the canonical memory filesystem. Pairing and voice protocols: [ios-desktop-pairing.md](./ios-desktop-pairing.md), [ios-livekit-voice.md](./ios-livekit-voice.md).
