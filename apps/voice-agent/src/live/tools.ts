@@ -3,12 +3,22 @@
  * (same capabilities as cascade VoiceSessionController committed tools).
  */
 import { llm } from "@livekit/agents";
-import { createId, type TaskCategory } from "@alfred/contracts";
+import {
+  buildExpressionEvent,
+  createId,
+  type ExpressionEvent,
+  type TaskCategory,
+} from "@alfred/contracts";
 import { resolveReminderMatch } from "@alfred/core";
 import { z } from "zod";
 import type { AlfredBrain } from "../brain.js";
 
-export function createAlfredLiveTools(brain: AlfredBrain) {
+export type ExpressionPublisher = (event: ExpressionEvent) => void;
+
+export function createAlfredLiveTools(
+  brain: AlfredBrain,
+  opts: { publishExpression?: ExpressionPublisher } = {},
+) {
   return {
     search_memory: llm.tool({
       description:
@@ -40,7 +50,7 @@ export function createAlfredLiveTools(brain: AlfredBrain) {
 
     remember_memory: llm.tool({
       description:
-        "Store durable long-term memory as structured Entity and Assertion records when the user tells you lasting facts about people, places, organizations, relationships, preferences, or other things that should be recalled later.",
+        "Store durable long-term memory as structured Entity and Assertion records when the user tells you lasting facts about people, places, organizations, relationships, nicknames/handles, preferences, or other things that should be recalled later. Call this whenever the user asks you to remember something — do not only acknowledge verbally.",
       parameters: z.object({
         entities: z
           .array(
@@ -252,6 +262,50 @@ export function createAlfredLiveTools(brain: AlfredBrain) {
             return `[${i + 1}] id=${r.recordId}${when}${status} — ${r.summary}`;
           })
           .join("\n");
+      },
+    }),
+
+    show_expression: llm.tool({
+      description:
+        "Drive AlfredBot's face (and later simple body) for this turn. " +
+        "Call when affect should change — a smile, frown, wink, nod, tilt, or wave. " +
+        "The robot holds the expression for a few seconds, then returns to calm. " +
+        "Do not call this on every sentence; only when the expression would actually help.",
+      parameters: z.object({
+        face: z
+          .enum([
+            "calm",
+            "smile",
+            "frown",
+            "wink",
+            "curious",
+            "surprised",
+            "empathetic",
+            "sad",
+            "angry",
+          ])
+          .describe("Face to show. Use calm to clear."),
+        body: z
+          .enum(["none", "nod", "tilt", "wave", "shake"])
+          .optional()
+          .describe("Optional simple body cue. Wave/nod/tilt are recorded now; servos come later."),
+        timeoutMs: z
+          .number()
+          .min(1500)
+          .max(20_000)
+          .optional()
+          .describe("How long to hold before calm. Default 8000."),
+      }),
+      execute: async ({ face, body, timeoutMs }) => {
+        const event = buildExpressionEvent({
+          type: face === "calm" ? "clear" : "set",
+          face,
+          body,
+          timeoutMs,
+        });
+        opts.publishExpression?.(event);
+        if (event.type === "clear") return "Expression cleared; face returns to calm.";
+        return `Showing ${event.face}${event.body !== "none" ? ` with ${event.body}` : ""}.`;
       },
     }),
 

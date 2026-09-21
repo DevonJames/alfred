@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { mapResponsesEvent, resolvePreset } from "./responses-llm.js";
+import { classifyOpenAiFailure, mapResponsesEvent, resolvePreset } from "./responses-llm.js";
+
+describe("classifyOpenAiFailure", () => {
+  it("maps credit exhaustion to unavailable (failover-eligible)", () => {
+    expect(classifyOpenAiFailure("Error: credit_balance_exhausted")).toBe("unavailable");
+    expect(classifyOpenAiFailure("insufficient_quota")).toBe("unavailable");
+  });
+});
 
 describe("OpenAI Responses adapter helpers", () => {
   it("resolves conversational preset to terra + none", () => {

@@ -306,6 +306,43 @@ describe("memory.oip-local", () => {
     await expect(Promise.all([...turns, ...retrieves])).resolves.toBeDefined();
     expect(p.sqlite.findByName("James Nosal").length).toBeGreaterThan(0);
   });
+
+  it("indexes new memories incrementally so search works without full rebuild", async () => {
+    const p = await tempProvider();
+    await p.commitTurn({
+      profileId: "test",
+      sessionId: "sess_remember",
+      turnId: "turn_1",
+      role: "user",
+      text: "Remember that Smokey Bear is the unvaxxed legend.",
+    });
+
+    // Simulate remember_memory write without a full rebuildIndexes wipe
+    const { writeConversationalMemory } = await import("../conversation-memory.js");
+    await writeConversationalMemory(p, {
+      entities: [
+        {
+          name: "Smokey Bear",
+          entityClass: "Person",
+          summary: "Friend Devon calls the unvaxxed legend",
+        },
+        { name: "unvaxxed legend", entityClass: "Thing" },
+      ],
+      assertions: [
+        {
+          subjectName: "Smokey Bear",
+          predicate: "describedAs",
+          objectName: "unvaxxed legend",
+          text: "Smokey Bear is the unvaxxed legend.",
+        },
+      ],
+    });
+
+    expect(p.sqlite.findByName("Smokey Bear").length).toBeGreaterThan(0);
+    expect(p.sqlite.findBySearchSubstring("unvaxxed", 10).length).toBeGreaterThan(0);
+    const hit = await p.retrieve({ text: "who is Smokey Bear unvaxxed legend", limit: 8 });
+    expect(hit.items.some((i) => /Smokey|unvaxxed/i.test(i.content))).toBe(true);
+  });
 });
 
 function displayName(rev: { schema?: Record<string, unknown>; name?: string } | null): string {

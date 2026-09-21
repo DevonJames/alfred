@@ -4,6 +4,7 @@ import type {
   LlmModelPreset,
   LlmReasoningEffort,
   LlmStreamChunk,
+  ProviderFailureClass,
   ProviderHealth,
   ProviderManifest,
 } from "@alfred/contracts";
@@ -128,14 +129,21 @@ export class OpenAiResponsesLLMProvider implements LLMProvider {
       yield { type: "done" };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      const failureClass = /rate/i.test(message)
-        ? "rate_limit"
-        : /auth|api key/i.test(message)
-          ? "auth"
-          : "upstream_5xx";
-      yield { type: "error", error: message, failureClass };
+      yield { type: "error", error: message, failureClass: classifyOpenAiFailure(message) };
     }
   }
+}
+
+/** Map OpenAI error text to sticky-failover classes (billing → unavailable). */
+export function classifyOpenAiFailure(message: string): ProviderFailureClass {
+  if (/credit|quota|billing|insufficient|balance.?exhausted|payment/i.test(message)) {
+    return "unavailable";
+  }
+  if (/rate.?limit|429/i.test(message)) return "rate_limit";
+  if (/auth|api.?key|401|403/i.test(message)) return "auth";
+  if (/timeout|ETIMEDOUT|AbortError/i.test(message)) return "timeout_total";
+  if (/ECONNREFUSED|ENOTFOUND|network|fetch failed/i.test(message)) return "connection";
+  return "upstream_5xx";
 }
 
 export function resolvePreset(preset: LlmModelPreset): {

@@ -159,6 +159,42 @@ export class OipLocalMemoryProvider implements MemoryProvider {
     this.ready = true;
   }
 
+  private indexRevisionUnlocked(rev: MemoryRevision): void {
+    this.sqlite.open();
+    this.sqlite.indexRevision(rev, this.packages);
+  }
+
+  /** Index one revision without a full DB wipe (safe under concurrent writers). */
+  async indexRevision(rev: MemoryRevision): Promise<void> {
+    await this.runExclusive(async () => {
+      await this.ensureReadyUnlocked();
+      this.indexRevisionUnlocked(rev);
+    });
+  }
+
+  /**
+   * Upsert any packages that exist on disk but are missing from sqlite.
+   * Prefer this over full rebuild when the index has fallen behind.
+   */
+  async syncMissingIndexes(opts: { limit?: number } = {}): Promise<{ scanned: number; indexed: number }> {
+    return this.runExclusive(async () => {
+      await this.ensureReadyUnlocked();
+      const ids = await this.packages.listLogicalIds();
+      let indexed = 0;
+      const limit = opts.limit ?? ids.length;
+      for (const logicalId of ids) {
+        if (indexed >= limit) break;
+        const did = logicalId.startsWith("did:memory:") ? logicalId : `did:memory:${logicalId}`;
+        if (this.sqlite.getRecord(did) || this.sqlite.getRecord(logicalId)) continue;
+        const rev = await this.packages.readCurrent(logicalId);
+        if (!rev) continue;
+        this.indexRevisionUnlocked(rev);
+        indexed += 1;
+      }
+      return { scanned: ids.length, indexed };
+    });
+  }
+
   async rebuildIndexes(): Promise<void> {
     await this.runExclusive(() => this.rebuildIndexesUnlocked());
   }
@@ -172,7 +208,7 @@ export class OipLocalMemoryProvider implements MemoryProvider {
     return this.runExclusive(async () => {
       await this.ensureReadyUnlocked();
       const record = await this.packages.createPackage({ type, body, logicalId });
-      if (opts?.reindex !== false) await this.rebuildIndexesUnlocked();
+      if (opts?.reindex !== false) this.indexRevisionUnlocked(record);
       return record;
     });
   }
@@ -185,7 +221,7 @@ export class OipLocalMemoryProvider implements MemoryProvider {
     return this.runExclusive(async () => {
       await this.ensureReadyUnlocked();
       const record = await this.packages.appendRevision(didOrLogicalId, patch);
-      if (opts?.reindex !== false) await this.rebuildIndexesUnlocked();
+      if (opts?.reindex !== false) this.indexRevisionUnlocked(record);
       return record;
     });
   }
@@ -216,7 +252,7 @@ export class OipLocalMemoryProvider implements MemoryProvider {
 
       // Do not store assistant replies as graph memories — they polluted the graph as
       // "assistant turn" nodes. User turns stay as episodic Observations for provenance.
-      await this.packages.createPackage({
+      const observation = await this.packages.createPackage({
         type: "Observation",
         now,
         body: {
@@ -244,6 +280,8 @@ export class OipLocalMemoryProvider implements MemoryProvider {
           },
         },
       });
+      // Incremental index — never full-rebuild on every turn (that races and drops memories).
+      this.indexRevisionUnlocked(observation);
 
       const { extractConversationalMemory, writeConversationalMemory } =
         await import("../conversation-memory.js");
@@ -257,8 +295,6 @@ export class OipLocalMemoryProvider implements MemoryProvider {
         await writeConversationalMemory(this, extracted, {
           sessionId: commit.sessionId,
         });
-      } else {
-        await this.rebuildIndexesUnlocked();
       }
     });
   }
@@ -279,7 +315,7 @@ export class OipLocalMemoryProvider implements MemoryProvider {
       const parsed = parseMemoryRef(id.startsWith("did:memory:") ? id : `did:memory:${id}`);
       const current = await this.packages.readCurrent(parsed.logicalId);
       if (!current) throw new Error(`Memory package not found: ${id}`);
-      await this.packages.appendRevision(parsed.logicalId, {
+      const updated = await this.packages.appendRevision(parsed.logicalId, {
         text: content,
         name: current.type === "Entity" ? content : current.name,
         schema: {
@@ -287,7 +323,7 @@ export class OipLocalMemoryProvider implements MemoryProvider {
           ...(current.type === "Entity" ? { name: content } : { text: content }),
         },
       });
-      await this.rebuildIndexesUnlocked();
+      this.indexRevisionUnlocked(updated);
     });
   }
 
@@ -296,7 +332,7 @@ export class OipLocalMemoryProvider implements MemoryProvider {
       await this.ensureReadyUnlocked();
       const parsed = parseMemoryRef(id.startsWith("did:memory:") ? id : `did:memory:${id}`);
       await this.packages.deletePackage(parsed.logicalId);
-      await this.rebuildIndexesUnlocked();
+      this.sqlite.removeLogicalId(parsed.logicalId);
     });
   }
 

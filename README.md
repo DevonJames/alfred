@@ -28,10 +28,11 @@ cp .env.example .env
 | `make alfred IOS=1` | Same, plus Expo Dev Client (`--tunnel`)        |
 | `pnpm test`      | Run Vitest unit and scenario tests                |
 | `pnpm simulate`  | Run the 15 M1 CLI scenarios                       |
-| `pnpm voice`     | Cascaded voice runtime (Deepgram → Terra → ElevenLabs) |
+| `pnpm voice`     | Cascaded voice (Deepgram→Terra→ElevenLabs; Apple STT + Grok LLM failover) |
 | `pnpm voice:live` | Experimental GPT-Live Agents worker (Ripple)    |
 | `pnpm client`     | Local mic client with WebRTC AEC (`apps/voice-client`, port 5173) |
 | `pnpm desktop`    | Local UI host — Talk, Brief, Notes, Graph, Vector Explorer, ingest, claim (port 3000) |
+| `pnpm alfredbot`  | AlfredBot kiosk host (Wi-Fi, pair, face, Talk) on port 3200 |
 | `pnpm sidecar`    | Alfred:Home conversation+memory sidecar (localhost:3100) |
 | `pnpm mint-token` | Print a LiveKit join token (Meet / Playground)         |
 | `pnpm memory`     | Inspect / export / import local long-term memory       |
@@ -54,7 +55,7 @@ Deepgram Flux (flux-general-en)
 Media: LiveKit transport via @alfred/livekit (policy stays in @alfred/core)
 ```
 
-Prereqs in `.env`: `DEEPGRAM_API_KEY`, `OPENAI_API_KEY`, `ELEVENLABS_API_KEY`, `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`.
+Prereqs in `.env`: `DEEPGRAM_API_KEY` (optional on Mac — falls back to Apple on-device Speech), `OPENAI_API_KEY` (Grok failover via `GROK_API_KEY`), `ELEVENLABS_API_KEY`, `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`.
 
 ### Experimental GPT-Live (`pnpm voice:live`)
 

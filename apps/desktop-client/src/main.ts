@@ -17,6 +17,7 @@ import { readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { startCloudConnect, stopCloudConnect } from "./lib/cloud-connect.js";
+import { endLiveConversation } from "./lib/livekit-session-end.js";
 import { startXIngestScheduler } from "./lib/x-ingest-schedule.js";
 import { sidecarHostname, sidecarPort, isSidecarMode } from "./lib/sidecar-mode.js";
 import { sidecarRuntimeReady, warmupSidecarMemory } from "./lib/text-session.js";
@@ -187,6 +188,9 @@ const server = serve({ fetch: app.fetch, port, hostname }, (info) => {
   console.log(`  Relay: ${process.env.ALFRD_RELAY_URL ?? "wss://api.alfrd.net"}`);
   console.log(`  Name:  ${process.env.DESKTOP_CLIENT_NAME ?? "Alfred"}`);
   console.log(`  Voice agent: run \`pnpm voice\` separately for Talk audio`);
+  void endLiveConversation().catch((err) => {
+    console.warn("[livekit] leftover room sweep failed:", err);
+  });
 });
 
 if ("requestTimeout" in server) {

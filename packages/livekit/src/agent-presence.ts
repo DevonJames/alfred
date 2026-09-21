@@ -18,16 +18,25 @@ function httpHostFromLiveKitUrl(url: string): string {
  * Used by desktop `/api/session/status` so iOS can tell empty-room joins apart
  * from a healthy Mac voice process.
  */
-export async function isAgentInRoom(opts: AgentPresenceOptions): Promise<boolean> {
-  const identity = opts.identity ?? "alfred-agent";
+async function listIdentities(opts: AgentPresenceOptions): Promise<string[]> {
   const host = httpHostFromLiveKitUrl(opts.url);
   const client = new RoomServiceClient(host, opts.apiKey, opts.apiSecret);
   try {
     const participants = await client.listParticipants(opts.roomName);
-    return participants.some(
-      (p) => p.identity === identity || p.identity.startsWith(`${identity}-`),
-    );
+    return participants.map((p) => p.identity).filter((id): id is string => Boolean(id));
   } catch {
-    return false;
+    return [];
   }
+}
+
+export async function isAgentInRoom(opts: AgentPresenceOptions): Promise<boolean> {
+  const identity = opts.identity ?? "alfred-agent";
+  const identities = await listIdentities(opts);
+  return identities.some((id) => id === identity || id.startsWith(`${identity}-`));
+}
+
+/** True when an iPhone Talk peer is already in the room. */
+export async function roomHasPhoneParticipant(opts: AgentPresenceOptions): Promise<boolean> {
+  const identities = await listIdentities(opts);
+  return identities.some((id) => id.startsWith("alfred-ios"));
 }

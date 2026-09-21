@@ -21,6 +21,7 @@
     "@alfred/memory": "workspace:^",
     "@alfred/persistence": "workspace:^",
     "@alfred/provider-openai": "workspace:^",
+    "@alfred/provider-xai": "workspace:^",
     "@alfred/providers": "workspace:^",
     "@hono/node-server": "^1.13.7",
     "dotenv": "^16.4.7",

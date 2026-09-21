@@ -11,7 +11,7 @@ IOS ?= 0
 # cascade (default) | live (GPT-Live / Ripple)
 VOICE ?= cascade
 
-.PHONY: alfred alfred-ios alfred-live help
+.PHONY: alfred alfred-ios alfred-live alfredbot help
 
 help:
 	@echo "make alfred              Start pnpm desktop + pnpm voice (cascade)"
@@ -19,10 +19,16 @@ help:
 	@echo "make alfred IOS=1        Also start Expo Dev Client with --tunnel"
 	@echo "make alfred-live         Alias for make alfred VOICE=live"
 	@echo "make alfred-ios          Alias for make alfred IOS=1"
+	@echo "make alfredbot           AlfredBot kiosk host (http://127.0.0.1:3200)"
 
 alfred:
 	@cd "$(ROOT)" && \
 	trap 'echo ""; echo "Stopping Alfred…"; kill 0' INT TERM EXIT; \
+	if [ "$(VOICE)" != "live" ] && [ "$(uname -s)" = "Darwin" ]; then \
+		echo "→ build Apple on-device STT helper"; \
+		pnpm --filter @alfred/provider-apple-stt run build:native || \
+		  echo "  (Apple STT helper build failed — Deepgram still used if keyed)"; \
+	fi; \
 	echo "→ desktop (http://127.0.0.1:3000)"; \
 	if [ "$(VOICE)" = "live" ]; then \
 		echo "→ voice:live (GPT-Live / Ripple)  ALFRED_VOICE_STACK=live"; \
@@ -45,3 +51,6 @@ alfred-live:
 
 alfred-ios:
 	@$(MAKE) alfred IOS=1
+
+alfredbot:
+	@cd "$(ROOT)" && pnpm alfredbot

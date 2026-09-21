@@ -4,6 +4,8 @@
  *
  * All publishes are fire-and-forget so captions never sit on the audio path.
  */
+import type { ExpressionEvent } from "@alfred/contracts";
+import { EXPRESSION_TOPIC } from "@alfred/contracts";
 import type { Room } from "@livekit/rtc-node";
 import { isTimedString, type TimedString } from "@livekit/agents";
 
@@ -13,6 +15,7 @@ export type UiTranscriptPublisher = {
   revealCaption(text: string): void;
   endCaption(reason?: string): void;
   resetAssistant(): void;
+  publishExpression(event: ExpressionEvent): void;
   /** Tee an agent transcription stream: pass-through chunks + parallel HUD updates. */
   teeTranscription(
     text: AsyncIterable<string | TimedString>,
@@ -32,7 +35,10 @@ export function createRoomUiTranscriptPublisher(getRoom: () => Room | undefined)
   let lastReveal = "";
   let lastRevealAt = 0;
 
-  const publish = (channel: "alfred.caption" | "alfred.user", event: Record<string, unknown>) => {
+  const publish = (
+    channel: "alfred.caption" | "alfred.user" | typeof EXPRESSION_TOPIC,
+    event: Record<string, unknown>,
+  ) => {
     const room = getRoom();
     const participant = room?.localParticipant;
     if (!participant) return;
@@ -107,6 +113,10 @@ export function createRoomUiTranscriptPublisher(getRoom: () => Room | undefined)
       captionStarted = false;
       lastReveal = "";
       lastRevealAt = 0;
+    },
+
+    publishExpression(event) {
+      publish(EXPRESSION_TOPIC, { ...event });
     },
 
     async *teeTranscription(text) {

@@ -33,6 +33,11 @@ import {
   OPENAI_TERRA_PROVIDER_ID,
   OpenAiResponsesLLMProvider,
 } from "@alfred/provider-openai";
+import {
+  resolveGrokApiKey,
+  XAI_GROK_PROVIDER_ID,
+  XaiGrokLLMProvider,
+} from "@alfred/provider-xai";
 import { oipForProfile, personaDirForProfile } from "./oip-memory.js";
 
 export type SessionKeyParts = {
@@ -79,17 +84,26 @@ async function buildRuntime(sessionKey: string, parts: SessionKeyParts): Promise
   };
 
   const openaiKey = process.env.OPENAI_API_KEY?.trim();
-  const llmId = openaiKey ? OPENAI_TERRA_PROVIDER_ID : "llm.desktop.fake";
+  const grokKey = resolveGrokApiKey();
+  const llmIds: string[] = [];
 
   if (openaiKey) {
     registry.registerLlm(new OpenAiResponsesLLMProvider({ apiKey: openaiKey }));
-  } else {
+    llmIds.push(OPENAI_TERRA_PROVIDER_ID);
+  }
+  if (grokKey) {
+    registry.registerLlm(new XaiGrokLLMProvider({ apiKey: grokKey }));
+    llmIds.push(XAI_GROK_PROVIDER_ID);
+  }
+  if (llmIds.length === 0) {
+    const llmId = "llm.desktop.fake";
+    llmIds.push(llmId);
     registry.registerLlm(
       new FakeLLMProvider(
         llmId,
         {
           reply: (user) =>
-            `I heard: "${user}". (Desktop text path — set OPENAI_API_KEY for full replies.)`,
+            `I heard: "${user}". (Desktop text path — set OPENAI_API_KEY or GROK_API_KEY for full replies.)`,
         },
         clock,
         "Desktop Fake LLM",
@@ -110,8 +124,11 @@ async function buildRuntime(sessionKey: string, parts: SessionKeyParts): Promise
     },
     llmPriority: {
       modality: "llm",
-      orderedProviderIds: [llmId],
-      settings: failoverSettings(),
+      orderedProviderIds: llmIds,
+      settings: {
+        ...failoverSettings(),
+        consecutiveFailureThreshold: 1,
+      },
     },
     ttsPriority: {
       modality: "tts",

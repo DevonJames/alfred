@@ -27,9 +27,9 @@ import type {
   PublicCandidate,
   RebuildReport,
   Reminder,
+  ChatTurnResponse,
   SessionEvent,
   SessionToken,
-  TurnResponse,
   VerifyReport,
 } from "./types";
 
@@ -287,12 +287,13 @@ export async function requestPairing(
   baseUrl: string,
   deviceName: string,
   cloudToken: string | null,
-  appVersion = "1.0.0"
+  appVersion = "1.0.0",
+  deviceType: "ios" | "robot" = "ios"
 ): Promise<{ deviceId: string; expiresInSeconds: number; devPin?: string; autoPaired: boolean }> {
   const raw = await pairCall<Record<string, unknown>>(
     baseUrl,
     "/pair/request",
-    { device: { name: deviceName, device_type: "ios", app_version: appVersion } },
+    { device: { name: deviceName, device_type: deviceType, app_version: appVersion } },
     cloudToken
   );
   const body = raw ?? {};
@@ -360,10 +361,18 @@ function parseVoiceStack(raw: unknown): import("./types").VoiceStack | null {
   return null;
 }
 
-export function sessionToken(mode: "voice" | "text" = "voice") {
+export function sessionToken(
+  mode: "voice" | "text" = "voice",
+  opts: { join?: "robot"; dispatch?: boolean } = {},
+) {
   return call<Record<string, unknown>>("/api/session/token", {
     method: "POST",
-    body: { mode },
+    body: {
+      mode,
+      client: "ios",
+      ...(opts.join ? { join: opts.join } : {}),
+      ...(opts.dispatch === false ? { dispatch: false } : {}),
+    },
   }).then((body): SessionToken => {
     const url = pick<string>(body, "url", "livekitUrl", "livekit_url") ?? null;
     const token = pick<string>(body, "token", "accessToken", "access_token") ?? null;
@@ -434,14 +443,29 @@ export function interruptSession(reason = "user_barge_in") {
 }
 
 export function sendTurn(text: string, opts: { sessionId?: string; source?: "voice" | "text" } = {}) {
-  return call<TurnResponse>("/api/conversation/turn", {
+  return call<Record<string, unknown>>("/api/conversation/turn", {
     method: "POST",
     body: {
       text,
       timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      // Desktop SessionOrchestrator accepts either; keep both for older builds.
       source: opts.source ?? "text",
+      channel: opts.source ?? "text",
       sessionId: opts.sessionId,
     },
+  }).then((body): ChatTurnResponse => {
+    const recentRaw = body.recentTurns ?? body.recent_turns;
+    const recentTurns = Array.isArray(recentRaw)
+      ? (recentRaw as ChatTurnResponse["recentTurns"])
+      : undefined;
+    return {
+      sessionId: String(pick<string>(body, "sessionId", "session_id") ?? opts.sessionId ?? ""),
+      assistantText: pick<string>(body, "assistantText", "assistant_text") ?? undefined,
+      recentTurns,
+      state: pick<string>(body, "state") ?? undefined,
+      userTurn: (body.userTurn ?? body.user_turn) as ConversationTurn | undefined,
+      assistantTurn: (body.assistantTurn ?? body.assistant_turn) as ConversationTurn | undefined,
+    };
   });
 }
 

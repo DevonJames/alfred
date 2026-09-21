@@ -1,0 +1,19 @@
+[Unit]
+Description=AlfredBot Chromium kiosk
+After=alfredbot.service graphical.target display-manager.service
+Wants=alfredbot.service
+Requires=alfredbot.service
+
+[Service]
+Type=simple
+User=alfred
+Environment=HOME=/home/alfred
+Environment=XDG_RUNTIME_DIR=/run/user/1000
+Environment=DISPLAY=:0
+Environment=XAUTHORITY=/home/alfred/.Xauthority
+ExecStart=/home/alfred/alfredbot/start-kiosk.sh
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=graphical.target

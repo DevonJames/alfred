@@ -4,7 +4,7 @@
     "slug": "alfred",
     "scheme": "alfred",
     "version": "1.0.0",
-    "orientation": "portrait",
+    "orientation": "default",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "icon": "./assets/icon.png",
@@ -22,11 +22,16 @@
         "CFBundleDisplayName": "Alfred",
         "NSMicrophoneUsageDescription": "Alfred listens only while you're speaking to it, and sends what you say to your own Mac to answer. Nothing is recorded or stored on this phone.",
         "NSPhotoLibraryUsageDescription": "Attach photos to something you'd like Alfred to remember. They're sent to your Mac and stored there.",
-        "NSCameraUsageDescription": "Scan the claim QR code shown on your Mac to link this phone to Alfred.",
+        "NSCameraUsageDescription": "Scan the claim code on your Mac, or the code on AlfredBot, to link this phone.",
         "NSLocalNetworkUsageDescription": "Alfred looks for your Mac on your local network first, so your conversation never leaves the house when it doesn't have to.",
         "NSAppTransportSecurity": {
           "NSAllowsLocalNetworking": true
         },
+        "UISupportedInterfaceOrientations": [
+          "UIInterfaceOrientationPortrait",
+          "UIInterfaceOrientationLandscapeLeft",
+          "UIInterfaceOrientationLandscapeRight"
+        ],
         "UIBackgroundModes": [
           "audio",
           "voip"
@@ -55,7 +60,7 @@
       [
         "expo-camera",
         {
-          "cameraPermission": "Scan the claim QR code shown on your Mac to link this phone to Alfred."
+          "cameraPermission": "Scan the claim code on your Mac, or the code on AlfredBot, to link this phone."
         }
       ],
       "expo-notifications",

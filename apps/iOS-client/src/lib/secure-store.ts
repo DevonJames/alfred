@@ -24,6 +24,18 @@ export const KEYS = {
   inputMode: "alfred_input_mode",
   permissionPrimerSeen: "alfred_permission_primer_seen",
   pairingDeferred: "alfred_pairing_deferred",
+  /** When "1", Talk joins AlfredBot's LiveKit room and this phone is mic + speaker. */
+  robotAudio: "alfred_robot_audio",
+  /** When "1", Talk uses the shared robot room. "0" is phone-only Talk. */
+  robotTalk: "alfred_robot_talk",
+  /** Last reached AlfredBot host, set after a successful claim. */
+  robotHost: "alfred_robot_host",
+  /** "1" = invert neck + roll left/right (standing behind him). */
+  headInvertLR: "alfred_head_invert_lr",
+  /** "1" = mirror the Head-tab camera after the 90° CCW rotate. */
+  headCameraMirror: "alfred_head_camera_mirror",
+  /** "1" = drive as if standing in front (swap sides + invert forward). */
+  wheelsFacingMe: "alfred_wheels_facing_me",
 } as const;
 
 export type StorageKey = (typeof KEYS)[keyof typeof KEYS];

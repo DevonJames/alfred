@@ -6,9 +6,9 @@
  * holds the data, and the UI says so rather than silently failing.
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { router } from "expo-router";
+import { router, useFocusEffect, type Href } from "expo-router";
 import { Check, Lock } from "lucide-react-native";
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
 import Animated, { FadeIn } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -31,6 +31,13 @@ import { rediscover } from "@/lib/discovery";
 import { useMirror } from "@/lib/memory-cache";
 import { syncMirror, useMirrorSync } from "@/lib/mirror-sync";
 import { describeCopy } from "@/lib/recall";
+import {
+  isRobotAudioEnabled,
+  isRobotClaimed,
+  isRobotTalkEnabled,
+  setRobotTalkEnabled,
+  setTalkAudioRoute,
+} from "@/lib/robot-audio";
 import { storageIsSecure } from "@/lib/secure-store";
 import { useSession } from "@/lib/session";
 import type { DesktopSettings } from "@/lib/types";
@@ -69,6 +76,28 @@ export default function Settings() {
   const paired = useConnection((s) => Boolean(s.deviceToken));
 
   const [confirm, setConfirm] = useState<"unpair" | "unlink" | "reset" | null>(null);
+  const [robotAudio, setRobotAudio] = useState(false);
+  const [robotClaimed, setRobotClaimed] = useState(false);
+  const [robotTalk, setRobotTalk] = useState(false);
+  const [audioRouteError, setAudioRouteError] = useState<string | null>(null);
+  const [audioRouteBusy, setAudioRouteBusy] = useState(false);
+  const [talkModeBusy, setTalkModeBusy] = useState(false);
+
+  const refreshRobot = useCallback(() => {
+    void Promise.all([isRobotAudioEnabled(), isRobotClaimed(), isRobotTalkEnabled()]).then(
+      ([audio, claimed, talk]) => {
+        setRobotAudio(audio);
+        setRobotClaimed(claimed);
+        setRobotTalk(talk);
+      }
+    );
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      refreshRobot();
+    }, [refreshRobot])
+  );
 
   const mirrorEnabled = useMirror((s) => s.enabled);
   const mirrorCount = useMirror((s) => Object.keys(s.records).length);
@@ -345,6 +374,145 @@ export default function Settings() {
               </Text>
             </View>
           ) : null}
+        </View>
+
+        <View className="mt-10">
+          <Label>AlfredBot</Label>
+          {robotClaimed ? (
+            <View className="mt-3 space-y-3">
+              <Pressable
+                testID="talk-mode-phone"
+                disabled={talkModeBusy}
+                onPress={async () => {
+                  setTalkModeBusy(true);
+                  try {
+                    await setRobotTalkEnabled(false);
+                    setRobotTalk(false);
+                  } finally {
+                    setTalkModeBusy(false);
+                  }
+                }}
+                className="active:opacity-70"
+              >
+                <Card className={cn(!robotTalk && "border-brass/40")}>
+                  <View className="flex-row items-center justify-between">
+                    <Text className={cn("text-base", !robotTalk ? "text-brass" : "text-bone")}>
+                      This phone only
+                    </Text>
+                    {!robotTalk ? <Check color="#D8A54A" size={16} /> : null}
+                  </View>
+                  <Text className="mt-1.5 text-xs leading-5 text-faint">
+                    Talk on this iPhone. AlfredBot does not need to be online. Start a new Talk
+                    after changing this.
+                  </Text>
+                </Card>
+              </Pressable>
+              <Pressable
+                testID="talk-mode-robot"
+                disabled={talkModeBusy}
+                onPress={async () => {
+                  setTalkModeBusy(true);
+                  try {
+                    await setRobotTalkEnabled(true);
+                    setRobotTalk(true);
+                  } finally {
+                    setTalkModeBusy(false);
+                  }
+                }}
+                className="active:opacity-70"
+              >
+                <Card className={cn(robotTalk && "border-brass/40")}>
+                  <View className="flex-row items-center justify-between">
+                    <Text className={cn("text-base", robotTalk ? "text-brass" : "text-bone")}>
+                      Include AlfredBot
+                    </Text>
+                    {robotTalk ? <Check color="#D8A54A" size={16} /> : null}
+                  </View>
+                  <Text className="mt-1.5 text-xs leading-5 text-faint">
+                    Join AlfredBot's room so he can listen and speak. He must be online. Start a
+                    new Talk after changing this.
+                  </Text>
+                </Card>
+              </Pressable>
+              {robotTalk ? (
+                <>
+                  <Pressable
+                    testID="talk-audio-phone"
+                    disabled={audioRouteBusy}
+                    onPress={async () => {
+                      setAudioRouteBusy(true);
+                      setAudioRouteError(null);
+                      try {
+                        await setTalkAudioRoute("phone");
+                        setRobotAudio(true);
+                      } catch (err) {
+                        setAudioRouteError(err instanceof Error ? err.message : String(err));
+                      } finally {
+                        setAudioRouteBusy(false);
+                      }
+                    }}
+                    className="active:opacity-70"
+                  >
+                    <Card className={cn(robotAudio && "border-brass/40")}>
+                      <View className="flex-row items-center justify-between">
+                        <Text className={cn("text-base", robotAudio ? "text-brass" : "text-bone")}>
+                          Hear him on this iPhone
+                        </Text>
+                        {robotAudio ? <Check color="#D8A54A" size={16} /> : null}
+                      </View>
+                      <Text className="mt-1.5 text-xs leading-5 text-faint">
+                        This phone is his microphone and speaker. AlfredBot's own audio stays off.
+                      </Text>
+                    </Card>
+                  </Pressable>
+                  <Pressable
+                    testID="talk-audio-robot"
+                    disabled={audioRouteBusy}
+                    onPress={async () => {
+                      setAudioRouteBusy(true);
+                      setAudioRouteError(null);
+                      try {
+                        await setTalkAudioRoute("robot");
+                        setRobotAudio(false);
+                      } catch (err) {
+                        setAudioRouteError(err instanceof Error ? err.message : String(err));
+                      } finally {
+                        setAudioRouteBusy(false);
+                      }
+                    }}
+                    className="active:opacity-70"
+                  >
+                    <Card className={cn(!robotAudio && "border-brass/40")}>
+                      <View className="flex-row items-center justify-between">
+                        <Text className={cn("text-base", !robotAudio ? "text-brass" : "text-bone")}>
+                          Hear him on AlfredBot
+                        </Text>
+                        {!robotAudio ? <Check color="#D8A54A" size={16} /> : null}
+                      </View>
+                      <Text className="mt-1.5 text-xs leading-5 text-faint">
+                        The robot uses his own mic and speakers. This phone is Start / Stop and
+                        captions. Start a new Talk after changing this.
+                      </Text>
+                    </Card>
+                  </Pressable>
+                  {audioRouteError ? (
+                    <Text className="text-xs leading-5 text-rose-300">{audioRouteError}</Text>
+                  ) : null}
+                </>
+              ) : null}
+            </View>
+          ) : (
+            <Text className="mt-3 text-xs leading-5 text-faint">
+              Claim AlfredBot to include him in Talk, or keep talking on this phone alone.
+            </Text>
+          )}
+          <Button
+            testID="claim-alfredbot"
+            className="mt-3"
+            variant="ghost"
+            label="Claim AlfredBot"
+            onPress={() => router.push("/claim-bot" as Href)}
+          />
         </View>
 
         <View className="mt-10">

@@ -43,6 +43,7 @@ apps/voice-agent                Cascaded voice runtime
 apps/voice-client               Browser Talk UI
 apps/desktop-client             Local host (UI, pairing, memory/notes HTTP)
 apps/iOS-client                 Expo Talk / notes / memory client
+apps/alfredbot                  Raspberry Pi kiosk (Wi-Fi, pair, face, LiveKit)
 ```
 
 Dependency rule: adapters and apps depend on `contracts` / `core`. Core depends on `contracts` and persistence interfaces. Vendor SDKs never appear in `contracts`.
@@ -192,10 +193,12 @@ Shipped transport hygiene (still not policy):
 - Browser `/voice/` uses a connect/disconnect state machine and `pagehide` leave so Start/Stop races do not orphan `alfred-client` peers
 - iOS hold-to-talk leaves the room after 90s with mic off; chat layout, continuous Stop, and CallKit End disconnect instead of parking muted peers
 
-Default identities: agent `alfred-agent`, desktop browser `alfred-client`, phone `alfred-ios-*`. Room default `alfred-dev`.
+Default identities: agent `alfred-agent`, desktop browser `alfred-client`, phone `alfred-ios-*`, robot `alfred-robot-*`. Room default `alfred-dev`.
 
 ## Desktop and iOS surfaces
 
 `apps/desktop-client` is the local product host (`127.0.0.1:3000`): Talk UI, briefing, notes, classic graph, Graph (beta), Vector Explorer, ingest, claim/pair, and authenticated `/api/*` for the phone.
 
 `apps/iOS-client` is a LiveKit participant + device-bearer API client. It does not host Conversation Core or the canonical memory filesystem. Pairing and voice protocols: [ios-desktop-pairing.md](./ios-desktop-pairing.md), [ios-livekit-voice.md](./ios-livekit-voice.md).
+
+`apps/alfredbot` is the same kind of client on a Raspberry Pi (Chromium kiosk + local Node host): accountless claim → discovery → PIN, then LiveKit mic/speaker/camera. GPT-Live expressions arrive on `alfred.expression` from the `show_expression` tool.

@@ -27,8 +27,9 @@ import { AlfredMarkdown } from "@/components/AlfredMarkdown";
 import { Backdrop, BRASS, ConnectionPill, Display, Notice } from "@/components/ui";
 import { cn } from "@/lib/cn";
 import { useConnection } from "@/lib/connection";
+import { isRobotAudioEnabled, isRobotTalkEnabled } from "@/lib/robot-audio";
 import { rediscover } from "@/lib/discovery";
-import { sendTurn } from "@/lib/desktop-api";
+import { desktopErrorMessage, sendTurn } from "@/lib/desktop-api";
 import { stripMarkdown } from "@/lib/markdown";
 import { useConversationSession, useSession } from "@/lib/session";
 import type { ConversationTurn } from "@/lib/types";
@@ -112,6 +113,8 @@ export default function Talk() {
   const [micMuted, setMicMuted] = useState(false);
   const [waveCollapsed, setWaveCollapsed] = useState(false);
   const [draft, setDraft] = useState("");
+  const [robotAudio, setRobotAudio] = useState(false);
+  const [robotTalk, setRobotTalk] = useState(false);
 
   const turns = useSession((s) => s.turns);
   const partial = useSession((s) => s.partial);
@@ -127,6 +130,7 @@ export default function Talk() {
   const agentPresent = useVoice((s) => s.agentPresent);
   const agentAudioTrack = useVoice((s) => s.agentAudioTrack);
   const voiceError = useVoice((s) => s.error);
+  const endedByUser = useVoice((s) => s.endedByUser);
   const userPartial = useVoice((s) => s.userPartial);
   const userFinal = useVoice((s) => s.userFinal);
   const captionSpeaking = useVoice((s) => s.caption.speaking);
@@ -140,17 +144,29 @@ export default function Talk() {
 
   const voiceBlocked = blocker !== "none";
   const inVoiceLayout = layout === "voice" && !voiceBlocked;
+  const robotSession = robotTalk;
+  const phoneIsVoice = !robotTalk || robotAudio;
 
   useFocusEffect(
     useCallback(() => {
       setFocused(true);
+      void Promise.all([isRobotAudioEnabled(), isRobotTalkEnabled()]).then(([audio, talk]) => {
+        setRobotAudio(audio);
+        setRobotTalk(talk);
+      });
       return () => setFocused(false);
     }, [])
   );
 
+  // Hold-to-talk ends when you leave Talk. Continuous / robot-as-voice stays
+  // up across other tabs, like the desktop iframe.
   useEffect(() => {
-    if (!focused) stop().catch(() => {});
-  }, [focused, stop]);
+    if (focused) return;
+    const conversation =
+      robotSession || (micMode === "continuous" && continuousActive);
+    if (conversation && phase === "live") return;
+    void stop().catch(() => {});
+  }, [continuousActive, focused, micMode, phase, robotSession, stop]);
 
   useEffect(() => {
     if (voiceBlocked) setUiLayout("chat");
@@ -166,13 +182,51 @@ export default function Talk() {
 
   const sendText = useMutation({
     mutationFn: async (text: string) => {
+      // Prefer the live room so typed turns join the same GPT-Live / cascade
+      // session as speech. HTTP is the offline / chat-only fallback.
       if (phase === "live") {
         await sendVoiceText(text);
-        return;
+        return null;
       }
-      await sendTurn(text, { source: "text" });
+      const sessionId = useSession.getState().token?.sessionId;
+      return sendTurn(text, { source: "text", sessionId });
     },
-    onMutate: () => setDraft(""),
+    onMutate: (text) => {
+      setDraft("");
+      useSession.getState().set({ state: "thinking", error: null });
+      if (phase === "live") {
+        const now = new Date().toISOString();
+        const sessionId = useSession.getState().token?.sessionId ?? "";
+        useSession.getState().applyChatReply(
+          {
+            sessionId,
+            userTurn: {
+              id: `chat-user-${now}`,
+              sessionId,
+              role: "user",
+              text,
+              ledger: "delivered",
+              addendumOf: null,
+              memoryIdsUsed: [],
+              createdAt: now,
+            },
+          },
+          text
+        );
+      }
+      return { text };
+    },
+    onSuccess: (reply, text) => {
+      if (!reply) return;
+      useSession.getState().applyChatReply(reply, text);
+    },
+    onError: (err, _text, ctx) => {
+      if (ctx?.text) setDraft(ctx.text);
+      useSession.getState().set({
+        state: "idle",
+        error: desktopErrorMessage(err, "Couldn't send that message."),
+      });
+    },
   });
 
   const switchLayout = useCallback(
@@ -181,54 +235,58 @@ export default function Talk() {
       Haptics.selectionAsync();
       setUiLayout(next);
       if (next === "chat") {
-        // Leave LiveKit entirely — chat uses HTTP turns, not a parked SFU peer.
+        // Stay in the LiveKit room so typed sends reach GPT-Live / cascade.
         setContinuousActive(false);
-        await stop().catch(() => {});
+        if (phase === "live") {
+          await setLayout("chat");
+        }
         return;
       }
-      // voice — continuous arms the mic (desktop); hold joins quiet until PTT
+      // voice — continuous arms the mic (desktop); hold joins quiet until PTT.
+      // Robot-audio mode is always-on: this phone *is* his ears.
       if (voiceBlocked) return;
-      const armMic = micMode === "continuous";
-      const joined = await start({ mic: armMic && !micMuted });
+      const armMic = robotSession || micMode === "continuous";
+      const enableMic = phoneIsVoice && (robotAudio || (armMic && !micMuted) || micMode === "hold");
+      const joined = await start({ mic: enableMic });
       if (!joined) {
         setUiLayout("chat");
         return;
       }
       setContinuousActive(armMic);
-      await publishControl({ type: "mute", muted: micMuted });
-      await setLayout("voice", { mic: armMic && !micMuted });
+      await publishControl({ type: "mute", muted: phoneIsVoice ? micMuted : true });
+      await setLayout("voice", { mic: enableMic });
     },
-    [layout, micMode, micMuted, publishControl, setLayout, start, stop, voiceBlocked]
+    [layout, micMode, micMuted, phase, phoneIsVoice, publishControl, robotAudio, robotSession, setLayout, start, voiceBlocked]
   );
 
   /** Arm the mic: PTT press, or continuous Start (desktop-style open listen). */
   const openMic = useCallback(async () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    const wantMic = micMode === "continuous" ? !micMuted : true;
+    const wantMic = phoneIsVoice && (robotAudio || (micMode === "continuous" ? !micMuted : true));
     const joined = await start({ mic: wantMic });
     if (!joined) {
       setUiLayout("chat");
       return;
     }
-    if (micMode === "continuous") setContinuousActive(true);
-    await publishControl({ type: "mute", muted: micMuted });
+    if (robotSession || micMode === "continuous") setContinuousActive(true);
+    await publishControl({ type: "mute", muted: phoneIsVoice ? micMuted : true });
     await setLayout("voice", { mic: wantMic });
-  }, [micMode, micMuted, publishControl, setLayout, start]);
+  }, [micMode, micMuted, phoneIsVoice, publishControl, robotAudio, robotSession, setLayout, start]);
 
   /**
-   * Release PTT, or continuous Stop.
-   * Hold-to-talk only mutes (Alfred may still be speaking). Continuous Stop
-   * fully leaves the room — muting alone was leaking `alfred-ios-*` peers.
+   * Release PTT, or hang up.
+   * Hold-to-talk only mutes (Alfred may still be speaking). Continuous / robot
+   * Stop ends GPT-Live — muting alone was leaking peers and session minutes.
    */
   const closeMic = useCallback(async () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    if (micMode === "continuous") {
+    if (robotSession || micMode === "continuous") {
       setContinuousActive(false);
-      await stop().catch(() => {});
+      await stop({ endedByUser: true }).catch(() => {});
       return;
     }
     await setMic(false);
-  }, [micMode, setMic, stop]);
+  }, [micMode, robotSession, setMic, stop]);
 
   const toggleMute = useCallback(async () => {
     Haptics.selectionAsync();
@@ -270,30 +328,44 @@ export default function Talk() {
     }
   }, [phase]);
 
-  // Pocket / lock-screen: keep the LiveKit room up only while Continuous is active.
+  // Pocket / lock-screen: keep the room up while a conversation is active.
   useEffect(() => {
-    const keep = micMode === "continuous" && continuousActive;
+    const keep =
+      phase === "live" &&
+      (robotSession || (micMode === "continuous" && continuousActive));
     setVoice({ keepAliveInBackground: keep });
-  }, [continuousActive, micMode, setVoice]);
+  }, [continuousActive, micMode, phase, robotSession, setVoice]);
 
-  // Hold-to-talk (and continuous after Stop) must not park forever in the SFU
-  // with mic off — that stacked dozens of alfred-ios-* participants per week.
+  // Hold-to-talk must not park forever in the SFU with mic off.
   useEffect(() => {
     if (phase !== "live") return;
+    if (robotSession) return;
     if (micMode === "continuous" && continuousActive) return;
     if (micEnabled) return;
     const timer = setTimeout(() => {
       void stop().catch(() => {});
     }, HOLD_IDLE_DISCONNECT_MS);
     return () => clearTimeout(timer);
-  }, [continuousActive, micEnabled, micMode, phase, stop]);
+  }, [continuousActive, micEnabled, micMode, phase, robotSession, stop]);
+
+  // Robot-as-voice: opening Talk starts a conversation unless they just hung up.
+  useEffect(() => {
+    if (!focused || !robotSession || voiceBlocked || layout !== "voice") return;
+    if (endedByUser) return;
+    if (phase !== "idle") return;
+    void start({ mic: phoneIsVoice }).then((ok) => {
+      if (ok) setContinuousActive(true);
+    });
+  }, [endedByUser, focused, layout, phase, phoneIsVoice, robotSession, start, voiceBlocked]);
 
   // CallKit keep-alive is only needed once iOS would suspend WebRTC (lock / pocket).
   // Starting it in the foreground has crashed continuous mode on device builds, so
-  // arm CallKit only when leaving the foreground while a continuous session is live.
+  // arm CallKit only when leaving the foreground while a conversation is live.
   useEffect(() => {
-    const continuousLive = micMode === "continuous" && continuousActive && phase === "live";
-    if (!continuousLive) {
+    const conversationLive =
+      phase === "live" &&
+      (robotSession || (micMode === "continuous" && continuousActive));
+    if (!conversationLive) {
       void stopCallService();
       return;
     }
@@ -309,7 +381,7 @@ export default function Talk() {
       sub.remove();
       void stopCallService();
     };
-  }, [continuousActive, micMode, phase]);
+  }, [continuousActive, micMode, phase, robotSession]);
 
   useEffect(() => {
     setCallServiceHandlers({
@@ -317,7 +389,7 @@ export default function Talk() {
         // CallKit "End" must leave LiveKit, not just mute — otherwise the peer
         // stays billed while the UI looks idle.
         setContinuousActive(false);
-        void stop().catch(() => {});
+        void stop({ endedByUser: true }).catch(() => {});
         void stopCallService();
       },
       onMute: (muted) => {
@@ -333,10 +405,11 @@ export default function Talk() {
     setCallServiceMuted(micMuted);
   }, [micMuted]);
 
-  // Drop CallKit when leaving the Talk screen entirely.
+  // Drop CallKit only when this screen goes away *and* we are not keeping
+  // a conversation alive on another tab.
   useEffect(() => {
     return () => {
-      void stopCallService();
+      if (!useVoice.getState().keepAliveInBackground) void stopCallService();
     };
   }, []);
 
@@ -377,6 +450,16 @@ export default function Talk() {
           />
         </View>
 
+        {robotSession ? (
+          <View style={{ marginBottom: 8 }}>
+            <Notice tone="info" testID="robot-audio-banner">
+              {phoneIsVoice
+                ? "This iPhone is AlfredBot's microphone and speaker."
+                : "AlfredBot is listening and speaking. This phone is the remote."}
+            </Notice>
+          </View>
+        ) : null}
+
         {inVoiceLayout ? (
           <VoiceStage
             waveCollapsed={waveCollapsed}
@@ -391,6 +474,7 @@ export default function Talk() {
             scrollerRef={voiceScroller}
             micMode={micMode}
             onSelectMicMode={setMicModeAndApply}
+            conversation={robotSession || micMode === "continuous"}
             micEnabled={micEnabled}
             continuousActive={continuousActive}
             micMuted={micMuted}
@@ -507,6 +591,7 @@ function VoiceStage({
   scrollerRef,
   micMode,
   onSelectMicMode,
+  conversation,
   micEnabled,
   continuousActive,
   micMuted,
@@ -529,6 +614,7 @@ function VoiceStage({
   scrollerRef: RefObject<ScrollView | null>;
   micMode: VoiceMicMode;
   onSelectMicMode: (mode: VoiceMicMode) => void;
+  conversation: boolean;
   micEnabled: boolean;
   continuousActive: boolean;
   micMuted: boolean;
@@ -542,7 +628,7 @@ function VoiceStage({
   const ghost = fullCaption.length > caption.length ? fullCaption.slice(caption.length) : "";
   const hasTranscript = Boolean(caption || ghost || userFinal.length || userPartial);
   const latestUser = userPartial ?? (userFinal.length ? userFinal[userFinal.length - 1] : null);
-  const orbListening = micMode === "continuous" ? continuousActive : micEnabled;
+  const orbListening = conversation ? continuousActive : micEnabled;
 
   return (
     <View style={{ flex: 1 }} testID="voice-stage">
@@ -655,7 +741,7 @@ function VoiceStage({
                 accessibilityLabel="Shhh — stop Alfred speaking"
                 icon={<VoiceIcon source={ICONS.shhh} size={40} opacity={speaking ? 1 : 0.9} />}
               />
-              {micMode === "continuous" && continuousActive ? (
+              {conversation && continuousActive ? (
                 <ControlChip
                   testID="mute-mic"
                   active={micMuted}
@@ -669,7 +755,7 @@ function VoiceStage({
             <MicOrb
               listening={orbListening}
               busy={busy}
-              continuous={micMode === "continuous"}
+              continuous={conversation}
               onStart={onStart}
               onStop={onStop}
             />

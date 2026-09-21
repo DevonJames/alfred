@@ -1,10 +1,31 @@
 import { Tabs } from "expo-router";
-import { Archive, Mic, MessageSquare, Settings, Sunrise } from "lucide-react-native";
+import { Archive, Bot, Mic, MessageSquare, Settings, Sunrise } from "lucide-react-native";
+import { useEffect, useState } from "react";
+import { AppState } from "react-native";
 import { BRASS, INK } from "@/components/ui";
+import { isRobotClaimed } from "@/lib/robot-audio";
+import { VoiceSessionHost } from "@/lib/voice/use-voice";
 
 export default function TabLayout() {
+  const [claimed, setClaimed] = useState(false);
+
+  useEffect(() => {
+    const refresh = () => {
+      void isRobotClaimed().then(setClaimed);
+    };
+    refresh();
+    const sub = AppState.addEventListener("change", refresh);
+    const timer = setInterval(refresh, 1500);
+    return () => {
+      sub.remove();
+      clearInterval(timer);
+    };
+  }, []);
+
   return (
-    <Tabs
+    <>
+      <VoiceSessionHost />
+      <Tabs
       screenOptions={{
         headerShown: false,
         tabBarActiveTintColor: BRASS,
@@ -46,12 +67,21 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
+        name="control"
+        options={{
+          title: "Bot",
+          href: claimed ? undefined : null,
+          tabBarIcon: ({ color, size }) => <Bot color={color} size={size ?? 22} />,
+        }}
+      />
+      <Tabs.Screen
         name="settings"
         options={{
           title: "Settings",
           tabBarIcon: ({ color, size }) => <Settings color={color} size={size ?? 22} />,
         }}
       />
-    </Tabs>
+      </Tabs>
+    </>
   );
 }

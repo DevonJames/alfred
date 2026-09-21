@@ -5,11 +5,12 @@ import {
 } from "@expo-google-fonts/instrument-serif";
 import { DarkTheme, ThemeProvider } from "@react-navigation/native";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { Stack, useRouter } from "expo-router";
+import { Stack, useRouter, type Href } from "expo-router";
 import * as Linking from "expo-linking";
 import * as SplashScreen from "expo-splash-screen";
 import { StatusBar } from "expo-status-bar";
 import { useEffect } from "react";
+import { parseBotPayload } from "@/lib/bot-qr";
 import { parseClaimPayload } from "@/lib/claim-qr";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { KeyboardProvider } from "react-native-keyboard-controller";
@@ -50,6 +51,7 @@ function RootLayoutNav() {
         <Stack.Screen name="index" />
         <Stack.Screen name="(onboarding)" />
         <Stack.Screen name="(tabs)" />
+        <Stack.Screen name="claim-bot" options={{ presentation: "modal" }} />
         <Stack.Screen name="capture" options={{ presentation: "modal" }} />
         <Stack.Screen name="correct" options={{ presentation: "modal" }} />
         <Stack.Screen name="forget" options={{ presentation: "modal" }} />
@@ -67,11 +69,15 @@ export default function RootLayout() {
     InstrumentSerif_400Regular_Italic,
   });
 
-  // Warm/cold alfred://claim → onboarding claim screen (QR deep link).
+  // Warm/cold alfred://claim → Mac claim; alfred://bot → robot claim.
   useEffect(() => {
     const go = (url: string | null) => {
-      if (!url || !parseClaimPayload(url)) return;
-      router.push("/(onboarding)/claim");
+      if (!url) return;
+      if (parseBotPayload(url)) {
+        router.push("/claim-bot" as Href);
+        return;
+      }
+      if (parseClaimPayload(url)) router.push("/(onboarding)/claim");
     };
     void Linking.getInitialURL().then(go);
     const sub = Linking.addEventListener("url", ({ url }) => go(url));

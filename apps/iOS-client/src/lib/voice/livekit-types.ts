@@ -21,6 +21,7 @@ export type LKLocalParticipant = {
   identity: LocalParticipant["identity"];
   setMicrophoneEnabled: LocalParticipant["setMicrophoneEnabled"];
   publishData?: LocalParticipant["publishData"];
+  sendText?: LocalParticipant["sendText"];
 };
 export type LKRoom = {
   localParticipant: LKLocalParticipant;

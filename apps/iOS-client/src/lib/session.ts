@@ -17,7 +17,8 @@ import {
   sessionToken,
   transcript as transcriptCall,
 } from "./desktop-api";
-import type { ConversationTurn, SessionEvent, SessionToken } from "./types";
+import { isRobotTalkEnabled } from "./robot-audio";
+import type { ChatTurnResponse, ConversationTurn, SessionEvent, SessionToken } from "./types";
 
 export type SessionState = "idle" | "listening" | "thinking" | "speaking";
 
@@ -37,6 +38,8 @@ interface SessionStore {
   unavailable: boolean;
   set: (patch: Partial<SessionStore>) => void;
   applyEvents: (events: SessionEvent[]) => void;
+  /** Map an HTTP `/api/conversation/turn` reply into the visible transcript. */
+  applyChatReply: (reply: ChatTurnResponse, userText?: string) => void;
   reset: () => void;
 }
 
@@ -84,6 +87,53 @@ export const useSession = create<SessionStore>((set) => ({
       return { turns, partial };
     }),
 
+  applyChatReply: (reply, userText) =>
+    set((current) => {
+      const sessionId = reply.sessionId || current.token?.sessionId || "";
+      let turns = current.turns;
+
+      if (reply.userTurn) turns = upsertTurn(turns, reply.userTurn);
+      if (reply.assistantTurn) turns = upsertTurn(turns, reply.assistantTurn);
+
+      if (reply.recentTurns?.length) {
+        for (const raw of reply.recentTurns) {
+          const mapped = mapRecentTurn(raw, sessionId);
+          if (mapped) turns = upsertTurn(turns, mapped);
+        }
+      } else if (reply.assistantText?.trim()) {
+        const now = new Date().toISOString();
+        if (userText?.trim()) {
+          turns = upsertTurn(turns, {
+            id: `chat-user-${now}`,
+            sessionId,
+            role: "user",
+            text: userText.trim(),
+            ledger: "delivered",
+            addendumOf: null,
+            memoryIdsUsed: [],
+            createdAt: now,
+          });
+        }
+        turns = upsertTurn(turns, {
+          id: `chat-assistant-${now}`,
+          sessionId,
+          role: "assistant",
+          text: reply.assistantText.trim(),
+          ledger: "delivered",
+          addendumOf: null,
+          memoryIdsUsed: [],
+          createdAt: now,
+        });
+      }
+
+      return {
+        turns,
+        partial: null,
+        error: null,
+        state: mapDesktopState(reply.state) ?? current.state,
+      };
+    }),
+
   reset: () =>
     set({
       token: null,
@@ -105,6 +155,52 @@ function upsertTurn(turns: ConversationTurn[], turn: ConversationTurn | undefine
   return next;
 }
 
+function mapRecentTurn(
+  raw: NonNullable<ChatTurnResponse["recentTurns"]>[number],
+  fallbackSessionId: string
+): ConversationTurn | null {
+  const role = raw.role === "user" || raw.role === "assistant" ? raw.role : null;
+  const text = typeof raw.text === "string" ? raw.text : "";
+  if (!role || !text.trim()) return null;
+  const id =
+    typeof raw.id === "string" && raw.id
+      ? raw.id
+      : `chat-${role}-${raw.createdAt ?? text.slice(0, 24)}`;
+  return {
+    id,
+    sessionId:
+      typeof raw.sessionId === "string" && raw.sessionId ? raw.sessionId : fallbackSessionId,
+    role,
+    text,
+    ledger: "delivered",
+    addendumOf:
+      typeof raw.parentTurnId === "string"
+        ? raw.parentTurnId
+        : raw.isAddendum
+          ? (raw.parentTurnId ?? null)
+          : null,
+    memoryIdsUsed: [],
+    createdAt:
+      typeof raw.createdAt === "string" && raw.createdAt
+        ? raw.createdAt
+        : new Date().toISOString(),
+  };
+}
+
+function mapDesktopState(state: string | undefined): SessionState | null {
+  if (!state) return null;
+  const lower = state.toLowerCase();
+  if (lower.includes("speak") || lower.includes("synth")) return "speaking";
+  if (lower.includes("generat") || lower.includes("retriev") || lower.includes("transcrib")) {
+    return "thinking";
+  }
+  if (lower.includes("listen") || lower.includes("speech") || lower.includes("user")) {
+    return "listening";
+  }
+  if (lower.includes("idle") || lower.includes("cancel")) return "idle";
+  return "idle";
+}
+
 /**
  * Joins a session and keeps the event stream flowing. Polling rather than a
  * socket is deliberate: it survives the relay hop and resumes cleanly from a
@@ -119,7 +215,13 @@ export function useConversationSession(active: boolean) {
     if (useSession.getState().token) return useSession.getState().token;
     setJoining(true);
     try {
-      const token = await sessionToken("voice");
+      const robotLinked = await isRobotTalkEnabled();
+      // HTTP event polling must not wake GPT-Live. Talk mints its own token
+      // (with dispatch) when the mic actually joins.
+      const token = await sessionToken("voice", {
+        dispatch: false,
+        ...(robotLinked ? { join: "robot" as const } : {}),
+      });
       useSession.getState().set({ token, error: null, unavailable: false });
       // Backfilling old turns is a nicety. The desktop's first mobile API build
       // has token/turn/events but no /transcript, and a missing history must

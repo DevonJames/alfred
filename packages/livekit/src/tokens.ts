@@ -1,4 +1,5 @@
 import { AccessToken, AgentDispatchClient, RoomAgentDispatch, RoomConfiguration } from "livekit-server-sdk";
+import { isAgentInRoom, roomHasPhoneParticipant } from "./agent-presence.js";
 
 export interface LiveKitTokenOptions {
   apiKey: string;
@@ -28,6 +29,7 @@ export async function createLiveKitToken(opts: LiveKitTokenOptions): Promise<str
     room: opts.roomName,
     canPublish: true,
     canSubscribe: true,
+    canPublishData: true,
   });
   const agentName = opts.agentName?.trim();
   if (agentName) {
@@ -43,10 +45,25 @@ export async function createLiveKitToken(opts: LiveKitTokenOptions): Promise<str
 }
 
 /**
+ * Skip only when a live conversation is already up (agent + phone).
+ * A leftover agent after hangup must be replaced — skipping leaves Talk
+ * waiting forever.
+ */
+export function nextAgentDispatchAction(opts: {
+  hasDispatch: boolean;
+  agentInRoom: boolean;
+  phoneInRoom?: boolean;
+}): "skip" | "create" | "replace" {
+  if (opts.agentInRoom && opts.phoneInRoom) return "skip";
+  if (opts.agentInRoom || opts.hasDispatch) return "replace";
+  return "create";
+}
+
+/**
  * Explicit Agents dispatch for an existing or new room.
  * Token roomConfig only fires when the room is *created*; this covers remints
- * into a still-open room and is idempotent enough for Alfred's Talk flow when
- * paired with unique per-session rooms.
+ * into a still-open room. Stale dispatches (job gone, room still up) are
+ * replaced so AlfredBot + iPhone audio can wake him again.
  */
 export async function dispatchLiveKitAgent(opts: {
   url: string;
@@ -58,24 +75,65 @@ export async function dispatchLiveKitAgent(opts: {
 }): Promise<{ created: boolean; reason?: string }> {
   const host = httpHostFromLiveKitUrl(opts.url);
   const client = new AgentDispatchClient(host, opts.apiKey, opts.apiSecret);
+  let stale: { id: string }[] = [];
   try {
     const existing = await client.listDispatch(opts.roomName);
-    if (existing.some((d) => d.agentName === opts.agentName)) {
+    const forAgent = existing.filter((d) => d.agentName === opts.agentName);
+    const presence = {
+      url: opts.url,
+      apiKey: opts.apiKey,
+      apiSecret: opts.apiSecret,
+      roomName: opts.roomName,
+    };
+    const [present, phoneInRoom] = await Promise.all([
+      isAgentInRoom(presence),
+      roomHasPhoneParticipant(presence),
+    ]);
+    const action = nextAgentDispatchAction({
+      hasDispatch: forAgent.length > 0,
+      agentInRoom: present,
+      phoneInRoom,
+    });
+    if (action === "skip") {
       return { created: false, reason: "already_dispatched" };
+    }
+    if (action === "replace") {
+      stale = forAgent.filter((d) => d.id).map((d) => ({ id: d.id }));
     }
   } catch {
     // list can fail on a brand-new room name — fall through to create
   }
+
+  for (const dispatch of stale) {
+    try {
+      await client.deleteDispatch(dispatch.id, opts.roomName);
+    } catch {
+      // create may still succeed
+    }
+  }
+
   try {
     await client.createDispatch(opts.roomName, opts.agentName, {
       metadata: opts.metadata,
     });
-    return { created: true };
+    return { created: true, reason: stale.length ? "replaced_stale" : undefined };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     // Race: another mint created the same dispatch between list and create.
     if (/already|exist/i.test(message)) {
-      return { created: false, reason: "already_dispatched" };
+      const present = await isAgentInRoom({
+        url: opts.url,
+        apiKey: opts.apiKey,
+        apiSecret: opts.apiSecret,
+        roomName: opts.roomName,
+      });
+      const phoneInRoom = await roomHasPhoneParticipant({
+        url: opts.url,
+        apiKey: opts.apiKey,
+        apiSecret: opts.apiSecret,
+        roomName: opts.roomName,
+      });
+      if (present && phoneInRoom) return { created: false, reason: "already_dispatched" };
     }
     throw err;
   }

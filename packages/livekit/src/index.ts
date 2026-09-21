@@ -9,11 +9,17 @@ export { LiveKitRoomSession, type LiveKitRoomSessionOptions } from "./room-sessi
 export {
   createLiveKitToken,
   dispatchLiveKitAgent,
+  nextAgentDispatchAction,
   isLiveVoiceStack,
   liveAgentName,
   mintLiveRoomName,
   type LiveKitTokenOptions,
 } from "./tokens.js";
-export { isAgentInRoom, type AgentPresenceOptions } from "./agent-presence.js";
+export {
+  isAgentInRoom,
+  roomHasPhoneParticipant,
+  type AgentPresenceOptions,
+} from "./agent-presence.js";
+export { deleteLiveKitRoom, isEphemeralLiveRoom } from "./rooms.js";
 export { EnergyVad } from "./energy-vad.js";
 export { int16ToUint8, uint8ToInt16 } from "./pcm.js";

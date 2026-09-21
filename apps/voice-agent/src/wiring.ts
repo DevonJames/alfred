@@ -12,8 +12,11 @@ import { createInMemoryPersistence } from "@alfred/persistence";
 import {
   DEEPGRAM_FLUX_PROVIDER_ID,
   DeepgramFluxSTTProvider,
-  RECOMMENDED_STT_PRIORITY,
 } from "@alfred/provider-deepgram";
+import {
+  APPLE_ONDEVICE_STT_PROVIDER_ID,
+  AppleOnDeviceSTTProvider,
+} from "@alfred/provider-apple-stt";
 import {
   DEFAULT_ALFRED_VOICE_ID,
   ELEVENLABS_FLASH_PROVIDER_ID,
@@ -23,8 +26,12 @@ import {
 import {
   OPENAI_TERRA_PROVIDER_ID,
   OpenAiResponsesLLMProvider,
-  RECOMMENDED_LLM_PRIORITY,
 } from "@alfred/provider-openai";
+import {
+  resolveGrokApiKey,
+  XAI_GROK_PROVIDER_ID,
+  XaiGrokLLMProvider,
+} from "@alfred/provider-xai";
 import { ProviderRegistry } from "@alfred/providers";
 import type { GreetingLlm } from "@alfred/briefing";
 import { createAlfredBrain, safeEnv, type AlfredBrain } from "./brain.js";
@@ -33,7 +40,8 @@ const failoverSettings = {
   connectionTimeoutMs: 5_000,
   firstTokenTimeoutMs: 10_000,
   totalRequestTimeoutMs: 60_000,
-  consecutiveFailureThreshold: 2,
+  /** Fail over on first eligible failure so billing death does not burn a turn. */
+  consecutiveFailureThreshold: 1,
   cooldownMs: 30_000,
   retryPrimaryIntervalMs: 300_000,
   manualPin: false,
@@ -60,18 +68,45 @@ export async function createCascadedVoiceRuntime(opts?: {
   const elevenKey = safeEnv(secrets, "ELEVENLABS_API_KEY") || safeEnv(secrets, "ELEVEN_API_KEY");
 
   const registry = new ProviderRegistry();
-  registry.registerStt(
-    new DeepgramFluxSTTProvider({
-      apiKey: deepgramKey,
-      model: "flux-general-en",
-      eagerEotThreshold: 0.4,
-    }),
-  );
+  const sttOrderedIds: string[] = [];
+  if (deepgramKey) {
+    registry.registerStt(
+      new DeepgramFluxSTTProvider({
+        apiKey: deepgramKey,
+        model: "flux-general-en",
+        eagerEotThreshold: 0.4,
+      }),
+    );
+    sttOrderedIds.push(DEEPGRAM_FLUX_PROVIDER_ID);
+  } else {
+    console.warn("[voice] DEEPGRAM_API_KEY unset — using Apple on-device STT if available");
+  }
+  if (process.platform === "darwin") {
+    registry.registerStt(new AppleOnDeviceSTTProvider());
+    sttOrderedIds.push(APPLE_ONDEVICE_STT_PROVIDER_ID);
+  }
+  if (sttOrderedIds.length === 0) {
+    console.error(
+      "[voice] No STT providers available (need DEEPGRAM_API_KEY or macOS Apple Speech)",
+    );
+  }
   registry.registerLlm(
     new OpenAiResponsesLLMProvider({
       apiKey: openaiKey,
     }),
   );
+  const grokKey = resolveGrokApiKey();
+  if (grokKey) {
+    registry.registerLlm(
+      new XaiGrokLLMProvider({
+        apiKey: grokKey,
+      }),
+    );
+  } else {
+    console.warn(
+      "[voice] GROK_API_KEY / XAI_API_KEY unset — OpenAI LLM has no Grok failover",
+    );
+  }
   registry.registerTts(
     new ElevenLabsFlashTTSProvider({
       apiKey: elevenKey,
@@ -81,17 +116,34 @@ export async function createCascadedVoiceRuntime(opts?: {
     }),
   );
 
+  const llmOrderedIds = [
+    OPENAI_TERRA_PROVIDER_ID,
+    ...(grokKey ? [XAI_GROK_PROVIDER_ID] : []),
+  ];
+
   const greetingLlm: GreetingLlm = async (messages) => {
-    const llm = registry.getLlm(OPENAI_TERRA_PROVIDER_ID);
-    let text = "";
-    for await (const chunk of llm.generateStream({
-      messages,
-      modelPreset: "conversational",
-      reasoningEffort: "none",
-    })) {
-      if (chunk.type === "token" && chunk.text) text += chunk.text;
+    for (const llmId of llmOrderedIds) {
+      try {
+        const llm = registry.getLlm(llmId);
+        let text = "";
+        let failed = false;
+        for await (const chunk of llm.generateStream({
+          messages,
+          modelPreset: "conversational",
+          reasoningEffort: "none",
+        })) {
+          if (chunk.type === "error") {
+            failed = true;
+            break;
+          }
+          if (chunk.type === "token" && chunk.text) text += chunk.text;
+        }
+        if (!failed && text) return text;
+      } catch {
+        /* try next */
+      }
     }
-    return text;
+    return "";
   };
 
   const brain = await createAlfredBrain({
@@ -104,12 +156,14 @@ export async function createCascadedVoiceRuntime(opts?: {
     allowCascadedFallback: false,
     sttPriority: {
       modality: "stt",
-      orderedProviderIds: [DEEPGRAM_FLUX_PROVIDER_ID, ...RECOMMENDED_STT_PRIORITY.slice(1)],
+      orderedProviderIds: sttOrderedIds.length
+        ? sttOrderedIds
+        : [DEEPGRAM_FLUX_PROVIDER_ID],
       settings: { ...failoverSettings },
     },
     llmPriority: {
       modality: "llm",
-      orderedProviderIds: [OPENAI_TERRA_PROVIDER_ID, ...RECOMMENDED_LLM_PRIORITY.slice(1)],
+      orderedProviderIds: llmOrderedIds,
       settings: { ...failoverSettings },
     },
     ttsPriority: {

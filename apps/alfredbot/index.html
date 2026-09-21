@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+    <meta name="color-scheme" content="dark" />
+    <title>AlfredBot</title>
+    <style>
+      html,
+      body,
+      #app {
+        margin: 0;
+        width: 100vw;
+        height: 100vh;
+        background: #000;
+        color: #f3e6cf;
+        overflow: hidden;
+        position: fixed;
+        inset: 0;
+      }
+    </style>
+    <script>
+      (function () {
+        document.documentElement.style.background = "#000";
+        document.body && (document.body.style.background = "#000");
+        function beat() {
+          fetch("/api/kiosk/heartbeat", { method: "POST", keepalive: true }).catch(function () {});
+        }
+        beat();
+        setInterval(beat, 2000);
+        setTimeout(function () {
+          if (!document.querySelector("#face, .face-screen, .claim-screen, .copy")) {
+            location.reload();
+          }
+        }, 8000);
+      })();
+    </script>
+    <link rel="stylesheet" href="/src/ui/styles.css" />
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/src/ui/main.ts"></script>
+  </body>
+</html>

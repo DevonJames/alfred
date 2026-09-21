@@ -6,7 +6,7 @@
  * are the agent's calls, arriving as data frames.
  */
 import type { RemoteAudioTrack } from "livekit-client";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { AppState, type AppStateStatus } from "react-native";
 import { create } from "zustand";
 import { isNotBuiltYet, sessionStatus } from "../desktop-api";
@@ -56,6 +56,11 @@ interface VoiceStore {
    * screen / pocket use (requires UIBackgroundModes audio — already in Info.plist).
    */
   keepAliveInBackground: boolean;
+  /**
+   * Red Stop / CallKit End. Talk focus must not auto-restart until they press
+   * Start (or the next cold launch).
+   */
+  endedByUser: boolean;
   set: (patch: Partial<VoiceStore>) => void;
   applyMessage: (message: VoiceMessage) => void;
   reset: () => void;
@@ -79,6 +84,7 @@ const EMPTY = {
 export const useVoice = create<VoiceStore>((set) => ({
   ...EMPTY,
   blocker: "none",
+  endedByUser: false,
 
   set: (patch) => set(patch),
 
@@ -95,7 +101,11 @@ export const useVoice = create<VoiceStore>((set) => ({
       };
     }),
 
-  reset: () => set({ ...EMPTY }),
+  reset: () =>
+    set((current) => ({
+      ...EMPTY,
+      endedByUser: current.endedByUser,
+    })),
 }));
 
 /** The caption text actually on screen. */
@@ -160,50 +170,90 @@ export function useVoiceAvailability(enabled: boolean) {
 }
 
 /**
+ * Session handle lives at module scope so Talk can unmount (other tabs) without
+ * tearing down a live conversation. Only explicit stop / hold-background end it.
+ */
+let sessionHandle: VoiceSessionHandle | null = null;
+let startInFlight: Promise<boolean> | null = null;
+let appStateBound = false;
+
+export type StopVoiceOptions = {
+  /** Red Stop / CallKit End — Talk focus must not auto-restart. */
+  endedByUser?: boolean;
+};
+
+async function stopSharedSession(opts: StopVoiceOptions = {}): Promise<void> {
+  startInFlight = null;
+  const active = sessionHandle;
+  sessionHandle = null;
+  if (opts.endedByUser) useVoice.getState().set({ endedByUser: true });
+  useVoice.getState().set({ keepAliveInBackground: false });
+  useVoice.getState().reset();
+  if (active) await active.disconnect().catch(() => {});
+}
+
+function bindVoiceAppState(): () => void {
+  if (appStateBound) return () => {};
+  appStateBound = true;
+  const sub = AppState.addEventListener("change", (next: AppStateStatus) => {
+    if (next !== "background") return;
+    if (useVoice.getState().keepAliveInBackground) return;
+    void stopSharedSession();
+  });
+  return () => {
+    sub.remove();
+    appStateBound = false;
+  };
+}
+
+/** Mount once in the tab shell so background policy outlives the Talk screen. */
+export function VoiceSessionHost() {
+  useEffect(() => bindVoiceAppState(), []);
+  return null;
+}
+
+/**
  * Join, hold, and leave. The room stays connected while the mic is off in
  * hold-to-talk, because Alfred may still be answering the previous thing you
  * said — disconnecting on release would cut him off mid-sentence.
  */
 export function useVoiceSession() {
-  const handle = useRef<VoiceSessionHandle | null>(null);
-  const startInFlight = useRef<Promise<boolean> | null>(null);
   const store = useVoice((s) => s.set);
   const applyMessage = useVoice((s) => s.applyMessage);
   const reset = useVoice((s) => s.reset);
 
-  const stop = useCallback(async () => {
-    startInFlight.current = null;
-    const active = handle.current;
-    handle.current = null;
-    // Clear keepalive so a later background tick cannot skip teardown logic
-    // that already ran, and so remints do not inherit a stale "stay up" flag.
-    store({ keepAliveInBackground: false });
-    reset();
-    if (active) await active.disconnect().catch(() => {});
-  }, [reset, store]);
+  const stop = useCallback(async (opts?: StopVoiceOptions) => {
+    await stopSharedSession(opts);
+  }, []);
 
   const start = useCallback(async (opts?: { mic?: boolean }) => {
     const wantMic = opts?.mic ?? true;
 
     // Healthy live room — optionally sync mic, then done.
-    if (handle.current?.isConnected()) {
-      await handle.current.setMicrophoneEnabled(wantMic).catch(() => {});
-      store({ micEnabled: wantMic });
+    if (sessionHandle?.isConnected()) {
+      await sessionHandle.setMicrophoneEnabled(wantMic).catch(() => {});
+      store({ micEnabled: wantMic, endedByUser: false });
       return true;
     }
 
     // Zombie handle after background / drop: tear down before minting a fresh room.
-    if (handle.current) {
-      const stale = handle.current;
-      handle.current = null;
+    if (sessionHandle) {
+      const stale = sessionHandle;
+      sessionHandle = null;
       await stale.disconnect().catch(() => {});
       reset();
     }
 
-    if (startInFlight.current) return startInFlight.current;
+    if (startInFlight) return startInFlight;
 
     const pending = (async () => {
-      store({ phase: "connecting", error: null, agentPresent: false, agentAudioTrack: null });
+      store({
+        phase: "connecting",
+        error: null,
+        agentPresent: false,
+        agentAudioTrack: null,
+        endedByUser: false,
+      });
       try {
         const session = await startVoiceSession(
           {
@@ -212,19 +262,20 @@ export function useVoiceSession() {
             onAgentAudioTrack: (track) => store({ agentAudioTrack: track }),
             onDisconnected: () => {
               // Teardown (incl. audio session) already ran in the transport.
-              if (handle.current) handle.current = null;
+              sessionHandle = null;
               reset();
             },
           },
           { microphoneEnabled: wantMic }
         );
-        handle.current = session;
+        sessionHandle = session;
         store({
           phase: "live",
           micEnabled: wantMic,
           identity: session.identity,
           room: session.room,
           voiceStack: session.voiceStack,
+          endedByUser: false,
         });
         return true;
       } catch (err) {
@@ -240,26 +291,26 @@ export function useVoiceSession() {
         });
         return false;
       } finally {
-        startInFlight.current = null;
+        startInFlight = null;
       }
     })();
 
-    startInFlight.current = pending;
+    startInFlight = pending;
     return pending;
   }, [applyMessage, reset, store]);
 
   const setMic = useCallback(
     async (enabled: boolean) => {
-      if (!handle.current?.isConnected()) return;
-      await handle.current.setMicrophoneEnabled(enabled).catch(() => {});
+      if (!sessionHandle?.isConnected()) return;
+      await sessionHandle.setMicrophoneEnabled(enabled).catch(() => {});
       store({ micEnabled: enabled });
     },
     [store]
   );
 
   const publishControl = useCallback(async (command: UiCommand) => {
-    if (!handle.current?.isConnected()) return;
-    await handle.current.publishControl(command).catch(() => {});
+    if (!sessionHandle?.isConnected()) return;
+    await sessionHandle.publishControl(command).catch(() => {});
   }, []);
 
   /**
@@ -286,28 +337,6 @@ export function useVoiceSession() {
     },
     [publishControl]
   );
-
-  // Hold-to-talk ends on background (privacy/battery). Continuous conversation
-  // keeps the room alive so lock-screen + headphones still work (UIBackgroundModes=audio).
-  useEffect(() => {
-    const onChange = (next: AppStateStatus) => {
-      if (next !== "background") return;
-      if (useVoice.getState().keepAliveInBackground) return;
-      void stop();
-    };
-    const sub = AppState.addEventListener("change", onChange);
-    return () => sub.remove();
-  }, [stop]);
-
-  // A live microphone must never outlive the screen that owns it.
-  useEffect(() => {
-    return () => {
-      const active = handle.current;
-      handle.current = null;
-      reset();
-      if (active) active.disconnect().catch(() => {});
-    };
-  }, [reset]);
 
   return { start, stop, setMic, setLayout, sendVoiceText, publishControl };
 }

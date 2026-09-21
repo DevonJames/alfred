@@ -1,0 +1,30 @@
+{
+  "name": "@alfred/alfredbot",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "pnpm run build:ui && pnpm run build:host",
+    "build:ui": "vite build",
+    "build:host": "node scripts/bundle-host.mjs",
+    "start": "pnpm run build && node dist/host.mjs",
+    "start:dev": "tsx src/host/main.ts",
+    "dev": "tsx src/host/main.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.ui.json --noEmit",
+    "lint": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.ui.json --noEmit"
+  },
+  "dependencies": {
+    "@alfred/contracts": "workspace:^",
+    "@hono/node-server": "^1.13.7",
+    "hono": "^4.6.14",
+    "qrcode": "^1.5.4",
+    "livekit-client": "^2.9.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/qrcode": "^1.5.6",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.7"
+  }
+}

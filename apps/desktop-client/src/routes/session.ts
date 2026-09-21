@@ -1,18 +1,48 @@
 /**
- * /api/session — LiveKit join tokens for iOS Talk (and status/end shims).
+ * /api/session — LiveKit join tokens for iOS Talk and AlfredBot (and status/end shims).
  */
 
 import { isAgentInRoom, isLiveVoiceStack } from "@alfred/livekit";
 import { Hono } from "hono";
+import { endLiveConversation } from "../lib/livekit-session-end.js";
 import { livekitConfigured, mintLiveKitClientToken } from "../lib/livekit-token.js";
+import { isRobotConversation, robotConversationId } from "../lib/robot-conversation.js";
 import { requireDevice } from "../middleware/require-device.js";
 
 export const sessionRouter = new Hono();
 
 sessionRouter.use("*", requireDevice);
 
+function parseDispatchFlag(raw: unknown): boolean | undefined {
+  if (raw === false || raw === "false" || raw === "0") return false;
+  if (raw === true || raw === "true" || raw === "1") return true;
+  return undefined;
+}
+
+async function readTokenRequest(c: {
+  req: { query: (name: string) => string | undefined; json: () => Promise<unknown> };
+}): Promise<{ client?: string; join?: string; dispatch?: boolean }> {
+  const queryClient = c.req.query("client");
+  const queryJoin = c.req.query("join");
+  const queryDispatch = parseDispatchFlag(c.req.query("dispatch"));
+  try {
+    const body = (await c.req.json()) as { client?: string; join?: string; dispatch?: unknown };
+    return {
+      client: typeof body.client === "string" ? body.client : queryClient,
+      join: typeof body.join === "string" ? body.join : queryJoin,
+      dispatch: parseDispatchFlag(body.dispatch) ?? queryDispatch,
+    };
+  } catch {
+    return { client: queryClient, join: queryJoin, dispatch: queryDispatch };
+  }
+}
+
 sessionRouter.get("/token", async (c) => {
-  const minted = await mintLiveKitClientToken("alfred-ios");
+  const minted = await mintLiveKitClientToken({
+    client: c.req.query("client"),
+    join: c.req.query("join"),
+    dispatch: parseDispatchFlag(c.req.query("dispatch")),
+  });
   if (!minted.ok) {
     return c.json({ error: minted.error }, minted.status);
   }
@@ -20,7 +50,7 @@ sessionRouter.get("/token", async (c) => {
 });
 
 sessionRouter.post("/token", async (c) => {
-  const minted = await mintLiveKitClientToken("alfred-ios");
+  const minted = await mintLiveKitClientToken(await readTokenRequest(c));
   if (!minted.ok) {
     return c.json({ error: minted.error }, minted.status);
   }
@@ -67,7 +97,19 @@ sessionRouter.get("/status", async (c) => {
     // agentPresent=true as "ready" and suppresses the banner.
     agentHint: live && agentPresent ? null : agentHint,
     voiceStack: live ? "live" : "cascade",
+    conversation: isRobotConversation(),
+    conversationId: robotConversationId(),
   });
 });
 
-sessionRouter.post("/end", (c) => c.json({ ok: true }));
+sessionRouter.post("/end", async (c) => {
+  let sessionId: string | undefined;
+  try {
+    const body = (await c.req.json()) as { sessionId?: unknown };
+    if (typeof body.sessionId === "string") sessionId = body.sessionId;
+  } catch {
+    /* empty body is a valid hangup */
+  }
+  await endLiveConversation(sessionId);
+  return c.json({ ok: true, ended: true });
+});

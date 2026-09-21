@@ -18,6 +18,9 @@
 import type { RemoteAudioTrack, RemoteTrack } from "livekit-client";
 import { requestMicPermission } from "../audio";
 import { endSession, sessionToken } from "../desktop-api";
+import { setRobotTalkListen } from "../robot-api";
+import { isRobotAudioEnabled, isRobotTalkEnabled } from "../robot-audio";
+import { getItem, KEYS } from "../secure-store";
 import type { VoiceStack } from "../types";
 import type {
   LKRoom,
@@ -181,13 +184,16 @@ export async function startVoiceSession(
   const loaded = loadSdk();
   if (!loaded) throw new VoiceUnavailableError("no-sdk");
 
-  if (!(await requestMicPermission())) throw new VoiceUnavailableError("no-mic");
+  const robotLinked = await isRobotTalkEnabled();
+  const phoneIsVoice = !robotLinked || (await isRobotAudioEnabled());
+  if (phoneIsVoice && !(await requestMicPermission())) throw new VoiceUnavailableError("no-mic");
 
   // LiveKit owns the audio session (playAndRecord + speaker). Do not call
   // expo-audio setAudioModeAsync here — it can mute remote WebRTC playout.
-  await prepareLiveKitAudio(loaded.native);
+  if (phoneIsVoice) await prepareLiveKitAudio(loaded.native);
 
-  const minted = await sessionToken("voice");
+  if (robotLinked) void signalRobotTalk(true);
+  const minted = await sessionToken("voice", robotLinked ? { join: "robot" } : {});
   if (!minted.url || !minted.token) throw new VoiceUnavailableError("not-configured");
 
   const { Room, RoomEvent, Track } = loaded.client;
@@ -203,12 +209,18 @@ export async function startVoiceSession(
   });
 
   const isAudio = (kind: string | undefined) => kind === Track.Kind.Audio;
+  const isAgentIdentity = (identity: string | undefined) =>
+    Boolean(identity?.startsWith(AGENT_IDENTITY));
 
   const setAgentTrack = (track: RemoteTrack | LKTrack | null) => {
     if (track && isAudio(track.kind)) {
-      ensureRemoteAudioAudible(track as RemoteTrack);
+      if (phoneIsVoice) ensureRemoteAudioAudible(track as RemoteTrack);
+      else {
+        const audio = track as RemoteAudioTrack & { setVolume?: (volume: number) => void };
+        audio.setVolume?.(0);
+      }
       handlers.onAgentAudio(true);
-      handlers.onAgentAudioTrack(track as RemoteAudioTrack);
+      handlers.onAgentAudioTrack(phoneIsVoice ? (track as RemoteAudioTrack) : null);
       return;
     }
     handlers.onAgentAudio(false);
@@ -223,14 +235,20 @@ export async function startVoiceSession(
         const existing = publication.track;
         if (!existing || !isAudio(publicationKind(publication))) continue;
         const remote = existing as RemoteTrack;
-        if (participant.identity === AGENT_IDENTITY) {
+        if (isAgentIdentity(participant.identity)) {
           setAgentTrack(remote);
           return;
         }
         fallback ??= remote;
       }
     }
-    if (fallback) setAgentTrack(fallback);
+    if (fallback) {
+      setAgentTrack(fallback);
+      return;
+    }
+    // GPT-Live may join before it publishes TTS. Don't leave Talk hung on
+    // "Waiting for Alfred" when he is already in the room.
+    if (roomHasAgent(room)) handlers.onAgentAudio(true);
   };
 
   let tornDown = false;
@@ -258,7 +276,7 @@ export async function startVoiceSession(
       publication.setSubscribed?.(true);
       if (publication.track) {
         setAgentTrack(publication.track as RemoteTrack);
-      } else if (participant.identity === AGENT_IDENTITY || !participant.identity) {
+      } else if (isAgentIdentity(participant.identity) || !participant.identity) {
         // Subscribed event may follow; also re-scan in case track is already bound.
         attachAgentAudioFromRoom();
       }
@@ -300,7 +318,7 @@ export async function startVoiceSession(
   await room.connect(minted.url, minted.token);
   // Mirror desktop voice-client: arm mic only when the UI wants continuous listen
   // (or the user is actively holding PTT). Hold-to-talk idle joins leave it off.
-  const micOn = options.microphoneEnabled !== false;
+  const micOn = phoneIsVoice && options.microphoneEnabled !== false;
   await room.localParticipant.setMicrophoneEnabled(micOn);
 
   // The agent usually joins before the phone does, and tracks published before
@@ -311,16 +329,27 @@ export async function startVoiceSession(
   // GPT-Live dispatches into a fresh room after mint — give the worker a moment
   // to appear before the UI treats "no agent audio yet" as failure.
   if (voiceStack === "live") {
-    await waitForRemoteAudio(room, RoomEvent, 12_000);
+    await waitForRemoteAudio(room, RoomEvent, 8_000);
     attachAgentAudioFromRoom();
   }
 
   const publishControl = async (command: UiCommand) => {
     const payload = encodeControlCommand(command);
-    await room.localParticipant.publishData?.(payload as Uint8Array<ArrayBuffer>, {
-      reliable: true,
-      topic: CONTROL_TOPIC,
-    });
+    if (!room.localParticipant.publishData) {
+      console.warn("[voice] publishData is not available on this LiveKit build");
+    } else {
+      await room.localParticipant.publishData(payload as Uint8Array<ArrayBuffer>, {
+        reliable: true,
+        topic: CONTROL_TOPIC,
+      });
+    }
+    if (command.type === "text" && room.localParticipant.sendText) {
+      try {
+        await room.localParticipant.sendText(command.text, { topic: "lk.chat" });
+      } catch (err) {
+        console.warn("[voice] lk.chat sendText failed", err);
+      }
+    }
   };
 
   return {
@@ -335,11 +364,32 @@ export async function startVoiceSession(
       return state === "connected" || state === "reconnecting" || state === "signalReconnecting";
     },
     setMicrophoneEnabled: async (enabled: boolean) => {
-      await room.localParticipant.setMicrophoneEnabled(enabled);
+      await room.localParticipant.setMicrophoneEnabled(phoneIsVoice && enabled);
     },
     publishControl,
     disconnect: () => runTeardown(),
   };
+}
+
+async function signalRobotTalk(listen: boolean): Promise<void> {
+  const host = await getItem(KEYS.robotHost);
+  if (!host) return;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      await setRobotTalkListen(host, listen);
+      return;
+    } catch {
+      if (attempt === 2) return;
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+  }
+}
+
+function roomHasAgent(room: LKRoom): boolean {
+  for (const participant of room.remoteParticipants.values()) {
+    if (participant.identity?.startsWith(AGENT_IDENTITY)) return true;
+  }
+  return false;
 }
 
 /** True when any remote participant already has an audio track we can attach. */
@@ -364,7 +414,7 @@ function waitForRemoteAudio(
   RoomEvent: Record<string, string>,
   timeoutMs: number,
 ): Promise<boolean> {
-  if (roomHasRemoteAudio(room)) return Promise.resolve(true);
+  if (roomHasRemoteAudio(room) || roomHasAgent(room)) return Promise.resolve(true);
 
   return new Promise((resolve) => {
     let settled = false;
@@ -377,7 +427,7 @@ function waitForRemoteAudio(
       resolve(ok);
     };
     const onMaybeReady = () => {
-      if (roomHasRemoteAudio(room)) finish(true);
+      if (roomHasRemoteAudio(room) || roomHasAgent(room)) finish(true);
     };
     const timer = setTimeout(() => finish(false), timeoutMs);
     room.on(RoomEvent.ParticipantConnected, onMaybeReady as (...args: never[]) => void);
@@ -399,6 +449,7 @@ async function teardown(room: LKRoom, loaded: Sdk, sessionId: string): Promise<v
   await room.disconnect().catch(() => {});
   await loaded.native.AudioSession?.stopAudioSession().catch(() => {});
   if (sessionId) await endSession(sessionId).catch(() => {});
+  void signalRobotTalk(false);
 }
 
 export { AGENT_IDENTITY, CAPTION_TOPIC, USER_TOPIC, CONTROL_TOPIC };

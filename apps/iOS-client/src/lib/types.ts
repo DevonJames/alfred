@@ -147,17 +147,30 @@ export interface ConversationTurn {
   createdAt: string;
 }
 
-export interface TurnResponse {
+/**
+ * What `/api/conversation/turn` actually returns today (SessionOrchestrator).
+ * Older PRD-shaped `{ userTurn, assistantTurn }` is still accepted if present.
+ */
+export interface ChatTurnResponse {
   sessionId: string;
-  userTurn: ConversationTurn;
-  assistantTurn: ConversationTurn;
-  memoryUsed: { id: string; title: string; score: number; via: string }[];
-  committedMemoryId: string | null;
-  interpretedAs: string;
-  /** Voice turns only. */
-  transcript?: string;
-  audioUrl?: string | null;
+  assistantText?: string;
+  recentTurns?: Array<{
+    id?: string;
+    sessionId?: string;
+    role?: string;
+    text?: string;
+    createdAt?: string;
+    isAddendum?: boolean;
+    parentTurnId?: string;
+  }>;
+  state?: string;
+  /** Legacy PRD shape — preferred when present. */
+  userTurn?: ConversationTurn;
+  assistantTurn?: ConversationTurn;
 }
+
+/** @deprecated Prefer ChatTurnResponse — kept for call sites still importing the old name. */
+export type TurnResponse = ChatTurnResponse;
 
 /** Which Mac voice worker the desktop is serving for Talk. */
 export type VoiceStack = "cascade" | "live";

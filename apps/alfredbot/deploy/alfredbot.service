@@ -1,0 +1,16 @@
+[Unit]
+Description=AlfredBot host (pairing + kiosk API)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=alfred
+WorkingDirectory=/home/alfred/alfredbot
+EnvironmentFile=-/etc/alfredbot.env
+ExecStart=/usr/bin/node /home/alfred/alfredbot/host.mjs
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

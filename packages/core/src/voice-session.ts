@@ -9,6 +9,7 @@ import {
   type LatencyMarkName,
   type MultiContextTTSSession,
   type PersonaContext,
+  type ProviderFailureClass,
   type SttTurnEvent,
   type StreamingSTTSession,
   type TaskCategory,
@@ -17,6 +18,7 @@ import {
 } from "@alfred/contracts";
 import type { Clock } from "./clock.js";
 import type { EventLedger } from "./event-ledger.js";
+import { StickyFailoverController } from "./failover.js";
 import type { BackchannelClassifier, InterruptionArbiter } from "./interruption.js";
 import { HeuristicBackchannelClassifier, RuleBasedInterruptionArbiter } from "./interruption.js";
 import type { MediaPort, UiCommand, UiLayout } from "./media-port.js";
@@ -103,6 +105,8 @@ export class VoiceSessionController {
 
   private sttSession?: StreamingSTTSession;
   private ttsSession?: MultiContextTTSSession;
+  private llmFailover?: StickyFailoverController;
+  private sttFailover?: StickyFailoverController;
   private running = false;
   private unsubAudio?: () => void;
   private unsubVad?: () => void;
@@ -171,11 +175,60 @@ export class VoiceSessionController {
     this.media = deps.media ?? new NullMediaPort();
     this.backchannelClassifier = deps.backchannelClassifier ?? new HeuristicBackchannelClassifier();
     this.interruptionArbiter = deps.interruptionArbiter ?? new RuleBasedInterruptionArbiter();
+    this.initLlmFailover();
+    this.initSttFailover();
+  }
+
+  private initLlmFailover(): void {
+    const list = this.deps.config.pipeline.llmPriority;
+    if (!list?.orderedProviderIds.length) return;
+    this.llmFailover = new StickyFailoverController(
+      this.deps.sessionId,
+      list,
+      this.deps.clock,
+      this.deps.events,
+      async (providerId) => {
+        try {
+          return await this.deps.providers.getLlm(providerId).healthCheck();
+        } catch {
+          return {
+            providerId,
+            status: "unknown" as const,
+            checkedAt: this.deps.clock.nowIso(),
+          };
+        }
+      },
+    );
+  }
+
+  private initSttFailover(): void {
+    const list = this.deps.config.pipeline.sttPriority;
+    if (!list?.orderedProviderIds.length) return;
+    this.sttFailover = new StickyFailoverController(
+      this.deps.sessionId,
+      list,
+      this.deps.clock,
+      this.deps.events,
+      async (providerId) => {
+        try {
+          return await this.deps.providers.getStt(providerId).healthCheck();
+        } catch {
+          return {
+            providerId,
+            status: "unknown" as const,
+            checkedAt: this.deps.clock.nowIso(),
+          };
+        }
+      },
+    );
   }
 
   async start(): Promise<void> {
     if (this.running) return;
     this.running = true;
+
+    await this.llmFailover?.selectInitial();
+    await this.sttFailover?.selectInitial();
 
     this.sttSession = await this.openSttSession();
 
@@ -301,15 +354,44 @@ export class VoiceSessionController {
   }
 
   private async openSttFromRegistry(): Promise<StreamingSTTSession> {
-    const id = this.deps.config.pipeline.sttPriority?.orderedProviderIds[0] ?? "stt.deepgram.flux";
-    const stt = this.deps.providers.getStt(id);
-    if (!stt.openSession) {
-      throw new Error(`STT provider ${id} does not support openSession`);
+    await this.sttFailover?.maybeRestorePrimary();
+    const ordered =
+      this.sttFailover?.getState().orderedProviderIds ??
+      this.deps.config.pipeline.sttPriority?.orderedProviderIds ??
+      ["stt.deepgram.flux"];
+    const maxAttempts = ordered.length;
+    let lastError: unknown;
+
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      const id = this.sttFailover?.getActiveProviderId() ?? ordered[attempt]!;
+      try {
+        const stt = this.deps.providers.getStt(id);
+        if (!stt.openSession) {
+          throw Object.assign(new Error(`STT provider ${id} does not support openSession`), {
+            failureClass: "unavailable" as ProviderFailureClass,
+          });
+        }
+        const session = await stt.openSession({
+          eagerEotThreshold: 0.4,
+          sampleRate: 16_000,
+        });
+        await this.sttFailover?.recordSuccess(id);
+        if (attempt > 0 || id !== ordered[0]) {
+          console.log(`[voice] STT active provider=${id}`);
+        }
+        return session;
+      } catch (err) {
+        lastError = err;
+        const failureClass = extractVoiceFailureClass(err);
+        if (this.sttFailover) {
+          const next = await this.sttFailover.recordFailure(id, failureClass);
+          console.warn(`[voice] STT provider=${id} failed (${failureClass}); active=${next}`);
+        } else {
+          break;
+        }
+      }
     }
-    return stt.openSession({
-      eagerEotThreshold: 0.4,
-      sampleRate: 16_000,
-    });
+    throw lastError ?? new Error("STT open failed");
   }
 
   private async openTtsFromRegistry(): Promise<MultiContextTTSSession> {
@@ -551,11 +633,26 @@ export class VoiceSessionController {
       try {
         for await (const event of session.events()) {
           if (!this.running) return;
+          if (event.type === "error") {
+            const failureClass = event.failureClass ?? "unknown";
+            const activeId = this.sttFailover?.getActiveProviderId();
+            if (activeId && this.sttFailover) {
+              const next = await this.sttFailover.recordFailure(activeId, failureClass);
+              console.warn(
+                `[voice] STT stream error provider=${activeId} (${failureClass}); active=${next}`,
+              );
+            }
+            break;
+          }
           await this.onSttEvent(event);
         }
       } catch (err) {
         if (this.running) {
           console.error("[voice] STT event loop error:", err);
+          const activeId = this.sttFailover?.getActiveProviderId();
+          if (activeId && this.sttFailover) {
+            await this.sttFailover.recordFailure(activeId, extractVoiceFailureClass(err));
+          }
         }
       }
 
@@ -836,26 +933,17 @@ export class VoiceSessionController {
     responseId: string,
     signal: AbortSignal,
   ): Promise<void> {
-    const llmId =
-      this.deps.config.pipeline.llmPriority?.orderedProviderIds[0] ?? "llm.openai.terra";
-    const llm = this.deps.providers.getLlm(llmId);
-    let first = true;
     try {
-      for await (const chunk of llm.generateStream({
+      await this.generateWithLlmFailover({
         messages,
+        responseId,
         signal,
-        modelPreset: "conversational",
-        reasoningEffort: "none",
-      })) {
-        if (signal.aborted) return;
-        if (chunk.type === "token" && chunk.text) {
-          if (first) {
-            this.mark("first_llm_token_at");
-            first = false;
-          }
-          await this.deps.responseLedger.appendProposed(responseId, chunk.text);
-        }
-      }
+        tools: undefined,
+        onToken: async (text, first) => {
+          if (first) this.mark("first_llm_token_at");
+          await this.deps.responseLedger.appendProposed(responseId, text);
+        },
+      });
     } catch {
       // Superseded or cancelled — ignore.
     }
@@ -1330,6 +1418,8 @@ export class VoiceSessionController {
         return;
       }
 
+      if (!responseId) return;
+
       await this.deps.responseLedger.commit(responseId, assistantText);
       this.activeResponseId = responseId;
       console.log(`[voice] speaking: "${assistantText.slice(0, 160)}"`);
@@ -1448,11 +1538,7 @@ export class VoiceSessionController {
     dueReminders: DueReminderSummary[] = [],
     opts?: { streamCaptions?: boolean },
   ): Promise<string> {
-    const llmId =
-      this.deps.config.pipeline.llmPriority?.orderedProviderIds[0] ?? "llm.openai.terra";
-    const llm = this.deps.providers.getLlm(llmId);
     let text = "";
-    let first = true;
     let toolCall: { toolName?: string; toolArgs?: Record<string, unknown> } | undefined;
     const tools = this.committedTools();
     if (opts?.streamCaptions) {
@@ -1460,34 +1546,32 @@ export class VoiceSessionController {
       this.pendingCaptionReveal = undefined;
       await this.media.publishCaption({ type: "start", text: "" });
     }
-    for await (const chunk of llm.generateStream({
+    const result = await this.generateWithLlmFailover({
       messages,
-      modelPreset: "conversational",
-      reasoningEffort: "none",
+      responseId,
       tools,
-    })) {
-      if (chunk.type === "token" && chunk.text) {
-        if (first) {
-          this.mark("first_llm_token_at");
-          first = false;
-        }
-        text += chunk.text;
-        await this.deps.responseLedger.appendProposed(responseId, chunk.text);
+      onToken: async (token, first) => {
+        if (first) this.mark("first_llm_token_at");
+        text += token;
+        await this.deps.responseLedger.appendProposed(responseId, token);
         if (opts?.streamCaptions) {
           await this.publishCaptionReveal(text);
         }
-      }
-      if (chunk.type === "tool_call") {
-        toolCall = { toolName: chunk.toolName, toolArgs: chunk.toolArgs };
-      }
-    }
+      },
+      onToolCall: (call) => {
+        toolCall = call;
+      },
+    });
+    text = result.text || text;
+    toolCall = result.toolCall ?? toolCall;
+
     if (toolCall?.toolName === "delegate_task") {
       const category = String(toolCall.toolArgs?.category ?? "research") as TaskCategory;
       const description = String(
         toolCall.toolArgs?.taskDescription ?? toolCall.toolArgs?.description ?? "",
       );
       if (description) {
-        const result = await this.deps.agents.delegate({
+        const out = await this.deps.agents.delegate({
           correlationId: createId("corr"),
           taskDescription: description,
           taskCategory: category,
@@ -1497,9 +1581,9 @@ export class VoiceSessionController {
           confirmationRequired: false,
           timeoutMs: 600_000,
         });
-        const out = result.output || result.error || text;
-        if (opts?.streamCaptions) await this.publishCaptionReveal(out, true);
-        return out;
+        const spoken = out.output || out.error || text;
+        if (opts?.streamCaptions) await this.publishCaptionReveal(spoken, true);
+        return spoken;
       }
     }
     if (toolCall?.toolName === "update_reminder" && this.deps.reminders) {
@@ -1528,6 +1612,85 @@ export class VoiceSessionController {
     }
     if (opts?.streamCaptions) await this.publishCaptionReveal(text, true);
     return text;
+  }
+
+  /**
+   * Sticky LLM failover (Terra → Grok, etc.). Same policy as SessionOrchestrator.
+   */
+  private async generateWithLlmFailover(opts: {
+    messages: { role: "system" | "user" | "assistant" | "tool"; content: string }[];
+    responseId: string;
+    signal?: AbortSignal;
+    tools?: Array<{
+      name: string;
+      description: string;
+      parameters: Record<string, unknown>;
+    }>;
+    onToken?: (text: string, first: boolean) => Promise<void>;
+    onToolCall?: (call: { toolName?: string; toolArgs?: Record<string, unknown> }) => void;
+  }): Promise<{
+    text: string;
+    toolCall?: { toolName?: string; toolArgs?: Record<string, unknown> };
+  }> {
+    await this.llmFailover?.maybeRestorePrimary();
+    const ordered =
+      this.llmFailover?.getState().orderedProviderIds ??
+      this.deps.config.pipeline.llmPriority?.orderedProviderIds ??
+      ["llm.openai.terra"];
+    const maxAttempts = ordered.length;
+    let lastError: unknown;
+
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      const llmId = this.llmFailover?.getActiveProviderId() ?? ordered[attempt]!;
+      try {
+        const llm = this.deps.providers.getLlm(llmId);
+        let text = "";
+        let first = true;
+        let toolCall: { toolName?: string; toolArgs?: Record<string, unknown> } | undefined;
+        for await (const chunk of llm.generateStream({
+          messages: opts.messages,
+          signal: opts.signal,
+          modelPreset: "conversational",
+          reasoningEffort: "none",
+          tools: opts.tools,
+        })) {
+          if (opts.signal?.aborted) {
+            throw Object.assign(new Error("aborted"), { failureClass: "unknown" as const });
+          }
+          if (chunk.type === "error") {
+            throw Object.assign(new Error(chunk.error ?? "llm error"), {
+              failureClass: chunk.failureClass ?? ("unknown" as ProviderFailureClass),
+            });
+          }
+          if (chunk.type === "token" && chunk.text) {
+            text += chunk.text;
+            await opts.onToken?.(chunk.text, first);
+            first = false;
+          }
+          if (chunk.type === "tool_call") {
+            toolCall = { toolName: chunk.toolName, toolArgs: chunk.toolArgs };
+            opts.onToolCall?.(toolCall);
+          }
+        }
+        await this.llmFailover?.recordSuccess(llmId);
+        if (attempt > 0) {
+          console.log(`[voice] LLM failover active provider=${llmId}`);
+        }
+        return { text, toolCall };
+      } catch (err) {
+        lastError = err;
+        const failureClass = extractVoiceFailureClass(err);
+        if (this.llmFailover) {
+          const next = await this.llmFailover.recordFailure(llmId, failureClass);
+          console.warn(
+            `[voice] LLM provider=${llmId} failed (${failureClass}); active=${next}`,
+          );
+        } else {
+          break;
+        }
+      }
+    }
+    throw lastError ?? new Error("LLM generation failed");
   }
 
   private async applyStudioLights(args: Record<string, unknown>): Promise<string> {
@@ -2037,3 +2200,10 @@ const NOVEL_TURN_STOPWORDS = new Set([
   "hi",
   "oh",
 ]);
+
+function extractVoiceFailureClass(err: unknown): ProviderFailureClass {
+  if (err && typeof err === "object" && "failureClass" in err) {
+    return (err as { failureClass: ProviderFailureClass }).failureClass;
+  }
+  return "unknown";
+}

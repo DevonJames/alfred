@@ -39,9 +39,16 @@ Index of `docs/`. Product code in this repo is the source of truth when a note a
 | [knowledge-export-prompt.md](./knowledge-export-prompt.md) | Cross-AI export ingest prompt |
 | [DAILY-BRIEFING-STAGE-2.md](./DAILY-BRIEFING-STAGE-2.md) | Planned briefing sections (Stage 1 already ships) |
 
+## CORA (greenfield / Kiro)
+
+| Doc | What it is |
+| --- | --- |
+| [cora-kiro/README.md](./cora-kiro/README.md) | Spec pack to rebuild Talk, memory, and Daily Brief onsite as CORA (not a fork). Hosting and login are intentionally omitted. |
+
 ## Robot / experimental
 
 | Doc | What it is |
 | --- | --- |
 | [gpt-live.md](./gpt-live.md) | Experimental GPT-Live voice (`pnpm voice:live` / `make alfred VOICE=live`) |
 | [expressive-mode-robot.md](./expressive-mode-robot.md) | Weekend note: LiveKit Expressive Mode → face + head for alfred-robot |
+| [../apps/alfredbot/README.md](../apps/alfredbot/README.md) | AlfredBot Pi kiosk (Wi-Fi, pair, face, GPT-Live Talk) |

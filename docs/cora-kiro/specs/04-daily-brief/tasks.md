@@ -1,0 +1,24 @@
+# Tasks: Daily Brief
+
+- [ ] 1. Port `@cora/briefing` day key, state store, cache, greeting, speech helpers; rename Alfred → CORA in greeting prompt
+  - _Requirements: 1.1, 6.2, 6.3, 6.6_
+- [ ] 2. Implement `BriefingPrefs` (no launches/crypto/metals), load/save/normalize, env+prefs resolve, re-read on each generate
+  - _Requirements: 2.1–2.4, 3.7_
+- [ ] 3. Port `BriefingController` + intent (delete `wantsLaunches`); soft-offer / explicit ask / decline / state.json
+  - _Requirements: 1.2–1.7, 5.1–5.4 from spec 02_
+- [ ] 4. Port Open-Meteo `weather.ts` + `weather-lookup.ts`; honor `includeWeather`, unit, zip vs lat/lon
+  - _Requirements: 4.1–4.5_
+- [ ] 5. Port news RSS catalog + fetch/format; gate on `includeNews`; max 3 feeds / 8 headlines / 3 spoken
+  - _Requirements: 5.1–5.7_
+- [ ] 6. Add `AnalyticsProvider` + null default; pass `interests` from briefing-interest facts + `analyticsNotes`; skip when `includeAnalytics` is false
+  - _Requirements: 7.1–7.6, 8.1–8.3_
+- [ ] 7. `generateBriefing` + speech/markdown formatters (greeting → datetime → weather → analytics → news → close); cache; degrade on section failure
+  - _Requirements: 6.1–6.6_
+- [ ] 8. Daily Brief preferences UI module: location/weather, news checkboxes (catalog, max 10, require one if news on), analytics placeholder + notes; save invalidates cache; no login, no Alfred HTTP routes
+  - _Requirements: 3.1–3.8_
+- [ ] 9. Wire briefing + weather ports into `VoiceSessionController` / `runTextTurn`
+  - _Requirements: 1.2–1.5, spec 02 req 4–5_
+- [ ] 10. Tests: intent, prefs round-trip, news skip-feed-title, weather speech, includeNews false omits headlines, null analytics, cache invalidate
+  - _Requirements: 1.3, 2.1, 4.2, 5.3, 6.4, 7.3_
+- [ ] 11. Confirm no launches/markets/X ingest/reminders-as-required, no briefing HTTP host, no Databricks SQL client
+  - _Requirements: 2.4, 3.8, 7.6_

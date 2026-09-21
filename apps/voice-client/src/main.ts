@@ -72,6 +72,8 @@ let micMuted = false;
 let lastCaption = "";
 /** Prevents Start/Stop races from leaving a LiveKit participant orphaned. */
 let sessionOp: "idle" | "connecting" | "disconnecting" = "idle";
+/** LiveKit room from the last mint — used to delete ephemeral GPT-Live rooms on Stop. */
+let activeSessionId: string | undefined;
 
 function publishShell(rms = 0): void {
   postShellState({
@@ -132,13 +134,22 @@ function setLayout(next: UiLayout): void {
 async function syncMicForLayout(): Promise<void> {
   if (!room) return;
   if (layout === "chat") {
-    if (composer.dictationActive) return;
-    await room.localParticipant.setMicrophoneEnabled(false);
+    // Keep a published (muted) mic so GPT-Live can bind; unpublishing leaves
+    // the worker waiting for audio and the typed send has no agent.
+    await room.localParticipant.setMicrophoneEnabled(true);
+    const mic = room.localParticipant.getTrackPublication(Track.Source.Microphone);
+    if (composer.dictationActive) {
+      if (mic?.isMuted) await mic.unmute();
+      return;
+    }
+    if (mic && !mic.isMuted) await mic.mute();
     setStatus("Online // text");
     return;
   }
   await publishControl(room, { type: "mute", muted: micMuted });
   await room.localParticipant.setMicrophoneEnabled(!micMuted);
+  const mic = room.localParticipant.getTrackPublication(Track.Source.Microphone);
+  if (mic && !micMuted && mic.isMuted) await mic.unmute();
   setStatus(micMuted ? "Online // mic muted" : "Online // mic armed");
 }
 
@@ -182,6 +193,23 @@ function alfredApiPath(path: string): string {
   return `${prefix}${path.startsWith("/") ? path : `/${path}`}`;
 }
 
+/** Best-effort: delete ephemeral live room so LiveKit does not keep billing the job. */
+async function endLiveSession(sessionId?: string): Promise<void> {
+  const id = (sessionId ?? activeSessionId)?.trim();
+  activeSessionId = undefined;
+  if (!id) return;
+  try {
+    await fetch(alfredApiPath("/api/token/end"), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sessionId: id }),
+      keepalive: true,
+    });
+  } catch (err) {
+    console.warn("[voice-client] session end failed", err);
+  }
+}
+
 async function connect(): Promise<void> {
   if (sessionOp !== "idle" || room) return;
   sessionOp = "connecting";
@@ -201,6 +229,7 @@ async function connect(): Promise<void> {
     if (!res.ok || !payload.url || !payload.token) {
       throw new Error(payload.error ?? `Token request failed (${res.status})`);
     }
+    if (payload.room) activeSessionId = payload.room;
 
     setStatus("Connecting…");
     next = new Room({
@@ -264,6 +293,7 @@ async function connect(): Promise<void> {
     // Stop clicked while connect was in flight — leave immediately.
     if (sessionOp !== "connecting") {
       await forceLeave(next);
+      await endLiveSession(payload.room);
       teardownUi("Offline");
       sessionOp = "idle";
       return;
@@ -293,6 +323,7 @@ async function connect(): Promise<void> {
   } catch (err) {
     // Joined LiveKit but a later step failed — do not leave a ghost participant.
     if (next) await forceLeave(next);
+    await endLiveSession(activeSessionId);
     if (room === next) room = undefined;
     sessionOp = "idle";
     throw err;
@@ -345,7 +376,9 @@ async function disconnect(): Promise<void> {
     return;
   }
   const active = room;
+  const sessionId = activeSessionId;
   if (!active) {
+    await endLiveSession(sessionId);
     teardownUi("Offline");
     sessionOp = "idle";
     return;
@@ -359,6 +392,7 @@ async function disconnect(): Promise<void> {
   try {
     await forceLeave(active);
   } finally {
+    await endLiveSession(sessionId);
     teardownUi("Offline");
     sessionOp = "idle";
   }
@@ -369,7 +403,7 @@ async function toggleDictate(): Promise<void> {
   if (composer.dictationActive) {
     composer.stopDictate();
     await publishControl(room, { type: "dictate", active: false });
-    await room.localParticipant.setMicrophoneEnabled(false);
+    await syncMicForLayout();
     return;
   }
   composer.startDictate();
@@ -378,16 +412,33 @@ async function toggleDictate(): Promise<void> {
 }
 
 async function sendComposer(): Promise<void> {
-  if (!room) return;
   const wasDictating = composer.dictationActive;
   const text = composer.consume();
-  if (wasDictating) {
-    await publishControl(room, { type: "dictate", active: false });
-    await room.localParticipant.setMicrophoneEnabled(false);
-  }
   if (!text) return;
   thread.addLocalUser(text);
-  await publishControl(room, { type: "text", text });
+  if (!room) {
+    setStatus("Starting…");
+    try {
+      await connect();
+    } catch (err) {
+      setStatus(err instanceof Error ? err.message : "Couldn't start");
+      return;
+    }
+  }
+  if (!room) {
+    setStatus("Tap Start, then send");
+    return;
+  }
+  if (wasDictating && layout === "chat") {
+    await publishControl(room, { type: "dictate", active: false });
+    await syncMicForLayout();
+  }
+  try {
+    await publishControl(room, { type: "text", text });
+  } catch (err) {
+    console.error("[voice-client] send failed", err);
+    setStatus(err instanceof Error ? err.message : "Send failed");
+  }
 }
 
 layoutToggle.addEventListener("click", () => {
@@ -426,15 +477,19 @@ muteBtn.addEventListener("click", () => {
 });
 
 // Belt-and-suspenders with LiveKit's disconnectOnPageLeave — iframe teardown /
-// desktop shell close must not leave a published mic in alfred-dev.
+// desktop shell close must not leave a published mic or a billed live room.
 function leaveOnPageHide(): void {
   const active = room;
-  if (!active) return;
+  const sessionId = activeSessionId;
+  if (!active && !sessionId) return;
   room = undefined;
-  void forceLeave(active).finally(() => {
-    teardownUi("Offline");
-    sessionOp = "idle";
-  });
+  const leave = active ? forceLeave(active) : Promise.resolve();
+  void leave
+    .then(() => endLiveSession(sessionId))
+    .finally(() => {
+      teardownUi("Offline");
+      sessionOp = "idle";
+    });
 }
 window.addEventListener("pagehide", leaveOnPageHide);
 window.addEventListener("beforeunload", leaveOnPageHide);

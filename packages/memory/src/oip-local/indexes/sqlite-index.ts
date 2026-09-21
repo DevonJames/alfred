@@ -2,6 +2,7 @@ import { mkdirSync } from "node:fs";
 import { mkdir, rm } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
+import type { TaggedHash } from "../hashing.js";
 import { collectDrefs } from "../dref.js";
 import { displayLabel } from "../schema-org.js";
 import type { MemoryRevision } from "../schemas.js";
@@ -278,6 +279,127 @@ export class SqliteMemoryIndex {
       }
     }
     assertCurrent();
+  }
+
+  /**
+   * Upsert one package into the index without wiping the DB.
+   * Prefer this over full rebuild after conversational writes.
+   */
+  indexRevision(current: MemoryRevision, packages: PackageStore): void {
+    const db = this.open();
+    const logicalOnly = current.id.replace(/^did:memory:/, "").split("#")[0]!;
+    const name = displayLabel(current);
+    const searchText = buildSearchText(current);
+
+    // Drop prior rows for this logical package (id is stable did:memory:logicalId)
+    db.prepare("DELETE FROM edges WHERE source_id = ?").run(current.id);
+    db.prepare("DELETE FROM temporal WHERE record_id = ?").run(current.id);
+    db.prepare("DELETE FROM reminders WHERE record_id = ?").run(current.id);
+    db.prepare("DELETE FROM records_fts WHERE record_id = ?").run(current.id);
+    db.prepare("DELETE FROM revisions WHERE record_id = ?").run(current.id);
+    db.prepare("DELETE FROM records WHERE id = ? OR logical_id = ?").run(current.id, logicalOnly);
+
+    db.prepare(
+      `INSERT INTO records (
+        id, logical_id, current_revision, record_type, schema_type, name,
+        owner_id, visibility, created_at, updated_at, learned_at, search_text
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      current.id,
+      logicalOnly,
+      current.revision,
+      current.type,
+      current.schemaType ?? null,
+      name,
+      current.alfred?.owner ?? null,
+      current.alfred?.visibility ?? "private",
+      current.createdAt,
+      current.updatedAt,
+      current.learnedAt ?? null,
+      searchText,
+    );
+
+    db.prepare(
+      `INSERT INTO records_fts (record_id, name, search_text, record_type) VALUES (?, ?, ?, ?)`,
+    ).run(current.id, name, searchText, current.type);
+
+    db.prepare(
+      `INSERT INTO revisions (record_id, revision_hash, previous_revision, canonical_path, created_at)
+       VALUES (?, ?, ?, ?, ?)`,
+    ).run(
+      current.id,
+      current.revision,
+      current.previousRevision,
+      packages.revisionPath(logicalOnly, current.revision as TaggedHash),
+      current.updatedAt ?? current.createdAt,
+    );
+
+    for (const edge of collectDrefs(current)) {
+      const targetId = edge.target.split("#")[0]!;
+      db.prepare(
+        `INSERT OR IGNORE INTO edges (source_id, predicate, target_id, source_revision)
+         VALUES (?, ?, ?, ?)`,
+      ).run(current.id, edge.predicate, targetId, current.revision);
+    }
+
+    db.prepare(
+      `INSERT INTO temporal (record_id, valid_from, valid_until, learned_at, event_start, event_end)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    ).run(
+      current.id,
+      current.validFrom ?? null,
+      current.validUntil ?? null,
+      current.learnedAt ?? null,
+      current.validTimeStart ?? null,
+      current.validTimeEnd ?? null,
+    );
+
+    if (current.remindAt != null || current.reminderStatus) {
+      const remindAt = current.remindAt ?? null;
+      db.prepare(
+        `INSERT INTO reminders (
+          record_id, remind_at, remind_at_sort_key, reminder_status,
+          reminder_reason, reminder_timezone, reminder_snoozed_until
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        current.id,
+        remindAt,
+        remindAtSortKey(remindAt),
+        current.reminderStatus ?? "pending",
+        current.reminderReason ?? null,
+        current.reminderTimezone ?? null,
+        current.reminderSnoozedUntil ?? null,
+      );
+    }
+
+    if (current.type === "Artifact" && current.contentHash) {
+      db.prepare(
+        `INSERT OR IGNORE INTO artifacts (hash, mime_type, byte_size, stored_path, created_at)
+         VALUES (?, ?, ?, ?, ?)`,
+      ).run(
+        current.contentHash,
+        current.mimeType ?? null,
+        current.byteSize ?? null,
+        current.storedAt ?? null,
+        current.ingestedAt ?? current.createdAt,
+      );
+    }
+  }
+
+  /** Remove a logical package from the index (after package delete). */
+  removeLogicalId(logicalId: string): void {
+    const db = this.open();
+    const id = logicalId.startsWith("did:memory:") ? logicalId : `did:memory:${logicalId}`;
+    const logicalOnly = id.replace(/^did:memory:/, "").split("#")[0]!;
+    db.prepare("DELETE FROM edges WHERE source_id = ? OR source_id LIKE ?").run(
+      id,
+      `did:memory:${logicalOnly}%`,
+    );
+    db.prepare("DELETE FROM temporal WHERE record_id = ?").run(id);
+    db.prepare("DELETE FROM reminders WHERE record_id = ?").run(id);
+    db.prepare("DELETE FROM records_fts WHERE record_id = ?").run(id);
+    db.prepare("DELETE FROM revisions WHERE record_id = ?").run(id);
+    db.prepare("DELETE FROM records WHERE id = ? OR logical_id = ?").run(id, logicalOnly);
   }
 
   searchFts(query: string, limit = 20): Array<{ record_id: string; rank: number }> {

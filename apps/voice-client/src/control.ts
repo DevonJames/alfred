@@ -26,4 +26,12 @@ export async function publishControl(room: Room | undefined, command: UiCommand)
     reliable: true,
     topic: CHANNEL,
   });
+  // GPT-Live's worker also listens on LiveKit's text stream (`lk.chat`).
+  if (command.type === "text") {
+    try {
+      await room.localParticipant.sendText(command.text, { topic: "lk.chat" });
+    } catch (err) {
+      console.warn("[voice-client] lk.chat sendText failed", err);
+    }
+  }
 }

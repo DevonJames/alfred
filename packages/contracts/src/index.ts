@@ -10,3 +10,4 @@ export * from "./agents.js";
 export * from "./pipeline.js";
 export * from "./config.js";
 export * from "./prompt.js";
+export * from "./expression.js";

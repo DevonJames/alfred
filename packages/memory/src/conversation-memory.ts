@@ -1977,7 +1977,7 @@ export async function writeConversationalMemory(
               text: text ?? `${subjectName} ${predicate} ${objectName}`,
             },
           },
-          { reindex: false },
+          { reindex: true },
         );
         return true;
       }
@@ -2013,7 +2013,7 @@ export async function writeConversationalMemory(
         },
       },
       undefined,
-      { reindex: false },
+      { reindex: true },
     );
     return true;
   };
@@ -2083,13 +2083,14 @@ export async function writeConversationalMemory(
         drefs: opts.sessionId ? { session: opts.sessionId } : {},
       },
       undefined,
-      { reindex: false },
+      { reindex: true },
     );
     notesCreated += 1;
   }
 
   if (entitiesUpserted || assertionsCreated || notesCreated) {
-    await provider.rebuildIndexes();
+    // Records are indexed incrementally via createRecord/updateRecord.
+    // Do not full-rebuild here — wipe+rebuild races with live voice and drops memories from search.
   }
 
   return { entitiesUpserted, assertionsCreated, notesCreated, entityIds };
@@ -2250,7 +2251,7 @@ async function upsertNamedEntity(
           ].filter(Boolean);
           patch.text = bits.join("; ");
         }
-        await provider.updateRecord(logicalId, patch, { reindex: false });
+        await provider.updateRecord(logicalId, patch, { reindex: true });
       }
     }
     return existingId;
@@ -2291,7 +2292,7 @@ async function upsertNamedEntity(
       },
     },
     undefined,
-    { reindex: false },
+    { reindex: true },
   );
   return record.id;
 }

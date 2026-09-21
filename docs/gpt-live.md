@@ -38,11 +38,11 @@ GPT-Live is different:
 1. Each Talk mint creates a **fresh room** (`{LIVEKIT_ROOM}-live-{suffix}`).
 2. The client JWT includes `RoomAgentDispatch` for `alfred-live`, and desktop also calls the Agent Dispatch API.
 3. The worker accepts the job, joins as `alfred-agent`, runs GPT-Live.
-4. When the client leaves, LiveKit ends the job (no standard participants left). Shutdown hooks close the AgentSession + GPT-Live model so OpenAI sockets do not linger.
+4. When the client leaves, LiveKit ends the job (no standard participants left). Shutdown hooks close the AgentSession + GPT-Live model so OpenAI sockets do not linger. Desktop Talk Stop also calls `POST /api/token/end` (iOS uses `POST /api/session/end`) to **delete** the ephemeral room so Cloud does not keep showing an active session.
 
 Live transcripts (user + assistant) publish on the same data topics as cascade (`alfred.user`, `alfred.caption`) via fire-and-forget `publishData` — they do not sit on the audio path. GPT-Live `transcript_delta` / `UserInputTranscribed` feed the HUD in parallel with speech.
 
-**Clients:** desktop `voice-client` and the iOS Talk tab both consume those topics. iOS does not pick a stack itself — it joins whatever room `/api/session/token` mints when the Mac is running cascade or `VOICE=live`, and renders captions the same way either way.
+**Clients:** desktop `voice-client`, the iOS Talk tab, and AlfredBot (`pnpm alfredbot`) all consume those topics. They do not pick a stack themselves — they join whatever room `/api/session/token` mints when the Mac is running cascade or `VOICE=live`, and render captions the same way either way. AlfredBot also listens for `alfred.expression` from the `show_expression` tool.
 
 That unique-room design matters because LiveKit **only applies token agent dispatch when the room is first created**. Reusing a fixed room would leave Talk connected with **no agent** after the first session.
 

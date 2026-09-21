@@ -49,3 +49,6 @@ apps/iOS-client/.metro-health-check*
 *.p12
 *.key
 *.mobileprovision
+
+# Compiled macOS Apple Speech STT helper
+packages/provider-apple-stt/bin/
