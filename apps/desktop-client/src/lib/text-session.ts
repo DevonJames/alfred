@@ -8,19 +8,23 @@ import {
   createAlfredHomeHarness,
   createClaudeStub,
   createCodexStub,
+  createDocsIngestHarness,
   createHermesStub,
   createOpenClawHarness,
   createXIngestHarness,
 } from "@alfred/agents";
+import { createBriefingController, lookupLiveWeatherForecast } from "@alfred/briefing";
 import { createPlaywrightCaptureAdapter } from "@alfred/browser";
-import type { PipelineConfiguration, UserConfiguration } from "@alfred/contracts";
+import type { AgentDelegationResult, PipelineConfiguration, TaskCategory, UserConfiguration } from "@alfred/contracts";
 import { SessionOrchestrator, SystemClock } from "@alfred/core";
+import { createElgatoLightsController } from "@alfred/elgato";
 import {
   composeNotesCaptureAdapter,
   ensurePersonaFiles,
   loadPersonaContext,
   MemoryController,
   OIP_LOCAL_MEMORY_PROVIDER_ID,
+  writeConversationalMemory,
 } from "@alfred/memory";
 import { createInMemoryPersistence } from "@alfred/persistence";
 import {
@@ -39,6 +43,7 @@ import {
   XaiGrokLLMProvider,
 } from "@alfred/provider-xai";
 import { oipForProfile, personaDirForProfile } from "./oip-memory.js";
+import { createOipReminderPort } from "./reminder-port.js";
 
 export type SessionKeyParts = {
   householdId?: string;
@@ -48,6 +53,7 @@ export type SessionKeyParts = {
 
 type TextRuntime = {
   session: SessionOrchestrator;
+  agents: AgentRouter;
   startedAt: string;
   homeContext: { householdId?: string; deviceToken?: string };
 };
@@ -154,7 +160,7 @@ async function buildRuntime(sessionKey: string, parts: SessionKeyParts): Promise
       { category: "coding", orderedHarnessIds: ["harness.openclaw"] },
       { category: "email", orderedHarnessIds: ["harness.openclaw"] },
       { category: "computer_use", orderedHarnessIds: ["harness.alfred-home", "harness.x-ingest"] },
-      { category: "research", orderedHarnessIds: ["harness.x-ingest", "harness.openclaw"] },
+      { category: "research", orderedHarnessIds: ["harness.docs-ingest", "harness.x-ingest", "harness.openclaw"] },
       { category: "browser", orderedHarnessIds: ["harness.x-ingest", "harness.openclaw"] },
       { category: "general", orderedHarnessIds: ["harness.alfred-home", "harness.openclaw"] },
     ],
@@ -173,6 +179,7 @@ async function buildRuntime(sessionKey: string, parts: SessionKeyParts): Promise
 
   const agents = new AgentRouter();
   agents.register(createAlfredHomeHarness({ getContext: () => homeContext }));
+  agents.register(createDocsIngestHarness({ profileId }));
   agents.register(createOpenClawHarness());
   agents.register(createHermesStub());
   agents.register(createCodexStub());
@@ -185,6 +192,12 @@ async function buildRuntime(sessionKey: string, parts: SessionKeyParts): Promise
   );
   agents.setRoutingRules(config.agentRouting);
 
+  const briefing = createBriefingController({ memory: oip });
+  const lights = createElgatoLightsController();
+  void lights.refresh().catch((err) => {
+    console.warn("[text-session] Elgato light discovery failed:", err);
+  });
+
   const session = new SessionOrchestrator({
     sessionId: `sess_${sessionKey.replace(/[^a-zA-Z0-9:_-]/g, "_")}`,
     profileId,
@@ -196,10 +209,44 @@ async function buildRuntime(sessionKey: string, parts: SessionKeyParts): Promise
     clock,
     personaContext,
     speech: { chunkDurationMs: 0, charsPerChunk: 10_000 },
+    conversational: {
+      reminders: createOipReminderPort(oip, briefing),
+      structuredMemory: {
+        remember: (write) => writeConversationalMemory(oip, write),
+      },
+      weather: {
+        getForecast: (opts) =>
+          lookupLiveWeatherForecast({ location: opts?.location, days: opts?.days }),
+      },
+      lights,
+    },
   });
   await session.start();
 
-  return { session, startedAt: now, homeContext };
+  return { session, agents, startedAt: now, homeContext };
+}
+
+/** Background or awaited harness work for a live2 ingest shortcut. */
+export async function delegateTextSessionTask(
+  parts: SessionKeyParts,
+  task: { category: TaskCategory; description: string },
+): Promise<AgentDelegationResult> {
+  const key = conversationSessionKey(parts);
+  let runtime = runtimes.get(key);
+  if (!runtime) {
+    runtime = await buildRuntime(key, parts);
+    runtimes.set(key, runtime);
+  }
+  return runtime.agents.delegate({
+    correlationId: `corr_${Date.now().toString(36)}`,
+    taskDescription: task.description,
+    taskCategory: task.category,
+    conversationContext: task.description,
+    permissions: ["agent.delegate"],
+    requestedOutputFormat: "text",
+    confirmationRequired: false,
+    timeoutMs: 600_000,
+  });
 }
 
 export async function getTextSession(

@@ -18,6 +18,7 @@
     "simulate": "pnpm --filter @alfred/simulator start",
     "voice": "pnpm --filter @alfred/voice-agent start",
     "voice:live": "pnpm --filter @alfred/voice-agent start:live",
+    "speech-engine:create": "pnpm --filter @alfred/desktop-client exec tsx src/create-speech-engine.ts",
     "client": "pnpm --filter @alfred/voice-client dev",
     "desktop": "pnpm --filter @alfred/desktop-client start",
     "alfredbot": "pnpm --filter @alfred/alfredbot start",

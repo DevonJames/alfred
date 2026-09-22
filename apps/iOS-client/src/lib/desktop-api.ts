@@ -356,6 +356,7 @@ export function revokePairing() {
  * by any field the client hopes to find (§10).
  */
 function parseVoiceStack(raw: unknown): import("./types").VoiceStack | null {
+  if (raw === "live2" || raw === "speech-engine") return "live2";
   if (raw === "live" || raw === "gpt-live" || raw === "gptlive") return "live";
   if (raw === "cascade" || raw === "cascaded") return "cascade";
   return null;

@@ -13,6 +13,19 @@ import { publishControl, type UiLayout } from "./control.js";
 import { TranscriptThread } from "./transcript.js";
 import { Composer } from "./composer.js";
 import { isEmbedded, postShellState } from "./shell-bridge.js";
+import {
+  hushSpeechEngine,
+  noteSpeechEngineStillTalking,
+  noteSpeechEngineUserTurn,
+  releaseSpeechEngineHush,
+  speechEngineNextReply,
+  setSpeechEngineMicMuted,
+  setSpeechEngineUserMuted,
+  speechEngineHushed,
+  speechEngineRunning,
+  startSpeechEngineSession,
+  stopSpeechEngineSession,
+} from "./speech-engine-session.js";
 
 const statusEl = document.querySelector<HTMLElement>("#status")!;
 const linkDot = document.querySelector<HTMLElement>("#link-dot")!;
@@ -77,7 +90,7 @@ let activeSessionId: string | undefined;
 
 function publishShell(rms = 0): void {
   postShellState({
-    linked: Boolean(room),
+    linked: Boolean(room) || speechEngineRunning(),
     speaking: captions.isSpeaking,
     rms,
     caption: lastCaption,
@@ -107,7 +120,7 @@ function applyLayoutDom(next: UiLayout): void {
   document.body.dataset.layout = next;
   layoutToggle.textContent = next === "voice" ? "CHAT" : "VOICE";
   layoutToggle.setAttribute("aria-pressed", String(next === "chat"));
-  updateSessionControls(Boolean(room));
+  updateSessionControls(Boolean(room) || speechEngineRunning());
 }
 
 function setLayout(next: UiLayout): void {
@@ -154,6 +167,16 @@ async function syncMicForLayout(): Promise<void> {
 }
 
 async function shhh(): Promise<void> {
+  if (speechEngineRunning()) {
+    hushSpeechEngine();
+    captions.handle({ type: "end", reason: "ui_stop" });
+    shhhBtn.classList.remove("active");
+    linkDot.classList.add("live");
+    linkDot.classList.remove("speaking");
+    setStatus(micMuted ? "Online // mic muted" : "Online // mic armed");
+    updateSessionControls(true);
+    return;
+  }
   if (!room) return;
   await publishControl(room, { type: "stop" });
   shhhBtn.classList.remove("active");
@@ -161,7 +184,15 @@ async function shhh(): Promise<void> {
 }
 
 async function toggleMute(): Promise<void> {
-  if (!room || layout !== "voice") return;
+  if (layout !== "voice") return;
+  if (speechEngineRunning()) {
+    micMuted = !micMuted;
+    setSpeechEngineUserMuted(micMuted);
+    updateSessionControls(true);
+    setStatus(micMuted ? "Online // mic muted" : "Online // mic armed");
+    return;
+  }
+  if (!room) return;
   micMuted = !micMuted;
   // Tell the agent first so STT stops even if WebRTC mute is flaky.
   await publishControl(room, { type: "mute", muted: micMuted });
@@ -211,7 +242,7 @@ async function endLiveSession(sessionId?: string): Promise<void> {
 }
 
 async function connect(): Promise<void> {
-  if (sessionOp !== "idle" || room) return;
+  if (sessionOp !== "idle" || room || speechEngineRunning()) return;
   sessionOp = "connecting";
   connectBtn.disabled = true;
   setStatus("Minting token…");
@@ -224,9 +255,20 @@ async function connect(): Promise<void> {
       room?: string;
       identity?: string;
       token?: string;
+      voiceStack?: string;
+      conversationToken?: string;
+      scribeToken?: string;
       error?: string;
     };
-    if (!res.ok || !payload.url || !payload.token) {
+    if (!res.ok) {
+      throw new Error(payload.error ?? `Token request failed (${res.status})`);
+    }
+    if (payload.voiceStack === "live2") {
+      if (!payload.conversationToken) throw new Error("Speech Engine token missing");
+      await connectSpeechEngine(payload.conversationToken, payload.scribeToken);
+      return;
+    }
+    if (!payload.url || !payload.token) {
       throw new Error(payload.error ?? `Token request failed (${res.status})`);
     }
     if (payload.room) activeSessionId = payload.room;
@@ -321,7 +363,8 @@ async function connect(): Promise<void> {
     publishShell();
     sessionOp = "idle";
   } catch (err) {
-    // Joined LiveKit but a later step failed — do not leave a ghost participant.
+    // Joined LiveKit or Speech Engine but a later step failed — do not leave a ghost session.
+    if (speechEngineRunning()) await stopSpeechEngineSession();
     if (next) await forceLeave(next);
     await endLiveSession(activeSessionId);
     if (room === next) room = undefined;
@@ -366,6 +409,117 @@ async function forceLeave(target: Room): Promise<void> {
   }
 }
 
+async function connectSpeechEngine(conversationToken: string, scribeToken?: string): Promise<void> {
+  let agentText = "";
+  let userText = "";
+  setStatus("Connecting…");
+
+  const recoverFromDrop = async (reason: string) => {
+    if (sessionOp === "disconnecting") return;
+    console.warn("[voice-client] speech engine dropped:", reason);
+    await stopSpeechEngineSession();
+    sessionOp = "idle";
+    teardownUi("Offline // session dropped — press Start");
+  };
+
+  await startSpeechEngineSession(conversationToken, {
+    onUser: (text, kind) => {
+      userText = text;
+      userTranscript.handle({ type: kind, text });
+      if (kind === "final") {
+        noteSpeechEngineUserTurn();
+        thread.handleUserFinal(text);
+      }
+      publishShell();
+    },
+    onAgent: (text) => {
+      if (speechEngineHushed()) {
+        const continuation =
+          agentText.length > 0 && (text.startsWith(agentText) || agentText.startsWith(text));
+        if (continuation || !speechEngineNextReply()) return;
+        releaseSpeechEngineHush();
+      }
+      // Mute before playback lands in the mic. A transcript of his own voice
+      // aborts the in-flight reply on the Speech Engine socket.
+      setSpeechEngineMicMuted(true);
+      agentText = text;
+      lastCaption = text;
+      captions.setUpcoming(text);
+      publishShell();
+    },
+    onSpoken: (text) => {
+      if (speechEngineHushed()) return;
+      setSpeechEngineMicMuted(true);
+      captions.revealSpoken(text);
+      publishShell();
+    },
+    onMode: (mode) => {
+      if (mode === "speaking") {
+        if (speechEngineHushed()) {
+          noteSpeechEngineStillTalking();
+          return;
+        }
+        setSpeechEngineMicMuted(true);
+        shhhBtn.classList.add("active");
+        linkDot.classList.add("speaking");
+        linkDot.classList.remove("live");
+        if (agentText) captions.setUpcoming(agentText);
+        return;
+      }
+      linkDot.classList.add("live");
+      linkDot.classList.remove("speaking");
+      shhhBtn.classList.remove("active");
+      if (!speechEngineHushed()) setSpeechEngineMicMuted(false);
+      if (userText) {
+        userTranscript.handle({ type: "final", text: userText });
+        thread.handleUserFinal(userText);
+        userText = "";
+      }
+      if (agentText) {
+        const hushed = speechEngineHushed();
+        captions.handle({ type: "end", reason: hushed ? "ui_stop" : undefined });
+        const shown = hushed ? captions.spokenText() : agentText;
+        if (shown) {
+          thread.handleCaption({ type: "reveal", text: shown });
+          thread.handleCaption({ type: "end" });
+        }
+        agentText = "";
+      }
+      if (!speechEngineHushed()) releaseSpeechEngineHush();
+    },
+    onStatus: (status) => {
+      if (status === "connected") setStatus("Linked // speech engine");
+      else if (status === "connecting") setStatus("Connecting…");
+    },
+    onDropped: () => {
+      void recoverFromDrop("disconnected");
+    },
+    onError: (message) => {
+      console.error("[voice-client] speech engine", message);
+      void recoverFromDrop(message || "error");
+    },
+    onUserPartial: (text) => {
+      userTranscript.handle({ type: "partial", text });
+      publishShell();
+    },
+  }, scribeToken);
+  if (sessionOp !== "connecting") {
+    await stopSpeechEngineSession();
+    teardownUi("Offline");
+    sessionOp = "idle";
+    return;
+  }
+  connectBtn.disabled = false;
+  setSessionToggle(true);
+  document.body.classList.add("linked");
+  linkDot.classList.add("live");
+  metaEl.textContent = "elevenlabs speech engine";
+  updateSessionControls(true);
+  publishShell();
+  sessionOp = "idle";
+  setStatus("Online // speech engine");
+}
+
 async function disconnect(): Promise<void> {
   if (sessionOp === "disconnecting") return;
   // Connecting: flip the op so connect()'s post-join check leaves immediately.
@@ -377,6 +531,18 @@ async function disconnect(): Promise<void> {
   }
   const active = room;
   const sessionId = activeSessionId;
+  if (speechEngineRunning()) {
+    sessionOp = "disconnecting";
+    connectBtn.disabled = true;
+    setStatus("Leaving…");
+    try {
+      await stopSpeechEngineSession();
+    } finally {
+      teardownUi("Offline");
+      sessionOp = "idle";
+    }
+    return;
+  }
   if (!active) {
     await endLiveSession(sessionId);
     teardownUi("Offline");
@@ -455,7 +621,7 @@ document.querySelector<HTMLFormElement>("#composer")!.addEventListener("submit",
 });
 
 connectBtn.addEventListener("click", () => {
-  if (room || sessionOp === "connecting") {
+  if (room || sessionOp === "connecting" || speechEngineRunning()) {
     void disconnect().catch((err) => console.error(err));
     return;
   }
@@ -481,15 +647,18 @@ muteBtn.addEventListener("click", () => {
 function leaveOnPageHide(): void {
   const active = room;
   const sessionId = activeSessionId;
-  if (!active && !sessionId) return;
+  const engine = speechEngineRunning();
+  if (!active && !sessionId && !engine) return;
   room = undefined;
-  const leave = active ? forceLeave(active) : Promise.resolve();
-  void leave
-    .then(() => endLiveSession(sessionId))
-    .finally(() => {
-      teardownUi("Offline");
-      sessionOp = "idle";
-    });
+  const leave = engine
+    ? stopSpeechEngineSession()
+    : active
+      ? forceLeave(active).then(() => endLiveSession(sessionId))
+      : endLiveSession(sessionId);
+  void leave.finally(() => {
+    teardownUi("Offline");
+    sessionOp = "idle";
+  });
 }
 window.addEventListener("pagehide", leaveOnPageHide);
 window.addEventListener("beforeunload", leaveOnPageHide);

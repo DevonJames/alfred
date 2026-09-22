@@ -11,15 +11,31 @@
 import { Hono } from "hono";
 import { endLiveConversation } from "../lib/livekit-session-end.js";
 import { mintLiveKitClientToken } from "../lib/livekit-token.js";
+import {
+  hushSpeechEngineReplies,
+  isSpeechEngineStack,
+  mintSpeechEngineConversationToken,
+} from "../lib/speech-engine.js";
 
 export const tokenRouter = new Hono();
 
 tokenRouter.get("/token", async (c) => {
+  if (isSpeechEngineStack()) {
+    const minted = await mintSpeechEngineConversationToken();
+    if (!minted.ok) return c.json({ error: minted.error, voiceStack: "live2" }, minted.status);
+    return c.json(minted.body);
+  }
   const minted = await mintLiveKitClientToken({ client: "web" });
   if (!minted.ok) {
     return c.json({ error: minted.error }, minted.status);
   }
   return c.json(minted.body);
+});
+
+/** Shhh on VOICE=live2 — stop the reply in progress. The session stays open. */
+tokenRouter.post("/speech/hush", async (c) => {
+  await hushSpeechEngineReplies();
+  return c.json({ ok: true });
 });
 
 /** Desktop Talk Stop — same room delete as iOS POST /api/session/end. */

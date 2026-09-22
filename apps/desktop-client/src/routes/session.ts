@@ -3,6 +3,7 @@
  */
 
 import { isAgentInRoom, isLiveVoiceStack } from "@alfred/livekit";
+import { isSpeechEngineStack, speechEngineReady } from "../lib/speech-engine.js";
 import { Hono } from "hono";
 import { endLiveConversation } from "../lib/livekit-session-end.js";
 import { livekitConfigured, mintLiveKitClientToken } from "../lib/livekit-token.js";
@@ -38,6 +39,16 @@ async function readTokenRequest(c: {
 }
 
 sessionRouter.get("/token", async (c) => {
+  if (isSpeechEngineStack()) {
+    return c.json(
+      {
+        error:
+          "VOICE=live2 is desktop Talk only (open /voice/ on this Mac). iOS still uses cascade or make alfred VOICE=live.",
+        voiceStack: "live2",
+      },
+      501,
+    );
+  }
   const minted = await mintLiveKitClientToken({
     client: c.req.query("client"),
     join: c.req.query("join"),
@@ -50,6 +61,16 @@ sessionRouter.get("/token", async (c) => {
 });
 
 sessionRouter.post("/token", async (c) => {
+  if (isSpeechEngineStack()) {
+    return c.json(
+      {
+        error:
+          "VOICE=live2 is desktop Talk only (open /voice/ on this Mac). iOS still uses cascade or make alfred VOICE=live.",
+        voiceStack: "live2",
+      },
+      501,
+    );
+  }
   const minted = await mintLiveKitClientToken(await readTokenRequest(c));
   if (!minted.ok) {
     return c.json({ error: minted.error }, minted.status);
@@ -62,9 +83,12 @@ sessionRouter.get("/status", async (c) => {
   const identity = process.env.LIVEKIT_IDENTITY ?? "alfred-agent";
   const configured = livekitConfigured();
   const live = isLiveVoiceStack();
+  const live2 = isSpeechEngineStack();
 
   let agentPresent: boolean | null = null;
-  if (configured) {
+  if (live2) {
+    agentPresent = speechEngineReady();
+  } else if (configured) {
     if (live) {
       // GPT-Live joins on Talk dispatch into a fresh room — there is no always-on
       // participant in LIVEKIT_ROOM. Treat configured + live stack as "ready".
@@ -80,13 +104,17 @@ sessionRouter.get("/status", async (c) => {
     }
   }
 
-  const agentHint = !configured
-    ? "Set LIVEKIT_URL / LIVEKIT_API_KEY / LIVEKIT_API_SECRET on the Mac."
-    : live
-      ? null
-      : agentPresent
+  const agentHint = live2
+    ? speechEngineReady()
+      ? "ElevenLabs Speech Engine is on desktop Talk (/voice/). Phone Talk still uses cascade or VOICE=live."
+      : "Speech Engine is not attached. Set ELEVENLABS_SPEECH_ENGINE_ID and a public wss URL, then restart."
+    : !configured
+      ? "Set LIVEKIT_URL / LIVEKIT_API_KEY / LIVEKIT_API_SECRET on the Mac."
+      : live
         ? null
-        : "Voice agent is offline — on the Mac run `make alfred` (or `pnpm voice`) and wait for LiveKit reconnect.";
+        : agentPresent
+          ? null
+          : "Voice agent is offline — on the Mac run `make alfred` (or `pnpm voice`) and wait for LiveKit reconnect.";
 
   return c.json({
     ok: true,
@@ -96,7 +124,7 @@ sessionRouter.get("/status", async (c) => {
     // Only surface the live hint when something looks wrong; Talk treats
     // agentPresent=true as "ready" and suppresses the banner.
     agentHint: live && agentPresent ? null : agentHint,
-    voiceStack: live ? "live" : "cascade",
+    voiceStack: live2 ? "live2" : live ? "live" : "cascade",
     conversation: isRobotConversation(),
     conversationId: robotConversationId(),
   });

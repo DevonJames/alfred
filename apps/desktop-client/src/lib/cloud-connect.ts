@@ -19,6 +19,7 @@ import {
   updateIdentity,
   type DesktopClientIdentity,
 } from "./identity-store.js";
+import { closeAllSpeechRelays, handleSpeechRelayMessage } from "./speech-relay.js";
 
 const CLOUD_URL = process.env.ALFRD_CLOUD_URL ?? "https://api.alfrd.net";
 const RELAY_WS_URL = process.env.ALFRD_RELAY_URL ?? "wss://api.alfrd.net";
@@ -238,6 +239,10 @@ function connectRelayTunnel(serverId: string, serverToken: string) {
 
   ws.addEventListener("open", () => {
     console.log(`[CloudConnect] Relay tunnel established (desktopClientId: ${serverId})`);
+    if ((process.env.ALFRED_VOICE_STACK ?? "").trim().toLowerCase() === "live2") {
+      const host = RELAY_WS_URL.replace(/^ws:/i, "wss:").replace(/\/$/, "");
+      console.log(`[CloudConnect] Speech Engine URL: ${host}/speech/${serverId}/ws`);
+    }
     reconnectAttempt = 0;
     currentCloudDesktopToken = serverToken;
     startPing(ws);
@@ -264,6 +269,8 @@ function connectRelayTunnel(serverId: string, serverToken: string) {
       return;
     }
 
+    if (handleSpeechRelayMessage(ws, msg, relayListenPort)) return;
+
     if (msg.type === "request" && msg.requestId) {
       await handleRelayRequest(
         ws,
@@ -278,6 +285,7 @@ function connectRelayTunnel(serverId: string, serverToken: string) {
 
   ws.addEventListener("close", (event) => {
     console.log(`[CloudConnect] Relay tunnel closed (code: ${event.code})`);
+    closeAllSpeechRelays();
     clearPingTimer();
     if (currentSocket === ws) currentSocket = null;
     if (!isShuttingDown) {

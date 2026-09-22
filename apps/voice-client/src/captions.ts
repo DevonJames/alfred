@@ -15,6 +15,8 @@ export class CaptionHud {
   private revealed = "";
   private speaking = false;
   private energyAccum = 0;
+  private aligned = false;
+  private paceTimer = 0;
   private readonly liveEl: HTMLElement;
   private readonly restEl: HTMLElement;
   private readonly cursorEl: HTMLElement;
@@ -36,6 +38,8 @@ export class CaptionHud {
 
   handle(msg: CaptionMessage): void {
     if (msg.type === "start") {
+      this.stopPace();
+      this.aligned = false;
       this.full = msg.text;
       this.revealed = "";
       this.speaking = true;
@@ -56,6 +60,7 @@ export class CaptionHud {
       this.render();
       return;
     }
+    this.stopPace();
     // end — only snap to full text on a clean complete; interrupts keep the spoken prefix
     if (!msg.reason || msg.reason === "complete") {
       if (this.full && this.revealed.length < this.full.length) {
@@ -65,6 +70,36 @@ export class CaptionHud {
     this.speaking = false;
     this.modeEl.textContent = "STANDBY";
     this.cursorEl.hidden = true;
+    this.render();
+  }
+
+  spokenText(): string {
+    return this.revealed;
+  }
+
+  /** Full reply text. A new turn replaces the previous caption. */
+  setUpcoming(text: string): void {
+    if (!this.speaking) this.beginTurn();
+    this.full = text;
+    this.speaking = true;
+    this.modeEl.textContent = "TRANSMITTING";
+    this.cursorEl.hidden = false;
+    if (!this.aligned) this.startPace();
+    this.render();
+  }
+
+  /** Characters ElevenLabs has actually started speaking. */
+  revealSpoken(text: string): void {
+    if (!text) return;
+    if (!this.speaking) this.beginTurn();
+    if (text.length < this.revealed.length) return;
+    this.aligned = true;
+    this.stopPace();
+    this.revealed = text;
+    this.speaking = true;
+    if (!this.full) this.full = text;
+    this.modeEl.textContent = "TRANSMITTING";
+    this.cursorEl.hidden = false;
     this.render();
   }
 
@@ -90,9 +125,11 @@ export class CaptionHud {
   }
 
   reset(): void {
+    this.stopPace();
     this.full = "";
     this.revealed = "";
     this.speaking = false;
+    this.aligned = false;
     this.energyAccum = 0;
     this.modeEl.textContent = "STANDBY";
     this.cursorEl.hidden = true;
@@ -103,6 +140,35 @@ export class CaptionHud {
     return this.speaking;
   }
 
+  private beginTurn(): void {
+    this.stopPace();
+    this.full = "";
+    this.revealed = "";
+    this.aligned = false;
+    this.energyAccum = 0;
+    this.speaking = true;
+  }
+
+  private startPace(): void {
+    if (this.paceTimer) return;
+    this.paceTimer = window.setInterval(() => {
+      if (!this.speaking || this.aligned || this.revealed.length >= this.full.length) {
+        this.stopPace();
+        return;
+      }
+      let end = Math.min(this.full.length, this.revealed.length + 1);
+      while (end < this.full.length && !/\s/.test(this.full[end] ?? "")) end += 1;
+      this.revealed = this.full.slice(0, end);
+      this.render();
+    }, 90);
+  }
+
+  private stopPace(): void {
+    if (!this.paceTimer) return;
+    window.clearInterval(this.paceTimer);
+    this.paceTimer = 0;
+  }
+
   private render(): void {
     if (!this.full && !this.revealed) {
       this.liveEl.innerHTML = "";
@@ -111,7 +177,8 @@ export class CaptionHud {
     }
     // Live prefix: render markdown. Ghost remainder: plain (markers stripped).
     this.liveEl.innerHTML = markdownToHtml(this.revealed);
-    this.restEl.textContent = stripMarkdown(this.full.slice(this.revealed.length));
+    const rest = this.full.startsWith(this.revealed) ? this.full.slice(this.revealed.length) : "";
+    this.restEl.textContent = stripMarkdown(rest);
     // Keep the newest spoken text in view without scrolling the page.
     const scroller = this.liveEl.parentElement;
     if (scroller) scroller.scrollTop = scroller.scrollHeight;

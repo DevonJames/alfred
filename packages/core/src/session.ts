@@ -24,7 +24,18 @@ import {
 } from "./interruption.js";
 import { NoopObservability, type Observability } from "./observability.js";
 import { getSelectorLocks, validatePipelineConfiguration } from "./pipeline.js";
-import type { AgentRouterPort, MemoryControllerPort, ProviderRegistryPort } from "./ports.js";
+import {
+  applyConversationalTool,
+  conversationalCapabilities,
+  conversationalToolSchemas,
+  type ConversationalPorts,
+} from "./conversational-tools.js";
+import type {
+  AgentRouterPort,
+  DueReminderSummary,
+  MemoryControllerPort,
+  ProviderRegistryPort,
+} from "./ports.js";
 import { PromptAssembler } from "./prompt-assembler.js";
 import { ResponseLedger } from "./response-ledger.js";
 import { ConversationStateMachine } from "./state-machine.js";
@@ -53,6 +64,8 @@ export interface SessionOrchestratorOptions {
   backchannelClassifier?: BackchannelClassifier;
   interruptionArbiter?: InterruptionArbiter;
   speech?: SpeechDeliveryOptions;
+  /** Cascade voice tools: reminders, durable memory, weather, lights. */
+  conversational?: ConversationalPorts;
 }
 
 export interface UserUtteranceInput {
@@ -117,6 +130,7 @@ export class SessionOrchestrator {
   private turnExtraSystem?: string;
   private turnImageDataUrls?: string[];
   private turnOnToken?: (delta: string) => void;
+  private turnDueReminders: DueReminderSummary[] = [];
 
   constructor(private readonly opts: SessionOrchestratorOptions) {
     this.sessionId = opts.sessionId ?? createId("sess");
@@ -256,6 +270,9 @@ export class SessionOrchestrator {
     this.turnImageDataUrls = input.imageDataUrls;
     this.turnOnToken = input.onToken;
     const state = this.fsm.getState();
+    if (state === "Failed" || state === "Cancelled") {
+      await this.fsm.force("Idle", "recover_before_turn");
+    }
 
     if (this.isSpeaking || state === "AssistantSpeaking") {
       await this.handleSpeechOverlap(input);
@@ -356,6 +373,7 @@ export class SessionOrchestrator {
       await this.fsm.transition("GeneratingResponse", "llm.start", { turnId: turn.id });
       const responseId = this.responseLedger.beginResponse(this.sessionId, turn.id);
       this.currentResponseId = responseId;
+      this.turnDueReminders = await this.loadDueReminders();
 
       const prompt = this.promptAssembler.assemble({
         systemInstructions: this.config.systemInstructions,
@@ -366,7 +384,8 @@ export class SessionOrchestrator {
           .map((t) => ({ role: t.role, text: t.text })),
         personaContext: this.opts.personaContext,
         retrievedMemory: memory.items,
-        availableCapabilities: ["delegate_task"],
+        availableCapabilities: conversationalCapabilities(this.opts.conversational),
+        dueReminders: this.turnDueReminders,
         mode: "initial",
         lateAddenda: [],
         agentResults: [],
@@ -417,6 +436,7 @@ export class SessionOrchestrator {
         }
       }
     } catch (err) {
+      if (isCancellation(err) || this.fsm.getState() === "Cancelled") return;
       span.recordException(err);
       await this.fail(err);
       throw err;
@@ -489,7 +509,8 @@ export class SessionOrchestrator {
       lateAddenda: addenda,
       mode: "addendum",
       agentResults: [],
-      availableCapabilities: ["delegate_task"],
+      availableCapabilities: conversationalCapabilities(this.opts.conversational),
+      dueReminders: this.turnDueReminders,
     });
 
     // Keep original; append supplementary segment.
@@ -679,7 +700,8 @@ export class SessionOrchestrator {
       mode,
       lateAddenda: [],
       agentResults: [],
-      availableCapabilities: ["delegate_task"],
+      availableCapabilities: conversationalCapabilities(this.opts.conversational),
+      dueReminders: this.turnDueReminders,
     });
     const text = await this.generateWithFailover(prompt.messages, responseId, turn.id);
     await this.responseLedger.commit(responseId, text);
@@ -760,7 +782,8 @@ export class SessionOrchestrator {
       agentResults: [result],
       mode: "initial",
       lateAddenda: [],
-      availableCapabilities: ["delegate_task"],
+      availableCapabilities: conversationalCapabilities(this.opts.conversational),
+      dueReminders: this.turnDueReminders,
     });
     const text = await this.generateWithFailover(prompt.messages, responseId, turn.id);
     await this.responseLedger.commit(responseId, text);
@@ -850,6 +873,7 @@ export class SessionOrchestrator {
                   required: ["category", "taskDescription"],
                 },
               },
+              ...conversationalToolSchemas(this.opts.conversational),
             ],
           })) {
             if (chunk.type === "error") {
@@ -866,6 +890,7 @@ export class SessionOrchestrator {
               toolCall = { toolName: chunk.toolName, toolArgs: chunk.toolArgs };
             }
           }
+          const streamed = text;
           if (toolCall?.toolName === "delegate_task") {
             const description = String(toolCall.toolArgs?.taskDescription ?? "");
             const category = (toolCall.toolArgs?.category as TaskCategory | undefined) ?? "research";
@@ -882,6 +907,18 @@ export class SessionOrchestrator {
               });
               text = result.output || result.error || text;
             }
+          }
+          const applied = await applyConversationalTool(
+            toolCall?.toolName,
+            toolCall?.toolArgs ?? {},
+            this.opts.conversational,
+            this.turnDueReminders,
+          );
+          if (applied) {
+            text = applied.mode === "replace" ? applied.speech : text.trim() || applied.speech;
+          }
+          if (text.trim() && text.trim() !== streamed.trim()) {
+            this.turnOnToken?.(text);
           }
           if (segmentKind === "addendum") {
             await this.responseLedger.addSegment(responseId, "addendum", text);
@@ -1091,6 +1128,17 @@ export class SessionOrchestrator {
     }
   }
 
+  private async loadDueReminders(): Promise<DueReminderSummary[]> {
+    const reminders = this.opts.conversational?.reminders;
+    if (!reminders) return [];
+    try {
+      return await reminders.listDue();
+    } catch (err) {
+      console.warn("[session] listDue reminders failed:", err);
+      return [];
+    }
+  }
+
   private async fail(err: unknown): Promise<void> {
     await this.events.emit({
       sessionId: this.sessionId,
@@ -1125,6 +1173,12 @@ function extractFailureClass(err: unknown): ProviderFailureClass {
 function isAbortWithReason(err: unknown, reason: CancellationReason): boolean {
   if (!err || typeof err !== "object") return false;
   return (err as { reason?: string }).reason === reason;
+}
+
+function isCancellation(err: unknown): boolean {
+  if (isAbortWithReason(err, "user_cancellation") || isAbortWithReason(err, "interruption")) return true;
+  if (err instanceof Error && (err.name === "AbortError" || err.message === "aborted")) return true;
+  return false;
 }
 
 function parseDelegateIntent(

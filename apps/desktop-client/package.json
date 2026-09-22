@@ -9,6 +9,7 @@
     "lint": "tsc -p tsconfig.json --noEmit",
     "build:voice-ui": "pnpm --filter @alfred/voice-client run build:desktop",
     "start": "pnpm run build:voice-ui && tsx src/main.ts",
+    "speech-engine:create": "tsx src/create-speech-engine.ts",
     "start:sidecar": "tsx src/main.ts"
   },
   "dependencies": {
@@ -17,22 +18,26 @@
     "@alfred/browser": "workspace:^",
     "@alfred/contracts": "workspace:^",
     "@alfred/core": "workspace:^",
+    "@alfred/elgato": "workspace:^",
     "@alfred/livekit": "workspace:^",
     "@alfred/memory": "workspace:^",
     "@alfred/persistence": "workspace:^",
     "@alfred/provider-openai": "workspace:^",
     "@alfred/provider-xai": "workspace:^",
     "@alfred/providers": "workspace:^",
+    "@elevenlabs/elevenlabs-js": "^2.68.0",
     "@hono/node-server": "^1.13.7",
     "dotenv": "^16.4.7",
     "hono": "^4.6.14",
     "qrcode": "^1.5.4",
     "unpdf": "^1.8.1",
-    "uuid": "^11.0.3"
+    "uuid": "^11.0.3",
+    "ws": "^8.18.0"
   },
   "devDependencies": {
     "@types/qrcode": "^1.5.6",
     "@types/uuid": "^10.0.0",
+    "@types/ws": "^8.5.13",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2"
   }

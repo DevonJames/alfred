@@ -12,6 +12,7 @@
     "lint": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@elevenlabs/client": "^1.25.0",
     "livekit-client": "^2.9.1"
   },
   "devDependencies": {

@@ -173,7 +173,7 @@ export interface ChatTurnResponse {
 export type TurnResponse = ChatTurnResponse;
 
 /** Which Mac voice worker the desktop is serving for Talk. */
-export type VoiceStack = "cascade" | "live";
+export type VoiceStack = "cascade" | "live" | "live2";
 
 export interface SessionToken {
   sessionId: string;

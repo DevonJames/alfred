@@ -10,6 +10,7 @@
  *   6. Pair device (PIN), then call /api/session/token and /api/memory/*
  *   7. For voice: also run `pnpm voice` so alfred-agent joins LiveKit
  */
+import type { Server as HttpServer } from "node:http";
 import { serve } from "@hono/node-server";
 import { config as loadEnv } from "dotenv";
 import { Hono } from "hono";
@@ -18,6 +19,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { startCloudConnect, stopCloudConnect } from "./lib/cloud-connect.js";
 import { endLiveConversation } from "./lib/livekit-session-end.js";
+import { attachSpeechEngine, closeSpeechEngine, isSpeechEngineStack } from "./lib/speech-engine.js";
 import { startXIngestScheduler } from "./lib/x-ingest-schedule.js";
 import { sidecarHostname, sidecarPort, isSidecarMode } from "./lib/sidecar-mode.js";
 import { sidecarRuntimeReady, warmupSidecarMemory } from "./lib/text-session.js";
@@ -187,11 +189,21 @@ const server = serve({ fetch: app.fetch, port, hostname }, (info) => {
   console.log(`  Cloud: ${process.env.ALFRD_CLOUD_URL ?? "https://api.alfrd.net"}`);
   console.log(`  Relay: ${process.env.ALFRD_RELAY_URL ?? "wss://api.alfrd.net"}`);
   console.log(`  Name:  ${process.env.DESKTOP_CLIENT_NAME ?? "Alfred"}`);
-  console.log(`  Voice agent: run \`pnpm voice\` separately for Talk audio`);
+  console.log(
+    isSpeechEngineStack()
+      ? "  Voice: ElevenLabs Speech Engine (VOICE=live2) — open /voice/"
+      : "  Voice agent: run `pnpm voice` or `pnpm voice:live` separately for Talk audio",
+  );
   void endLiveConversation().catch((err) => {
     console.warn("[livekit] leftover room sweep failed:", err);
   });
 });
+
+if (isSpeechEngineStack()) {
+  void attachSpeechEngine(server as HttpServer).catch((err) => {
+    console.error("[speech-engine] attach failed:", err);
+  });
+}
 
 if ("requestTimeout" in server) {
   server.requestTimeout = LONG_REQUEST_MS;
@@ -252,6 +264,7 @@ function shutdown(signal: string) {
   console.log(`\nShutting down (${signal})…`);
   stopXIngest();
   stopCloudConnect();
+  void closeSpeechEngine();
   server.close(() => {
     process.exit(0);
   });
