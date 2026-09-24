@@ -463,6 +463,29 @@ export const GET_HACKER_NEWS_TOOL = {
   },
 } as const;
 
+export const GET_CURRENT_TIME_TOOL = {
+  name: "get_current_time",
+  description:
+    "Say the current local time or today's date. " +
+    "Call for 'what time is it', 'do you have the time', and 'what's today's date'. " +
+    "Omit place for the user's home timezone. Pass place for a city such as Tokyo or London. " +
+    "Do not invent the time. This is not for scheduling a future event.",
+  parameters: {
+    type: "object",
+    properties: {
+      place: {
+        type: "string",
+        description: "City to check, such as Tokyo. Omit for home.",
+      },
+      kind: {
+        type: "string",
+        enum: ["time", "date"],
+        description: "time for the clock. date for the weekday and calendar date.",
+      },
+    },
+  },
+} as const;
+
 export const AgentRoutingRuleSchema = z.object({
   category: TaskCategorySchema,
   orderedHarnessIds: z.array(z.string().min(1)).min(1),

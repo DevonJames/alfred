@@ -43,6 +43,7 @@ export {
   looksLikeNewsTask,
   parseNewsIntent,
   resolveNewsArticleIndex,
+  resolveNewsFollowUp,
   type NewsIntent,
 } from "./news-intent.js";
 export {
@@ -50,6 +51,11 @@ export {
   parseMarketsIntent,
   type MarketsIntent,
 } from "./markets-intent.js";
+export {
+  looksLikeTimeTask,
+  parseTimeIntent,
+  type TimeIntent,
+} from "./time-intent.js";
 export {
   looksLikeSituationalTask,
   parseSituationalIntent,

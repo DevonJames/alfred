@@ -1,6 +1,7 @@
 import {
   CONTROL_STUDIO_LIGHTS_TOOL,
   GET_CRYPTO_PRICE_TOOL,
+  GET_CURRENT_TIME_TOOL,
   GET_EARTHQUAKES_TOOL,
   GET_EXCHANGE_RATE_TOOL,
   GET_HACKER_NEWS_TOOL,
@@ -19,6 +20,7 @@ import type {
   MarketsPort,
   NewsPort,
   ReminderPort,
+  CurrentTimePort,
   SituationalPort,
   StructuredMemoryPort,
   StudioLightsPort,
@@ -33,6 +35,8 @@ export interface ConversationalPorts {
   weather?: WeatherForecastPort;
   news?: NewsPort;
   markets?: MarketsPort;
+  /** Spoken local time and date. */
+  currentTime?: CurrentTimePort;
   /** Earthquakes, alerts, space weather, natural events, FX, Hacker News. */
   situational?: SituationalPort;
   lights?: StudioLightsPort;
@@ -57,6 +61,7 @@ export function conversationalCapabilities(ports?: ConversationalPorts): string[
     caps.push("get_crypto_price");
     caps.push("get_metals_price");
   }
+  if (ports?.currentTime) caps.push("get_current_time");
   if (ports?.situational) {
     caps.push(
       "get_earthquakes",
@@ -84,6 +89,7 @@ export function conversationalToolSchemas(ports?: ConversationalPorts): ToolSche
     tools.push(GET_CRYPTO_PRICE_TOOL as unknown as ToolSchema);
     tools.push(GET_METALS_PRICE_TOOL as unknown as ToolSchema);
   }
+  if (ports?.currentTime) tools.push(GET_CURRENT_TIME_TOOL as unknown as ToolSchema);
   if (ports?.situational) {
     tools.push(GET_EARTHQUAKES_TOOL as unknown as ToolSchema);
     tools.push(GET_WEATHER_ALERTS_TOOL as unknown as ToolSchema);
@@ -122,6 +128,9 @@ export async function applyConversationalTool(
   }
   if (toolName === "get_metals_price" && ports.markets) {
     return { mode: "replace", speech: await applyMetals(ports.markets, args) };
+  }
+  if (toolName === "get_current_time" && ports.currentTime) {
+    return { mode: "replace", speech: await applyCurrentTime(ports.currentTime, args) };
   }
   if (ports.situational && SITUATIONAL_TOOLS.has(toolName)) {
     return { mode: "replace", speech: await applySituational(ports.situational, toolName, args) };
@@ -238,6 +247,17 @@ async function applySituational(
     console.error(`[session] ${toolName} failed:`, err);
   }
   return "I couldn't look that up just now.";
+}
+
+async function applyCurrentTime(port: CurrentTimePort, args: Record<string, unknown>): Promise<string> {
+  const place = typeof args.place === "string" && args.place.trim() ? args.place.trim() : undefined;
+  const kind = args.kind === "date" ? "date" : "time";
+  try {
+    return await port.getCurrentTime({ place, kind });
+  } catch (err) {
+    console.error("[session] get_current_time failed:", err);
+    return "I couldn't read the clock just now.";
+  }
 }
 
 async function applyCrypto(port: MarketsPort, args: Record<string, unknown>): Promise<string> {

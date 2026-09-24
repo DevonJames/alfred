@@ -88,4 +88,23 @@ describe("formatXIngestSpeech", () => {
       "The YouTube video titled Growth loops could not be ingested because of no transcript.",
     );
   });
+
+  it("collapses many Playwright failures into one spoken line", () => {
+    const items = Array.from({ length: 20 }, (_, i) => ({
+      url: `https://example.com/${i}`,
+      canonicalUrl: `https://example.com/${i}`,
+      headline: `Link ${i}`,
+      status: "failed" as const,
+      error:
+        'net::ERR_HTTP_RESPONSE_CODE_FAILURE at Call log: - navigating to "https://example.com" waiting until "domcontentloaded"',
+    }));
+    const speech = formatXIngestSpeech({
+      dayKey: "2026-09-24",
+      updatedAt: "2026-09-24T12:00:00.000Z",
+      items,
+    });
+    expect(speech).toMatch(/20 saved links could not be ingested/);
+    expect(speech).not.toMatch(/Call log/);
+    expect(speech).not.toMatch(/domcontentloaded/);
+  });
 });

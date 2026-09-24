@@ -18,7 +18,7 @@ export {
   saveBriefingPrefs,
   type BriefingPrefs,
 } from "./prefs.js";
-export { NEWS_SOURCE_OPTIONS, RSS_URLS, type NewsHeadline } from "./news.js";
+export { NEWS_SOURCE_OPTIONS, RSS_URLS, normalizeNewsHeadlines, type NewsHeadline } from "./news.js";
 export {
   lookupLiveNewsHeadlines,
   summarizeNewsArticle,
@@ -56,6 +56,11 @@ export type {
 export { formatXIngestMarkdown, formatXIngestSpeech, toXIngestBriefing } from "./x-ingest.js";
 export { postProcessGreeting, type GreetingLlm } from "./greeting.js";
 export { seedDueReminder } from "./seed.js";
+export {
+  lookupCurrentTime,
+  type CurrentTimeKind,
+  type CurrentTimeQuery,
+} from "./clock-lookup.js";
 export {
   lookupLiveWeatherForecast,
   type LiveWeatherLookupOpts,

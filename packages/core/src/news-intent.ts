@@ -23,7 +23,59 @@ const ORDINAL: Record<string, number> = {
   fifth: 5,
   "5th": 5,
   last: -1,
+  one: 1,
+  two: 2,
+  three: 3,
+  four: 4,
+  five: 5,
 };
+
+const FOLLOW_CUE =
+  /\b(headline|story|article|the one|that one|this one|more about|more on|what about|dig into|go deeper)\b/i;
+
+const MATCH_STOP =
+  /^(that|this|it|them|one|the one|that one|this one|the story|the headline|the article|there)$/i;
+
+const FUZZY_STOP = new Set([
+  "the",
+  "a",
+  "an",
+  "about",
+  "one",
+  "that",
+  "this",
+  "story",
+  "headline",
+  "article",
+  "tell",
+  "more",
+  "please",
+  "what",
+  "with",
+  "from",
+  "have",
+  "want",
+  "into",
+  "dig",
+  "read",
+  "give",
+  "yeah",
+  "yes",
+  "okay",
+  "just",
+  "some",
+  "them",
+  "they",
+  "there",
+  "here",
+  "news",
+  "today",
+  "alfred",
+  "me",
+  "and",
+  "for",
+  "you",
+]);
 
 /**
  * True when the utterance is asking for headlines or a follow-up on one of them.
@@ -97,8 +149,91 @@ function extractHeadlineMatch(text: string): string | undefined {
     .replace(/\b(please|thanks|thank you|headline|story|article)\b/gi, " ")
     .replace(/\s+/g, " ")
     .trim();
-  if (place.length < 4) return undefined;
+  if (place.length < 4 || MATCH_STOP.test(place)) return undefined;
   return place.slice(0, 80);
+}
+
+const BARE_ORDINAL =
+  /^(?:(?:yeah|yes|ok(?:ay)?)[, ]+)?(?:the\s+)?(first|1st|second|2nd|third|3rd|fourth|4th|fifth|5th|last)(?:\s+one)?[.!?]?$/i;
+
+const NUMBER_WORD =
+  /^(?:(?:yeah|yes|ok(?:ay)?)[, ]+)?(?:number|no\.?|#)\s*(one|two|three|four|five|\d{1,2})[.!?]?$/i;
+
+function bareOrdinalIndex(text: string): number | undefined {
+  const ordinal = text.trim().match(BARE_ORDINAL);
+  if (ordinal?.[1]) return ORDINAL[ordinal[1].toLowerCase()];
+  const numbered = text.trim().match(NUMBER_WORD);
+  if (!numbered?.[1]) return undefined;
+  const token = numbered[1].toLowerCase();
+  if (ORDINAL[token] != null) return ORDINAL[token];
+  const n = Number(token);
+  if (Number.isFinite(n) && n >= 1) return Math.min(20, Math.floor(n));
+  return undefined;
+}
+
+function fuzzyTitleIndex(text: string, titles: string[]): number | undefined {
+  const tokens = text
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .split(/\s+/)
+    .filter((token) => token.length >= 3 && !FUZZY_STOP.has(token) && ORDINAL[token] == null);
+  if (!tokens.length || !titles.length) return undefined;
+  const scores = titles.map((title) => {
+    const hay = title.toLowerCase();
+    return tokens.filter((token) => hay.includes(token)).length;
+  });
+  const best = Math.max(...scores);
+  if (best <= 0) return undefined;
+  const winners = scores.flatMap((score, index) => (score === best ? [index] : []));
+  if (winners.length !== 1) return undefined;
+  const title = titles[winners[0]!]!.toLowerCase();
+  const matched = tokens.filter((token) => title.includes(token));
+  const uniqueEnough = scores.filter((score) => score > 0).length === 1;
+  const strong =
+    matched.length >= 2 ||
+    matched.some((token) => token.length >= 5) ||
+    (uniqueEnough && matched.some((token) => token.length >= 3));
+  if (!strong) return undefined;
+  return winners[0]! + 1;
+}
+
+/**
+ * Turn a follow-up into a headline index once a rundown has been spoken.
+ * "ask" means they want a story but did not identify which one.
+ * Null means this utterance is not a headline follow-up.
+ */
+export function resolveNewsFollowUp(
+  text: string,
+  titles: string[],
+): { index?: number; match?: string } | "ask" | null {
+  const raw = text.trim();
+  if (!raw) return null;
+  const intent = parseNewsIntent(raw);
+  if (intent?.kind === "headlines") return null;
+
+  if (intent?.kind === "article") {
+    const resolved = resolveNewsArticleIndex(intent, titles.length);
+    const match = resolved.match && !MATCH_STOP.test(resolved.match) ? resolved.match : undefined;
+    if (resolved.index != null || match) {
+      return {
+        ...(resolved.index != null ? { index: resolved.index } : {}),
+        ...(match ? { match } : {}),
+      };
+    }
+    return "ask";
+  }
+
+  const ordinal = bareOrdinalIndex(raw);
+  if (ordinal != null) {
+    if (!titles.length) return "ask";
+    const index = ordinal === -1 ? titles.length : ordinal;
+    if (index >= 1 && index <= titles.length) return { index };
+    return "ask";
+  }
+
+  if (!titles.length || !FOLLOW_CUE.test(raw)) return null;
+  const index = fuzzyTitleIndex(raw, titles);
+  return index != null ? { index } : null;
 }
 
 /** Resolve -1 (last) against a concrete rundown length. */

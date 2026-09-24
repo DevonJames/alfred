@@ -73,7 +73,13 @@ function sample(): BriefingData {
       lines: ["Bitcoin: $100,000 (+1.2%)"],
     },
     marketsText: null,
-    news: ["Example headline about CA vs TX"],
+    news: [
+      {
+        title: "Example headline about CA vs TX",
+        source: "AP News",
+        url: "https://example.com/ca-tx",
+      },
+    ],
     newsText: null,
     xIngest: null,
     xIngestText: null,

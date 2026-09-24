@@ -13,6 +13,7 @@ import {
 } from "@alfred/agents";
 import {
   createBriefingController,
+  lookupCurrentTime,
   lookupEarthquakes,
   lookupExchangeRate,
   lookupHackerNews,
@@ -95,6 +96,7 @@ export interface AlfredBrain {
   };
   news: {
     getHeadlines(): Promise<{ speech: string; headlines: NewsHeadline[] }>;
+    rememberHeadlines(headlines: NewsHeadline[]): void;
     summarizeArticle(opts: {
       index?: number;
       match?: string;
@@ -106,6 +108,9 @@ export interface AlfredBrain {
   markets: {
     getCryptoPrice(opts?: { cryptoId?: string }): Promise<string>;
     getMetalsPrice(opts?: { metalSymbol?: "gold" | "silver" }): Promise<string>;
+  };
+  currentTime: {
+    getCurrentTime(opts?: { place?: string; kind?: "time" | "date" }): Promise<string>;
   };
   situational: {
     earthquakes(query?: {
@@ -234,6 +239,9 @@ export async function createAlfredBrain(opts?: {
       recentNews = result.headlines;
       return result;
     },
+    rememberHeadlines(headlines: NewsHeadline[]) {
+      recentNews = headlines;
+    },
     async summarizeArticle(articleOpts: {
       index?: number;
       match?: string;
@@ -253,6 +261,10 @@ export async function createAlfredBrain(opts?: {
       lookupLiveCryptoPrice({ cryptoId: marketOpts?.cryptoId }),
     getMetalsPrice: (marketOpts?: { metalSymbol?: "gold" | "silver" }) =>
       lookupLiveMetalsPrice({ metalSymbol: marketOpts?.metalSymbol }),
+  };
+  const currentTime = {
+    getCurrentTime: (opts?: { place?: string; kind?: "time" | "date" }) =>
+      lookupCurrentTime({ place: opts?.place, kind: opts?.kind }),
   };
   const situational = {
     earthquakes: lookupEarthquakes,
@@ -289,6 +301,7 @@ export async function createAlfredBrain(opts?: {
     weather,
     news,
     markets,
+    currentTime,
     situational,
     lights,
     async listDueReminders() {

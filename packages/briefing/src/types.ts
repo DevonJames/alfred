@@ -1,6 +1,7 @@
 import type { DueReminder } from "@alfred/memory";
 import type { LaunchInfo } from "./launches.js";
 import type { MarketQuote } from "./markets.js";
+import type { NewsHeadline } from "./news.js";
 import type { WeatherData } from "./weather.js";
 
 export interface XIngestBriefingItem {
@@ -38,7 +39,8 @@ export interface BriefingData {
     lines: string[];
   };
   marketsText: string | null;
-  news: string[];
+  /** Full headlines (title/url/source) so article follow-ups work after the briefing. */
+  news: NewsHeadline[];
   newsText: string | null;
   xIngest: XIngestBriefing | null;
   xIngestText: string | null;

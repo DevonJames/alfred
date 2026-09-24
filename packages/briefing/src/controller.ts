@@ -5,9 +5,11 @@ import { generateBriefing, type GenerateBriefingOptions } from "./generate.js";
 import type { GreetingLlm } from "./greeting.js";
 import { detectBriefingIntent, type BriefingIntentKind } from "./intent.js";
 import { resolveBriefingConfig, resolveIncludeLaunches } from "./prefs.js";
-import { BriefingStateStore, isSoftOfferEligible } from "./state.js";
+import { BriefingStateStore, isSoftOfferEligible, type BriefingOfferState } from "./state.js";
 import type { BriefingPayload } from "./types.js";
 import { BriefingCache } from "./cache.js";
+import type { NewsHeadline } from "./news.js";
+import { normalizeNewsHeadlines } from "./news.js";
 
 export const BRIEFING_OFFER_CLOSER = "Would you like the daily briefing now?";
 export const BRIEFING_DECLINE_ACK = "Alright.";
@@ -15,7 +17,13 @@ export const BRIEFING_OFFER_SYSTEM_HINT =
   "This is the first conversation of the user's briefing day. Keep your answer concise (1-2 short sentences). A separate offer for the daily briefing will be appended after your reply — do not mention the briefing yourself.";
 
 export type BriefingTurnDecision =
-  | { action: "play"; speech: string; payload: BriefingPayload }
+  | {
+      action: "play";
+      speech: string;
+      payload: BriefingPayload;
+      /** Headlines spoken in this briefing — seed news follow-ups. */
+      newsHeadlines: NewsHeadline[];
+    }
   | { action: "decline"; speech: string }
   | { action: "chat"; appendOffer: boolean; systemHint?: string };
 
@@ -27,6 +35,8 @@ export class BriefingController {
   readonly state: BriefingStateStore;
   private firstTurnOfProcess = true;
   private offeredThisProcess = false;
+  /** Last softOfferGeneration applied from disk (re-arms after Brief-tab reset). */
+  private seenGeneration = 0;
   private readonly configOverrides: Partial<BriefingConfig> | undefined;
 
   constructor(
@@ -60,17 +70,32 @@ export class BriefingController {
     return BRIEFING_OFFER_SYSTEM_HINT;
   }
 
+  /**
+   * Re-read offer state from disk. When another process (or the Brief Reset
+   * button) bumps softOfferGeneration, re-arm first-turn / offered flags so
+   * cascade, GPT-Live, and live2 all pick up the reset.
+   */
+  private async syncOfferStateFromDisk(): Promise<BriefingOfferState> {
+    const st = await this.state.load({ refresh: true });
+    if (st.softOfferGeneration !== this.seenGeneration) {
+      this.firstTurnOfProcess = true;
+      this.offeredThisProcess = false;
+      this.seenGeneration = st.softOfferGeneration;
+    }
+    return st;
+  }
+
   async detectIntent(text: string): Promise<BriefingIntentKind> {
-    const st = await this.state.load();
+    const st = await this.syncOfferStateFromDisk();
     return detectBriefingIntent(text, st.offerPending);
   }
 
   async shouldSoftOffer(now = new Date()): Promise<boolean> {
+    const st = await this.syncOfferStateFromDisk();
     if (!this.firstTurnOfProcess) return false;
     if (this.offeredThisProcess) return false;
     const config = await this.resolveConfig();
     const dayKey = getBriefingDayKey(now, config.timezone, config.dayStart);
-    const st = await this.state.load();
     return isSoftOfferEligible(dayKey, st);
   }
 
@@ -107,6 +132,26 @@ export class BriefingController {
       lastPlayedDay: dayKey,
       offerPending: false,
     });
+  }
+
+  /**
+   * Clear offer/play/decline markers and bump softOfferGeneration so every
+   * voice process re-arms on its next turn (Brief prefs Reset button).
+   */
+  async resetSoftOffer(now = new Date()): Promise<void> {
+    const cur = await this.state.load({ refresh: true });
+    const nextGen = cur.softOfferGeneration + 1;
+    this.firstTurnOfProcess = true;
+    this.offeredThisProcess = false;
+    this.seenGeneration = nextGen;
+    await this.state.save({
+      lastOfferedDay: null,
+      lastDeclinedDay: null,
+      lastPlayedDay: null,
+      offerPending: false,
+      softOfferGeneration: nextGen,
+    });
+    await this.invalidateTodayCache(now);
   }
 
   async generate(
@@ -151,7 +196,8 @@ export class BriefingController {
         userText: text,
       });
       await this.markPlayed(now);
-      return { action: "play", speech: payload.speech, payload };
+      const newsHeadlines = normalizeNewsHeadlines(payload.briefing.news);
+      return { action: "play", speech: payload.speech, payload, newsHeadlines };
     }
 
     if (intent === "declineOffer") {

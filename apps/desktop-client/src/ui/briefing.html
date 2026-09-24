@@ -169,6 +169,27 @@
         opacity: 0.5;
         cursor: default;
       }
+      button.reset {
+        appearance: none;
+        border: 1px solid var(--line);
+        background: transparent;
+        color: var(--muted);
+        font: inherit;
+        font-size: 0.75rem;
+        font-weight: 600;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        padding: 0.7rem 1.1rem;
+        cursor: pointer;
+      }
+      button.reset:hover {
+        color: var(--fg);
+        border-color: rgba(232, 238, 245, 0.35);
+      }
+      button.reset:disabled {
+        opacity: 0.5;
+        cursor: default;
+      }
       #status {
         font-size: 0.72rem;
         color: var(--muted);
@@ -229,6 +250,16 @@
         <h2>News sources</h2>
         <p class="hint">Pick up to 10 sources. Headlines are pulled from their RSS feeds.</p>
         <div class="check-grid" id="news-sources"></div>
+      </section>
+
+      <section>
+        <h2>Soft offer</h2>
+        <p class="hint">
+          Alfred asks “Would you like the daily briefing now?” once per briefing day (cascade,
+          GPT-Live, and Speech Engine). Reset clears that for today so the next talk turn in any
+          of those modes can offer again.
+        </p>
+        <button type="button" class="reset" id="reset-offer">Reset offer</button>
       </section>
 
       <div class="actions">
@@ -388,6 +419,21 @@
           prefs = data.prefs;
           paint();
           setStatus("Saved.", "ok");
+        } catch (err) {
+          setStatus(err instanceof Error ? err.message : String(err), "err");
+        } finally {
+          btn.disabled = false;
+        }
+      });
+
+      document.getElementById("reset-offer").addEventListener("click", async () => {
+        const btn = document.getElementById("reset-offer");
+        btn.disabled = true;
+        setStatus("Resetting offer…");
+        try {
+          const res = await fetch(api("/briefing/reset-offer"), { method: "POST" });
+          if (!res.ok) throw new Error(`Reset failed (${res.status})`);
+          setStatus("Offer reset — next talk turn can ask again.", "ok");
         } catch (err) {
           setStatus(err instanceof Error ? err.message : String(err), "err");
         } finally {

@@ -433,6 +433,9 @@ export default defineAgent({
               ),
             );
           } else if (decision.action === "play") {
+            if (decision.newsHeadlines?.length) {
+              brain.news.rememberHeadlines(decision.newsHeadlines);
+            }
             // Briefing speech also drives the caption HUD in parallel.
             ui.beginCaption("");
             ui.revealCaption(decision.speech);

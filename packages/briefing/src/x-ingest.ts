@@ -1,6 +1,22 @@
 import type { XIngestDigest } from "@alfred/memory";
 import type { XIngestBriefing } from "./types.js";
 
+/** Playwright dumps are not speakable — keep a short reason for the briefing. */
+function sanitizeIngestError(error: string | undefined): string {
+  const raw = (error ?? "an unknown error").replace(/\s+/g, " ").trim();
+  if (!raw) return "an unknown error";
+  if (/ERR_HTTP_RESPONSE_CODE_FAILURE|page\.goto|Call log|net::ERR_/i.test(raw)) {
+    return "the page could not be loaded";
+  }
+  if (/paywall/i.test(raw)) return "a paywall";
+  if (/timeout/i.test(raw)) return "a timeout";
+  if (/no transcript/i.test(raw)) return "no transcript";
+  // First clause only; drop stack / call-log tails.
+  const short = raw.split(/ at Call log:| waiting until |:\s*Error:/i)[0]!.trim();
+  if (short.length > 80) return `${short.slice(0, 77).trim()}…`;
+  return short || "an unknown error";
+}
+
 export function formatXIngestSpeech(digest: XIngestDigest | null | undefined): string {
   if (!digest?.items.length) return "";
   const ok = digest.items.filter((i) => i.status === "ingested");
@@ -27,11 +43,17 @@ export function formatXIngestSpeech(digest: XIngestDigest | null | undefined): s
     );
   }
 
-  for (const f of failed) {
+  if (failed.length === 1) {
+    const f = failed[0]!;
     const title = f.headline || f.url;
-    const why = f.error ?? "an unknown error";
+    const why = sanitizeIngestError(f.error);
     const noun = f.kind === "video" || /youtube|youtu\.be/i.test(f.url) ? "YouTube video" : "link";
     parts.push(`The ${noun} titled ${title} could not be ingested because of ${why}.`);
+  } else if (failed.length > 1) {
+    // Do not read dozens of Playwright stack traces aloud.
+    parts.push(
+      `${failed.length} saved links could not be ingested — mostly pages that failed to load.`,
+    );
   }
   return parts.join(" ").trim();
 }
@@ -50,7 +72,7 @@ export function formatXIngestMarkdown(digest: {
   for (const i of digest.items) {
     const note = i.noteName ? ` · ${i.noteName}` : "";
     if (i.status === "failed") {
-      lines.push(`- Failed${note}: ${i.headline} (${i.error ?? "error"})`);
+      lines.push(`- Failed${note}: ${i.headline} (${sanitizeIngestError(i.error)})`);
     } else {
       lines.push(`- ${i.headline}${note}${i.author ? ` — ${i.author}` : ""}`);
     }

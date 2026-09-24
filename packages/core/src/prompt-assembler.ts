@@ -60,7 +60,7 @@ export class PromptAssembler {
       }
       if (caps.has("summarize_news_article")) {
         guidance.push(
-          "When the user asks to dig into / summarize / hear more about a recent headline (by number or title fragment), call summarize_news_article. Prefer index from the last rundown when they say first/second/third. Do not invent article contents.",
+          "When the user asks to dig into / summarize / hear more about a recent headline (by number or title fragment) from the last news rundown or daily briefing, call summarize_news_article. Prefer index from the last rundown when they say first/second/third. Do not invent article contents.",
         );
       }
       if (caps.has("get_crypto_price")) {
@@ -71,6 +71,11 @@ export class PromptAssembler {
       if (caps.has("get_metals_price")) {
         guidance.push(
           "When the user asks about gold or silver prices, call get_metals_price immediately. Do not invent prices. Prefer this over delegate_task.",
+        );
+      }
+      if (caps.has("get_current_time")) {
+        guidance.push(
+          "When the user asks what time it is, or for today's date, call get_current_time immediately. Omit place for home. Pass place only when they name a city. Do not invent the time.",
         );
       }
       if (caps.has("get_earthquakes")) {

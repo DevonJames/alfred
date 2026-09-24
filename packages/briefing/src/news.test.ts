@@ -26,6 +26,16 @@ describe("matchNewsHeadline", () => {
   });
 });
 
+describe("normalizeNewsHeadlines", () => {
+  it("accepts legacy title strings and full objects", async () => {
+    const { normalizeNewsHeadlines } = await import("./news.js");
+    expect(normalizeNewsHeadlines(["Just a title", { title: "Full", source: "BBC", url: "https://x" }])).toEqual([
+      { title: "Just a title", source: "News" },
+      { title: "Full", source: "BBC", url: "https://x" },
+    ]);
+  });
+});
+
 describe("article extract", () => {
   it("pulls paragraph text from html", () => {
     const html = `

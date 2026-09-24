@@ -161,6 +161,26 @@ export function createAlfredLiveTools(
       },
     }),
 
+    get_current_time: llm.tool({
+      description:
+        "Say the current local time or today's date. Omit place for the user's home timezone. Pass a city such as Tokyo when they name one. Not for scheduling a future event.",
+      parameters: z.object({
+        place: z.string().optional(),
+        kind: z.enum(["time", "date"]).optional(),
+      }),
+      execute: async ({ place, kind }) => {
+        try {
+          return await brain.currentTime.getCurrentTime({
+            place: place?.trim() || undefined,
+            kind,
+          });
+        } catch (err) {
+          console.error("[voice:live] get_current_time failed:", err);
+          return "Could not read the clock just now.";
+        }
+      },
+    }),
+
     get_weather_forecast: llm.tool({
       description:
         "Look up a live weather forecast. If the user does not name a city/place/zip, omit location and use the configured home location.",
@@ -198,7 +218,7 @@ export function createAlfredLiveTools(
 
     summarize_news_article: llm.tool({
       description:
-        "Fetch and summarize one headline from the last news rundown (or a URL). Use after get_news_headlines when the user asks for more detail.",
+        "Fetch and summarize one headline from the last news rundown or daily briefing (or a URL). Use after get_news_headlines or play_daily_briefing when the user asks for more detail.",
       parameters: z.object({
         index: z.number().min(1).max(20).optional(),
         match: z.string().optional(),
@@ -403,6 +423,9 @@ export function createAlfredLiveTools(
             userText?.trim() || "brief me",
           );
           if (decision.action === "play") {
+            if (decision.newsHeadlines?.length) {
+              brain.news.rememberHeadlines(decision.newsHeadlines);
+            }
             return decision.speech;
           }
           if (decision.action === "decline") {
@@ -414,6 +437,9 @@ export function createAlfredLiveTools(
             userText: userText?.trim(),
           });
           await brain.briefing.markPlayed();
+          if (payload.briefing.news?.length) {
+            brain.news.rememberHeadlines(payload.briefing.news);
+          }
           return payload.speech;
         } catch (err) {
           console.error("[voice:live] play_daily_briefing failed:", err);

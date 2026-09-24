@@ -65,7 +65,7 @@ export async function summarizeNewsArticle(
     headline = matchNewsHeadline(recent, { index: opts.index, match: opts.match });
     if (!headline) {
       if (!recent.length) {
-        return "I don't have a recent headline list to dig into. Ask me what's in the news first.";
+        return "I don't have a recent headline list to dig into. Ask for the news, or play the daily briefing first.";
       }
       return "Which headline should I dig into — say the number, or a few words from the title.";
     }

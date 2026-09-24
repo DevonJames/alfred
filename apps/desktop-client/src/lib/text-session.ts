@@ -13,7 +13,7 @@ import {
   createOpenClawHarness,
   createXIngestHarness,
 } from "@alfred/agents";
-import { createBriefingController, lookupEarthquakes, lookupExchangeRate, lookupHackerNews, lookupLiveCryptoPrice, lookupLiveMetalsPrice, lookupLiveNewsHeadlines, lookupLiveWeatherForecast, lookupNaturalEvents, lookupSpaceWeather, lookupWeatherAlerts, summarizeNewsArticle, type NewsHeadline } from "@alfred/briefing";
+import { createBriefingController, lookupCurrentTime, lookupEarthquakes, lookupExchangeRate, lookupHackerNews, lookupLiveCryptoPrice, lookupLiveMetalsPrice, lookupLiveNewsHeadlines, lookupLiveWeatherForecast, lookupNaturalEvents, lookupSpaceWeather, lookupWeatherAlerts, summarizeNewsArticle, type NewsHeadline } from "@alfred/briefing";
 import { createPlaywrightCaptureAdapter } from "@alfred/browser";
 import type { AgentDelegationResult, PipelineConfiguration, TaskCategory, UserConfiguration } from "@alfred/contracts";
 import { SessionOrchestrator, SystemClock } from "@alfred/core";
@@ -77,6 +77,13 @@ function failoverSettings() {
     retryPrimaryIntervalMs: 60_000,
     manualPin: false,
   };
+}
+
+const recentNewsBySession = new Map<string, NewsHeadline[]>();
+
+/** Speech Engine speaks headlines before the text brain. Keep that rundown for follow-ups. */
+export function rememberSpokenNews(sessionKey: string, headlines: NewsHeadline[]): void {
+  recentNewsBySession.set(sessionKey, headlines);
 }
 
 async function buildRuntime(sessionKey: string, parts: SessionKeyParts): Promise<TextRuntime> {
@@ -197,7 +204,6 @@ async function buildRuntime(sessionKey: string, parts: SessionKeyParts): Promise
   void lights.refresh().catch((err) => {
     console.warn("[text-session] Elgato light discovery failed:", err);
   });
-  let recentNews: NewsHeadline[] = [];
 
   const session = new SessionOrchestrator({
     sessionId: `sess_${sessionKey.replace(/[^a-zA-Z0-9:_-]/g, "_")}`,
@@ -222,13 +228,19 @@ async function buildRuntime(sessionKey: string, parts: SessionKeyParts): Promise
       news: {
         async getHeadlines() {
           const result = await lookupLiveNewsHeadlines();
-          recentNews = result.headlines;
+          recentNewsBySession.set(sessionKey, result.headlines);
           return result;
         },
+        rememberHeadlines(headlines) {
+          recentNewsBySession.set(sessionKey, headlines);
+        },
         async summarizeArticle(articleOpts) {
+          const recent = articleOpts.recent?.length
+            ? articleOpts.recent
+            : recentNewsBySession.get(sessionKey) ?? [];
           return summarizeNewsArticle({
             ...articleOpts,
-            recent: articleOpts.recent?.length ? articleOpts.recent : recentNews,
+            recent,
           });
         },
       },
@@ -237,6 +249,9 @@ async function buildRuntime(sessionKey: string, parts: SessionKeyParts): Promise
           lookupLiveCryptoPrice({ cryptoId: marketOpts?.cryptoId }),
         getMetalsPrice: (marketOpts) =>
           lookupLiveMetalsPrice({ metalSymbol: marketOpts?.metalSymbol }),
+      },
+      currentTime: {
+        getCurrentTime: (opts) => lookupCurrentTime({ place: opts?.place, kind: opts?.kind }),
       },
       situational: {
         earthquakes: lookupEarthquakes,

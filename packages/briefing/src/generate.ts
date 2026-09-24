@@ -18,7 +18,7 @@ import {
   formatMarketsSpeechFromQuotes,
   formatMetalsDisplay,
 } from "./markets.js";
-import { fetchNewsHeadlines, formatNewsSpeech } from "./news.js";
+import { fetchNewsHeadlines, formatNewsSpeech, normalizeNewsHeadlines } from "./news.js";
 import {
   formatRemindersSpeech,
   loadDueReminders,
@@ -50,7 +50,10 @@ export async function generateBriefing(
 
   if (!opts.refresh) {
     const hit = await cache.get(dayKey, includeLaunches);
-    if (hit) return hit;
+    if (hit) {
+      hit.briefing.news = normalizeNewsHeadlines(hit.briefing.news);
+      return hit;
+    }
   }
 
   const dateLabel = formatBriefingDateLabel(dayKey, config.timezone);
@@ -143,8 +146,8 @@ export async function generateBriefing(
       lines: marketLines,
     },
     marketsText,
-    news: headlines.map((h) => h.title),
-    newsText: formatNewsSpeech(headlines, { inviteFollowUp: false }) || null,
+    news: headlines,
+    newsText: formatNewsSpeech(headlines, { inviteFollowUp: true }) || null,
     xIngest,
     xIngestText: xIngest?.speech ?? null,
     reminders,

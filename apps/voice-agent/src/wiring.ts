@@ -198,6 +198,7 @@ export async function createCascadedVoiceRuntime(opts?: {
     weather: brain.weather,
     news: brain.news,
     markets: brain.markets,
+    currentTime: brain.currentTime,
     situational: brain.situational,
     lights: brain.lights,
   });

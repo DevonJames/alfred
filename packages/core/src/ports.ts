@@ -101,6 +101,13 @@ export interface NewsPort {
     title?: string;
     recent?: NewsHeadlineRef[];
   }): Promise<string>;
+  /** Seed the last rundown (e.g. after playing the daily briefing). */
+  rememberHeadlines?(headlines: NewsHeadlineRef[]): void;
+}
+
+/** Spoken local time and date (briefing timezone, or a named city). */
+export interface CurrentTimePort {
+  getCurrentTime(opts?: { place?: string; kind?: "time" | "date" }): Promise<string>;
 }
 
 /** USGS earthquakes, NWS alerts, space weather, EONET, FX, and Hacker News. */

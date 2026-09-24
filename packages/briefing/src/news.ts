@@ -24,13 +24,23 @@ export interface NewsHeadline {
 }
 
 function decodeEntities(s: string): string {
-  return s
+  const named = s
     .replace(/&amp;/g, "&")
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
     .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&apos;/g, "'");
+    .replace(/&#39;|&apos;|&rsquo;|&lsquo;|&8217;|&8216;/g, "'")
+    .replace(/&mdash;|&ndash;|&8220;|&8221;/g, " ")
+    .replace(/&nbsp;/g, " ");
+  return named
+    .replace(/&#x([0-9a-f]+);/gi, (_, hex: string) => {
+      const code = Number.parseInt(hex, 16);
+      return Number.isFinite(code) ? String.fromCodePoint(code) : _;
+    })
+    .replace(/&#(\d+);/g, (_, num: string) => {
+      const code = Number(num);
+      return Number.isFinite(code) ? String.fromCodePoint(code) : _;
+    });
 }
 
 function isFeedOrSourceTitle(title: string, source: string): boolean {
@@ -158,6 +168,30 @@ export function matchNewsHeadline(
       needle.includes(h.title.toLowerCase().slice(0, 40)),
   );
   return partial ?? null;
+}
+
+/**
+ * Coerce cached/legacy briefing news (plain title strings) into NewsHeadline refs.
+ */
+export function normalizeNewsHeadlines(items: unknown): NewsHeadline[] {
+  if (!Array.isArray(items)) return [];
+  const out: NewsHeadline[] = [];
+  for (const item of items) {
+    if (typeof item === "string") {
+      const title = item.replace(/\s+/g, " ").trim();
+      if (title) out.push({ title, source: "News" });
+      continue;
+    }
+    if (!item || typeof item !== "object") continue;
+    const raw = item as Partial<NewsHeadline>;
+    const title = typeof raw.title === "string" ? raw.title.replace(/\s+/g, " ").trim() : "";
+    if (!title) continue;
+    const source =
+      typeof raw.source === "string" && raw.source.trim() ? raw.source.trim() : "News";
+    const url = typeof raw.url === "string" && raw.url.trim() ? raw.url.trim() : undefined;
+    out.push(url ? { title, source, url } : { title, source });
+  }
+  return out;
 }
 
 /** Strip HTML to readable plain text for summarization. */

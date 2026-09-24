@@ -10,6 +10,7 @@ import { Hono } from "hono";
 import { readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { resetSpeechEngineBriefingOffer } from "../lib/speech-engine.js";
 
 const uiDir = resolve(dirname(fileURLToPath(import.meta.url)), "../ui");
 
@@ -58,4 +59,17 @@ briefingUiRouter.put("/prefs", async (c) => {
   const current = await loadBriefingPrefs(profileId());
   const next = await saveBriefingPrefs({ ...current, ...body }, profileId());
   return c.json({ prefs: next, saved: true });
+});
+
+/** POST /briefing/reset-offer — clear today's offer/play state so soft-offer can fire again. */
+briefingUiRouter.post("/reset-offer", async (c) => {
+  try {
+    await resetSpeechEngineBriefingOffer();
+    return c.json({ reset: true });
+  } catch (err) {
+    return c.json(
+      { error: err instanceof Error ? err.message : String(err) },
+      500,
+    );
+  }
 });

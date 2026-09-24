@@ -6,7 +6,7 @@
  * GPT-Live (`VOICE=live`) is a separate LiveKit path and is not used here.
  */
 
-import { createBriefingController, lookupLiveCryptoPrice, lookupLiveMetalsPrice, lookupLiveNewsHeadlines, lookupLiveWeatherForecast, speakSituationalRequest, summarizeNewsArticle, type BriefingController, type GreetingLlm, type NewsHeadline } from "@alfred/briefing";
+import { createBriefingController, lookupCurrentTime, lookupLiveCryptoPrice, lookupLiveMetalsPrice, lookupLiveNewsHeadlines, lookupLiveWeatherForecast, speakSituationalRequest, summarizeNewsArticle, type BriefingController, type GreetingLlm, type NewsHeadline } from "@alfred/briefing";
 import {
   extractBargeInText,
   hasInterruptCue,
@@ -18,8 +18,9 @@ import {
   parseNewsIntent,
   parseSituationalIntent,
   parseStudioLightIntent,
+  parseTimeIntent,
   parseWeatherIntent,
-  resolveNewsArticleIndex,
+  resolveNewsFollowUp,
 } from "@alfred/core";
 import { createElgatoLightsController, type ElgatoLightsController } from "@alfred/elgato";
 import { OpenAiResponsesLLMProvider } from "@alfred/provider-openai";
@@ -27,7 +28,7 @@ import { resolveGrokApiKey, XaiGrokLLMProvider } from "@alfred/provider-xai";
 import { ElevenLabsClient, type SpeechEngineAttachment } from "@elevenlabs/elevenlabs-js";
 import type { Server } from "node:http";
 import { oipForProfile } from "./oip-memory.js";
-import { cancelTextSession, delegateTextSessionTask, getTextSession, resetTextSession } from "./text-session.js";
+import { cancelTextSession, delegateTextSessionTask, getTextSession, rememberSpokenNews, resetTextSession } from "./text-session.js";
 
 const WS_PATH = "/ws";
 
@@ -167,6 +168,11 @@ function briefingController(): BriefingController {
   return briefing;
 }
 
+/** Re-arm soft-offer for the live Speech Engine controller (disk + in-process flags). */
+export async function resetSpeechEngineBriefingOffer(): Promise<void> {
+  await briefingController().resetSoftOffer();
+}
+
 let lights: ElgatoLightsController | undefined;
 /** Last spoken news rundown for this Speech Engine process. */
 let recentNews: NewsHeadline[] = [];
@@ -214,6 +220,17 @@ async function toolSpeech(key: string, text: string): Promise<string | null> {
       return "I couldn't reach the lights just now.";
     }
   }
+  const timeIntent = parseTimeIntent(text);
+  if (timeIntent) {
+    try {
+      const spoken = await lookupCurrentTime(timeIntent);
+      console.log(`[speech-engine] time: ${spoken.slice(0, 160)}`);
+      return spoken;
+    } catch (err) {
+      console.error("[speech-engine] time failed:", err);
+      return "I couldn't read the clock just now.";
+    }
+  }
   const situational = parseSituationalIntent(text);
   if (situational) {
     try {
@@ -240,17 +257,32 @@ async function toolSpeech(key: string, text: string): Promise<string | null> {
     }
   }
   const newsIntent = parseNewsIntent(text);
-  if (newsIntent) {
+  if (newsIntent?.kind === "headlines") {
     try {
-      if (newsIntent.kind === "headlines") {
-        const result = await lookupLiveNewsHeadlines();
-        recentNews = result.headlines;
-        console.log(`[speech-engine] news headlines (${result.headlines.length})`);
-        return result.speech;
+      const result = await lookupLiveNewsHeadlines();
+      recentNews = result.headlines;
+      rememberSpokenNews(key, recentNews);
+      console.log(`[speech-engine] news headlines (${result.headlines.length})`);
+      return result.speech;
+    } catch (err) {
+      console.error("[speech-engine] news failed:", err);
+      return "I couldn't get the news just now.";
+    }
+  }
+  const follow = resolveNewsFollowUp(
+    text,
+    recentNews.map((headline) => headline.title),
+  );
+  if (newsIntent?.kind === "article" || follow) {
+    try {
+      if (!recentNews.length) {
+        return "I don't have a recent headline list to dig into. Ask for the news, or play the daily briefing first.";
       }
-      const resolved = resolveNewsArticleIndex(newsIntent, recentNews.length);
+      if (!follow || follow === "ask" || (follow.index == null && !follow.match)) {
+        return "Which headline should I dig into — say the number, or a few words from the title.";
+      }
       const spoken = await summarizeNewsArticle({
-        ...resolved,
+        ...follow,
         recent: recentNews,
         llm: greetingLlm,
       });
@@ -314,23 +346,67 @@ async function toolSpeech(key: string, text: string): Promise<string | null> {
 
 type BriefingTurn = {
   speak?: string;
+  newsHeadlines?: NewsHeadline[];
   offerHint?: string;
   offerCloser?: string;
+  /** Soft offer chosen but not marked yet — mark only once we actually speak it. */
+  shouldMarkOffered?: boolean;
 };
 
-/** Cascade and GPT-Live answer "daily briefing" through the briefing controller. This path does too. */
+/**
+ * Cascade soft-offers the briefing on the first eligible turn of the day.
+ * Live2 does too: play/decline short-circuit, otherwise optionally append the ask
+ * after whatever reply we speak (chat, weather, lights, etc.).
+ */
 async function briefingTurn(text: string): Promise<BriefingTurn> {
   try {
-    const decision = await briefingController().handleUserTurn(text);
-    if (decision.action === "play" || decision.action === "decline") return { speak: decision.speech };
-    if (decision.action === "chat" && decision.appendOffer) {
-      return { offerHint: decision.systemHint, offerCloser: briefingController().offerCloser };
+    const ctrl = briefingController();
+    const intent = await ctrl.detectIntent(text);
+    if (intent === "explicitAsk" || intent === "affirmOffer") {
+      const payload = await ctrl.generate({
+        refresh: true,
+        markSurfaced: true,
+        userText: text,
+      });
+      await ctrl.markPlayed();
+      return {
+        speak: payload.speech,
+        newsHeadlines: payload.briefing.news,
+      };
     }
+    if (intent === "declineOffer") {
+      await ctrl.markDeclined();
+      return { speak: ctrl.declineAck };
+    }
+    if (await ctrl.shouldSoftOffer()) {
+      return {
+        offerHint: ctrl.offerSystemHint,
+        offerCloser: ctrl.offerCloser,
+        shouldMarkOffered: true,
+      };
+    }
+    ctrl.noteUserTurnSeen();
     return {};
   } catch (err) {
     console.error("[speech-engine] briefing failed:", err);
     if (/\bbrief/i.test(text)) return { speak: "I couldn't put the briefing together just now." };
     return {};
+  }
+}
+
+function withBriefingOffer(speech: string, offerCloser?: string): string {
+  if (!offerCloser) return speech;
+  if (speech.includes(offerCloser)) return speech;
+  return `${speech.trim()} ${offerCloser}`;
+}
+
+async function commitBriefingOffer(brief: BriefingTurn): Promise<void> {
+  if (!brief.shouldMarkOffered || !brief.offerCloser) return;
+  try {
+    await briefingController().markOffered();
+    console.log(`[speech-engine] briefing offer: ${brief.offerCloser}`);
+  } catch (err) {
+    console.warn("[speech-engine] briefing offer mark failed:", err);
   }
 }
 
@@ -358,6 +434,10 @@ function streamReply(key: string, text: string, signal: AbortSignal): AsyncItera
     const brief = await briefingTurn(text);
     if (signal.aborted) return;
     if (brief.speak) {
+      if (brief.newsHeadlines?.length) {
+        recentNews = brief.newsHeadlines;
+        rememberSpokenNews(key, recentNews);
+      }
       console.log(`[speech-engine] briefing: ${brief.speak.slice(0, 160)}`);
       queue.push(brief.speak);
       nudge();
@@ -366,7 +446,9 @@ function streamReply(key: string, text: string, signal: AbortSignal): AsyncItera
     const direct = await toolSpeech(key, text);
     if (signal.aborted) return;
     if (direct) {
-      queue.push(direct);
+      const spoken = withBriefingOffer(direct, brief.offerCloser);
+      await commitBriefingOffer(brief);
+      queue.push(spoken);
       nudge();
       return;
     }
@@ -389,6 +471,7 @@ function streamReply(key: string, text: string, signal: AbortSignal): AsyncItera
       queue.push(` ${brief.offerCloser}`);
       nudge();
     }
+    await commitBriefingOffer(brief);
   })()
     .catch((err) => {
       failure = err;

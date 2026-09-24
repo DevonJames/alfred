@@ -3,6 +3,7 @@ import {
   CONTROL_STUDIO_LIGHTS_TOOL,
   DELEGATE_TASK_TOOL,
   GET_CRYPTO_PRICE_TOOL,
+  GET_CURRENT_TIME_TOOL,
   GET_EARTHQUAKES_TOOL,
   GET_EXCHANGE_RATE_TOOL,
   GET_HACKER_NEWS_TOOL,
@@ -42,6 +43,7 @@ import type {
   MarketsPort,
   ProviderRegistryPort,
   ReminderPort,
+  CurrentTimePort,
   SituationalPort,
   StudioLightsPort,
   StructuredMemoryPort,
@@ -68,15 +70,16 @@ import { looksLikeWeatherTask, parseWeatherIntent } from "./weather-intent.js";
 import {
   looksLikeNewsTask,
   parseNewsIntent,
-  resolveNewsArticleIndex,
+  resolveNewsFollowUp,
 } from "./news-intent.js";
 import { looksLikeMarketsTask, parseMarketsIntent } from "./markets-intent.js";
 import { applyConversationalTool } from "./conversational-tools.js";
+import { looksLikeTimeTask, parseTimeIntent } from "./time-intent.js";
 import { looksLikeSituationalTask, parseSituationalIntent } from "./situational-intent.js";
 
 /** Structural port for Daily Briefing (implemented by @alfred/briefing). */
 export type BriefingVoiceDecision =
-  | { action: "play"; speech: string }
+  | { action: "play"; speech: string; newsHeadlines?: NewsHeadlineRef[] }
   | { action: "decline"; speech: string }
   | { action: "chat"; appendOffer: boolean; systemHint?: string };
 
@@ -111,6 +114,8 @@ export interface VoiceSessionDeps {
   news?: NewsPort;
   /** Optional live crypto / metals quotes. */
   markets?: MarketsPort;
+  /** Spoken local time and date. */
+  currentTime?: CurrentTimePort;
   /** Earthquakes, alerts, space weather, natural events, FX, Hacker News. */
   situational?: SituationalPort;
   /** Optional local Elgato Key Light control. */
@@ -820,10 +825,13 @@ export class VoiceSessionController {
           // and invents "which location?" instead of using home BRIEFING_*.
           break;
         }
-        if (this.deps.news && looksLikeNewsTask(this.partialText)) {
+        if (this.deps.news && this.isNewsAsk(this.partialText)) {
           break;
         }
         if (this.deps.markets && looksLikeMarketsTask(this.partialText)) {
+          break;
+        }
+        if (this.isTimeAsk(this.partialText)) {
           break;
         }
         if (this.isSituationalAsk(this.partialText)) {
@@ -897,8 +905,9 @@ export class VoiceSessionController {
     if (!text.trim()) return;
     if (this.deps.lights && looksLikeStudioLightsTask(text)) return;
     if (this.deps.weather && looksLikeWeatherTask(text)) return;
-    if (this.deps.news && looksLikeNewsTask(text)) return;
+    if (this.deps.news && this.isNewsAsk(text)) return;
     if (this.deps.markets && looksLikeMarketsTask(text)) return;
+    if (this.isTimeAsk(text)) return;
     if (this.isSituationalAsk(text)) return;
     // Do not commit user turn yet — provisional segment only.
     this.provisionalAbort?.abort({ reason: "superseded_generation" });
@@ -1124,6 +1133,10 @@ export class VoiceSessionController {
         const responseId = this.deps.responseLedger.beginResponse(this.deps.sessionId, turnId);
         this.provisionalResponseId = responseId;
         const assistantText = briefingDecision.speech;
+        if (briefingDecision.action === "play" && briefingDecision.newsHeadlines?.length) {
+          this.lastNewsHeadlines = briefingDecision.newsHeadlines;
+          this.deps.news?.rememberHeadlines?.(briefingDecision.newsHeadlines);
+        }
         if (this.pendingUserText || this.bargeInListening || this.suppressSpeak) {
           if (this.suppressSpeak) this.suppressSpeak = false;
           console.log("[voice] skip briefing speak; barge-in pending");
@@ -1193,6 +1206,16 @@ export class VoiceSessionController {
         } finally {
           await this.finishTurn({ speak });
         }
+        return;
+      }
+    }
+
+    if (this.deps.currentTime) {
+      const timeIntent = parseTimeIntent(text);
+      if (timeIntent) {
+        await this.speakLookupResult(turnId, speak, "time", () =>
+          this.deps.currentTime!.getCurrentTime(timeIntent),
+        );
         return;
       }
     }
@@ -1269,20 +1292,27 @@ export class VoiceSessionController {
 
     if (this.deps.news) {
       const newsIntent = parseNewsIntent(text);
-      if (newsIntent) {
+      const titles = this.lastNewsHeadlines.map((headline) => headline.title);
+      const follow = resolveNewsFollowUp(text, titles);
+      if (newsIntent?.kind === "headlines" || newsIntent?.kind === "article" || follow) {
         try {
           this.provisionalAbort?.abort({ reason: "news_short_circuit" });
           const responseId = this.deps.responseLedger.beginResponse(this.deps.sessionId, turnId);
           this.provisionalResponseId = responseId;
           let assistantText: string;
-          if (newsIntent.kind === "headlines") {
+          if (newsIntent?.kind === "headlines") {
             const result = await this.deps.news.getHeadlines();
             this.lastNewsHeadlines = result.headlines;
             assistantText = result.speech;
+          } else if (!this.lastNewsHeadlines.length) {
+            assistantText =
+              "I don't have a recent headline list to dig into. Ask for the news, or play the daily briefing first.";
+          } else if (!follow || follow === "ask" || (follow.index == null && !follow.match)) {
+            assistantText =
+              "Which headline should I dig into — say the number, or a few words from the title.";
           } else {
-            const resolved = resolveNewsArticleIndex(newsIntent, this.lastNewsHeadlines.length);
             assistantText = await this.deps.news.summarizeArticle({
-              ...resolved,
+              ...follow,
               recent: this.lastNewsHeadlines,
             });
           }
@@ -1293,7 +1323,7 @@ export class VoiceSessionController {
           }
           await this.deps.responseLedger.commit(responseId, assistantText);
           this.activeResponseId = responseId;
-          console.log(`[voice] news ${newsIntent.kind}: "${assistantText.slice(0, 160)}"`);
+          console.log(`[voice] news ${newsIntent?.kind ?? "follow"}: "${assistantText.slice(0, 160)}"`);
           await this.deliverAssistant(responseId, assistantText, speak);
           await this.deps.memory.commitTurn({
             profileId: this.deps.profileId,
@@ -1301,7 +1331,7 @@ export class VoiceSessionController {
             turnId: createId("turn"),
             role: "assistant",
             text: assistantText,
-            metadata: { responseId, news: newsIntent.kind },
+            metadata: { responseId, news: newsIntent?.kind ?? "follow" },
           });
           this.pushRecentTurn("assistant", assistantText);
           this.provisionalResponseId = undefined;
@@ -1495,8 +1525,9 @@ export class VoiceSessionController {
         appendOffer ||
         (this.deps.lights && looksLikeStudioLightsTask(text)) ||
         (this.deps.weather && looksLikeWeatherTask(text)) ||
-        (this.deps.news && looksLikeNewsTask(text)) ||
+        (this.deps.news && this.isNewsAsk(text)) ||
         (this.deps.markets && looksLikeMarketsTask(text)) ||
+        this.isTimeAsk(text) ||
         this.isSituationalAsk(text);
 
       if (!shouldRegenerate && responseId) {
@@ -1635,6 +1666,19 @@ export class VoiceSessionController {
     return this.deps.responseLedger.getProposedText(responseId);
   }
 
+  private isNewsAsk(text: string): boolean {
+    if (looksLikeNewsTask(text)) return true;
+    if (!this.lastNewsHeadlines.length) return false;
+    return resolveNewsFollowUp(
+      text,
+      this.lastNewsHeadlines.map((headline) => headline.title),
+    ) != null;
+  }
+
+  private isTimeAsk(text: string): boolean {
+    return Boolean(this.deps.currentTime && looksLikeTimeTask(text));
+  }
+
   private isSituationalAsk(text: string): boolean {
     return Boolean(this.deps.situational && looksLikeSituationalTask(text));
   }
@@ -1689,6 +1733,7 @@ export class VoiceSessionController {
       caps.push("get_crypto_price");
       caps.push("get_metals_price");
     }
+    if (this.deps.currentTime) caps.push("get_current_time");
     if (this.deps.situational) {
       caps.push(
         "get_earthquakes",
@@ -1752,6 +1797,7 @@ export class VoiceSessionController {
       tools.push(GET_CRYPTO_PRICE_TOOL);
       tools.push(GET_METALS_PRICE_TOOL);
     }
+    if (this.deps.currentTime) tools.push(GET_CURRENT_TIME_TOOL);
     if (this.deps.situational) {
       tools.push(GET_EARTHQUAKES_TOOL);
       tools.push(GET_WEATHER_ALERTS_TOOL);
@@ -1866,7 +1912,7 @@ export class VoiceSessionController {
       const applied = await applyConversationalTool(
         toolCall.toolName,
         toolCall.toolArgs ?? {},
-        { situational: this.deps.situational },
+        { situational: this.deps.situational, currentTime: this.deps.currentTime },
         dueReminders,
       );
       if (applied?.mode === "replace") {
