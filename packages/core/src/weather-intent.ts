@@ -28,6 +28,14 @@ export function parseWeatherIntent(text: string): WeatherIntent | null {
   const raw = text.trim();
   if (!raw || TALKING_ABOUT_TOOL.test(raw)) return null;
   if (!WEATHER_NOUN.test(raw)) return null;
+  // Alerts and space weather are separate lookups. "Severe weather" and
+  // "space weather" both contain the word weather.
+  if (/\b(space\s+weather|geomagnetic|aurora|northern\s+lights|solar\s+(?:storm|flare))\b/i.test(raw)) {
+    return null;
+  }
+  if (/\b(warnings?|advisories|advisory|alerts?|severe\s+weather)\b/i.test(raw)) {
+    return null;
+  }
 
   const days = extractDays(raw);
   if (HOME_DEIXIS.test(raw)) {

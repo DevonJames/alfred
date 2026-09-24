@@ -1,12 +1,25 @@
 import {
   CONTROL_STUDIO_LIGHTS_TOOL,
+  GET_CRYPTO_PRICE_TOOL,
+  GET_EARTHQUAKES_TOOL,
+  GET_EXCHANGE_RATE_TOOL,
+  GET_HACKER_NEWS_TOOL,
+  GET_METALS_PRICE_TOOL,
+  GET_NATURAL_EVENTS_TOOL,
+  GET_NEWS_HEADLINES_TOOL,
+  GET_SPACE_WEATHER_TOOL,
+  GET_WEATHER_ALERTS_TOOL,
   GET_WEATHER_FORECAST_TOOL,
   REMEMBER_MEMORY_TOOL,
+  SUMMARIZE_NEWS_ARTICLE_TOOL,
   UPDATE_REMINDER_TOOL,
 } from "@alfred/contracts";
 import type {
   DueReminderSummary,
+  MarketsPort,
+  NewsPort,
   ReminderPort,
+  SituationalPort,
   StructuredMemoryPort,
   StudioLightsPort,
   WeatherForecastPort,
@@ -18,6 +31,10 @@ export interface ConversationalPorts {
   reminders?: ReminderPort;
   structuredMemory?: StructuredMemoryPort;
   weather?: WeatherForecastPort;
+  news?: NewsPort;
+  markets?: MarketsPort;
+  /** Earthquakes, alerts, space weather, natural events, FX, Hacker News. */
+  situational?: SituationalPort;
   lights?: StudioLightsPort;
 }
 
@@ -32,6 +49,24 @@ export function conversationalCapabilities(ports?: ConversationalPorts): string[
   if (ports?.reminders) caps.push("update_reminder");
   if (ports?.structuredMemory) caps.push("remember_memory");
   if (ports?.weather) caps.push("get_weather_forecast");
+  if (ports?.news) {
+    caps.push("get_news_headlines");
+    caps.push("summarize_news_article");
+  }
+  if (ports?.markets) {
+    caps.push("get_crypto_price");
+    caps.push("get_metals_price");
+  }
+  if (ports?.situational) {
+    caps.push(
+      "get_earthquakes",
+      "get_weather_alerts",
+      "get_space_weather",
+      "get_natural_events",
+      "get_exchange_rate",
+      "get_hacker_news",
+    );
+  }
   if (ports?.lights) caps.push("control_studio_lights");
   return caps;
 }
@@ -41,6 +76,22 @@ export function conversationalToolSchemas(ports?: ConversationalPorts): ToolSche
   if (ports?.reminders) tools.push(UPDATE_REMINDER_TOOL as unknown as ToolSchema);
   if (ports?.structuredMemory) tools.push(REMEMBER_MEMORY_TOOL as unknown as ToolSchema);
   if (ports?.weather) tools.push(GET_WEATHER_FORECAST_TOOL as unknown as ToolSchema);
+  if (ports?.news) {
+    tools.push(GET_NEWS_HEADLINES_TOOL as unknown as ToolSchema);
+    tools.push(SUMMARIZE_NEWS_ARTICLE_TOOL as unknown as ToolSchema);
+  }
+  if (ports?.markets) {
+    tools.push(GET_CRYPTO_PRICE_TOOL as unknown as ToolSchema);
+    tools.push(GET_METALS_PRICE_TOOL as unknown as ToolSchema);
+  }
+  if (ports?.situational) {
+    tools.push(GET_EARTHQUAKES_TOOL as unknown as ToolSchema);
+    tools.push(GET_WEATHER_ALERTS_TOOL as unknown as ToolSchema);
+    tools.push(GET_SPACE_WEATHER_TOOL as unknown as ToolSchema);
+    tools.push(GET_NATURAL_EVENTS_TOOL as unknown as ToolSchema);
+    tools.push(GET_EXCHANGE_RATE_TOOL as unknown as ToolSchema);
+    tools.push(GET_HACKER_NEWS_TOOL as unknown as ToolSchema);
+  }
   if (ports?.lights) tools.push(CONTROL_STUDIO_LIGHTS_TOOL as unknown as ToolSchema);
   return tools;
 }
@@ -58,6 +109,22 @@ export async function applyConversationalTool(
   if (!toolName || !ports) return null;
   if (toolName === "get_weather_forecast" && ports.weather) {
     return { mode: "replace", speech: await applyWeather(ports.weather, args) };
+  }
+  if (toolName === "get_news_headlines" && ports.news) {
+    const result = await ports.news.getHeadlines();
+    return { mode: "replace", speech: result.speech };
+  }
+  if (toolName === "summarize_news_article" && ports.news) {
+    return { mode: "replace", speech: await applyNewsArticle(ports.news, args) };
+  }
+  if (toolName === "get_crypto_price" && ports.markets) {
+    return { mode: "replace", speech: await applyCrypto(ports.markets, args) };
+  }
+  if (toolName === "get_metals_price" && ports.markets) {
+    return { mode: "replace", speech: await applyMetals(ports.markets, args) };
+  }
+  if (ports.situational && SITUATIONAL_TOOLS.has(toolName)) {
+    return { mode: "replace", speech: await applySituational(ports.situational, toolName, args) };
   }
   if (toolName === "control_studio_lights" && ports.lights) {
     return { mode: "replace", speech: await applyLights(ports.lights, args) };
@@ -86,6 +153,112 @@ async function applyWeather(port: WeatherForecastPort, args: Record<string, unkn
   } catch (err) {
     console.error("[session] get_weather_forecast failed:", err);
     return "I couldn't get the weather forecast just now.";
+  }
+}
+
+async function applyNewsArticle(port: NewsPort, args: Record<string, unknown>): Promise<string> {
+  const indexRaw = args.index;
+  const index =
+    typeof indexRaw === "number" && Number.isFinite(indexRaw)
+      ? Math.floor(indexRaw)
+      : typeof indexRaw === "string" && indexRaw.trim() && Number.isFinite(Number(indexRaw))
+        ? Math.floor(Number(indexRaw))
+        : undefined;
+  const match = typeof args.match === "string" && args.match.trim() ? args.match.trim() : undefined;
+  const url = typeof args.url === "string" && args.url.trim() ? args.url.trim() : undefined;
+  const title = typeof args.title === "string" && args.title.trim() ? args.title.trim() : undefined;
+  try {
+    return await port.summarizeArticle({ index, match, url, title });
+  } catch (err) {
+    console.error("[session] summarize_news_article failed:", err);
+    return "I couldn't summarize that article just now.";
+  }
+}
+
+const SITUATIONAL_TOOLS = new Set([
+  "get_earthquakes",
+  "get_weather_alerts",
+  "get_space_weather",
+  "get_natural_events",
+  "get_exchange_rate",
+  "get_hacker_news",
+]);
+
+async function applySituational(
+  port: SituationalPort,
+  toolName: string,
+  args: Record<string, unknown>,
+): Promise<string> {
+  try {
+    if (toolName === "get_earthquakes") {
+      const scope = args.scope === "significant" ? "significant" : "notable";
+      const place = typeof args.place === "string" && args.place.trim() ? args.place.trim() : undefined;
+      return await port.earthquakes({
+        scope,
+        recent: args.recent === true,
+        place,
+      });
+    }
+    if (toolName === "get_weather_alerts") {
+      const location =
+        typeof args.location === "string" && args.location.trim() ? args.location.trim() : undefined;
+      return await port.weatherAlerts({ location });
+    }
+    if (toolName === "get_space_weather") return await port.spaceWeather();
+    if (toolName === "get_natural_events") {
+      const kind =
+        args.kind === "wildfires" || args.kind === "volcanoes" || args.kind === "both"
+          ? args.kind
+          : "both";
+      return await port.naturalEvents({ kind });
+    }
+    if (toolName === "get_exchange_rate") {
+      const from = typeof args.from === "string" ? args.from.trim().toUpperCase() : "";
+      const to = typeof args.to === "string" ? args.to.trim().toUpperCase() : "";
+      if (!from || !to) return "Tell me which currencies to convert.";
+      const amountRaw = args.amount;
+      const amount =
+        typeof amountRaw === "number" && Number.isFinite(amountRaw)
+          ? amountRaw
+          : typeof amountRaw === "string" && amountRaw.trim() && Number.isFinite(Number(amountRaw))
+            ? Number(amountRaw)
+            : undefined;
+      return await port.exchangeRate({
+        from,
+        to,
+        amount,
+        change: args.change === true,
+      });
+    }
+    if (toolName === "get_hacker_news") {
+      const topic = args.topic === "ai" ? "ai" : "general";
+      return await port.hackerNews({ topic });
+    }
+  } catch (err) {
+    console.error(`[session] ${toolName} failed:`, err);
+  }
+  return "I couldn't look that up just now.";
+}
+
+async function applyCrypto(port: MarketsPort, args: Record<string, unknown>): Promise<string> {
+  const cryptoId =
+    typeof args.cryptoId === "string" && args.cryptoId.trim() ? args.cryptoId.trim() : undefined;
+  try {
+    return await port.getCryptoPrice({ cryptoId });
+  } catch (err) {
+    console.error("[session] get_crypto_price failed:", err);
+    return "I couldn't get that crypto price just now.";
+  }
+}
+
+async function applyMetals(port: MarketsPort, args: Record<string, unknown>): Promise<string> {
+  const raw = typeof args.metalSymbol === "string" ? args.metalSymbol.trim().toLowerCase() : "";
+  const metalSymbol = raw === "silver" ? "silver" : raw === "gold" ? "gold" : undefined;
+  try {
+    return await port.getMetalsPrice({ metalSymbol });
+  } catch (err) {
+    console.error("[session] get_metals_price failed:", err);
+    return "I couldn't get that metals price just now.";
   }
 }
 

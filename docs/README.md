@@ -32,6 +32,7 @@ Index of `docs/`. Product code in this repo is the source of truth when a note a
 
 | Doc | What it is |
 | --- | --- |
+| [memory-system.md](./memory-system.md) | OIP metadata records, schema.org templates, and the graph-and-lexical walk that answers a question |
 | [embedding-space.md](./embedding-space.md) | Graph (beta) Semantic Map + Vector Explorer |
 | [local-embeddings-mac-mini.md](./local-embeddings-mac-mini.md) | Follow-up: offline embedder, swap the embed step only |
 | [audio-notes.md](./audio-notes.md) | Voice notes pipeline and `/notes` / `/api/notes` |

@@ -18,7 +18,23 @@ export {
   saveBriefingPrefs,
   type BriefingPrefs,
 } from "./prefs.js";
-export { NEWS_SOURCE_OPTIONS, RSS_URLS } from "./news.js";
+export { NEWS_SOURCE_OPTIONS, RSS_URLS, type NewsHeadline } from "./news.js";
+export {
+  lookupLiveNewsHeadlines,
+  summarizeNewsArticle,
+  type LiveNewsLookupResult,
+  type SummarizeNewsArticleOpts,
+} from "./news-lookup.js";
+export {
+  lookupLiveCryptoPrice,
+  lookupLiveMetalsPrice,
+} from "./markets-lookup.js";
+export {
+  fetchCrypto,
+  fetchMetals,
+  formatCryptoSpeech,
+  formatMetalsSpeech,
+} from "./markets.js";
 export {
   briefingDayWindowEndIso,
   formatBriefingDateLabel,
@@ -44,6 +60,33 @@ export {
   lookupLiveWeatherForecast,
   type LiveWeatherLookupOpts,
 } from "./live-weather.js";
+export { geocodePlace } from "./weather.js";
+export {
+  lookupEarthquakes,
+  type EarthquakeQuery,
+} from "./earthquakes.js";
+export {
+  lookupWeatherAlerts,
+  type WeatherAlertQuery,
+} from "./weather-alerts.js";
+export { lookupSpaceWeather } from "./space-weather.js";
+export {
+  lookupNaturalEvents,
+  type NaturalEventKind,
+  type NaturalEventQuery,
+} from "./natural-events.js";
+export {
+  lookupExchangeRate,
+  type ExchangeRateQuery,
+} from "./exchange-rate.js";
+export {
+  lookupHackerNews,
+  type HackerNewsQuery,
+} from "./hacker-news.js";
+export {
+  speakSituationalRequest,
+  type SituationalRequest,
+} from "./situational.js";
 export {
   fetchWeather,
   formatWeatherMarkdown,

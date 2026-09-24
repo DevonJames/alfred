@@ -6,7 +6,7 @@
  * GPT-Live (`VOICE=live`) is a separate LiveKit path and is not used here.
  */
 
-import { createBriefingController, lookupLiveWeatherForecast, type BriefingController, type GreetingLlm } from "@alfred/briefing";
+import { createBriefingController, lookupLiveCryptoPrice, lookupLiveMetalsPrice, lookupLiveNewsHeadlines, lookupLiveWeatherForecast, speakSituationalRequest, summarizeNewsArticle, type BriefingController, type GreetingLlm, type NewsHeadline } from "@alfred/briefing";
 import {
   extractBargeInText,
   hasInterruptCue,
@@ -14,8 +14,12 @@ import {
   looksLikeDocsIngestTask,
   looksLikeXIngestTask,
   normalizeForEcho,
+  parseMarketsIntent,
+  parseNewsIntent,
+  parseSituationalIntent,
   parseStudioLightIntent,
   parseWeatherIntent,
+  resolveNewsArticleIndex,
 } from "@alfred/core";
 import { createElgatoLightsController, type ElgatoLightsController } from "@alfred/elgato";
 import { OpenAiResponsesLLMProvider } from "@alfred/provider-openai";
@@ -164,6 +168,8 @@ function briefingController(): BriefingController {
 }
 
 let lights: ElgatoLightsController | undefined;
+/** Last spoken news rundown for this Speech Engine process. */
+let recentNews: NewsHeadline[] = [];
 
 function lightsController(): ElgatoLightsController {
   if (!lights) {
@@ -194,7 +200,7 @@ async function lightsInventoryHint(): Promise<string | undefined> {
 }
 
 /**
- * Cascade answers lights, weather, docs ingest, and X ingest before the LLM.
+ * Cascade answers lights, situational lookups, weather, news, docs ingest, and X ingest before the LLM.
  */
 async function toolSpeech(key: string, text: string): Promise<string | null> {
   const lightsCommand = parseStudioLightIntent(text);
@@ -206,6 +212,17 @@ async function toolSpeech(key: string, text: string): Promise<string | null> {
     } catch (err) {
       console.error("[speech-engine] lights failed:", err);
       return "I couldn't reach the lights just now.";
+    }
+  }
+  const situational = parseSituationalIntent(text);
+  if (situational) {
+    try {
+      const spoken = await speakSituationalRequest(situational);
+      console.log(`[speech-engine] ${situational.tool}: ${spoken.slice(0, 160)}`);
+      return spoken;
+    } catch (err) {
+      console.error(`[speech-engine] ${situational.tool} failed:`, err);
+      return "I couldn't look that up just now.";
     }
   }
   const weatherIntent = parseWeatherIntent(text);
@@ -220,6 +237,42 @@ async function toolSpeech(key: string, text: string): Promise<string | null> {
     } catch (err) {
       console.error("[speech-engine] weather failed:", err);
       return "I couldn't get the weather just now.";
+    }
+  }
+  const newsIntent = parseNewsIntent(text);
+  if (newsIntent) {
+    try {
+      if (newsIntent.kind === "headlines") {
+        const result = await lookupLiveNewsHeadlines();
+        recentNews = result.headlines;
+        console.log(`[speech-engine] news headlines (${result.headlines.length})`);
+        return result.speech;
+      }
+      const resolved = resolveNewsArticleIndex(newsIntent, recentNews.length);
+      const spoken = await summarizeNewsArticle({
+        ...resolved,
+        recent: recentNews,
+        llm: greetingLlm,
+      });
+      console.log(`[speech-engine] news article: ${spoken.slice(0, 160)}`);
+      return spoken;
+    } catch (err) {
+      console.error("[speech-engine] news failed:", err);
+      return "I couldn't get the news just now.";
+    }
+  }
+  const marketsIntent = parseMarketsIntent(text);
+  if (marketsIntent) {
+    try {
+      const spoken =
+        marketsIntent.kind === "crypto"
+          ? await lookupLiveCryptoPrice({ cryptoId: marketsIntent.cryptoId })
+          : await lookupLiveMetalsPrice({ metalSymbol: marketsIntent.metalSymbol });
+      console.log(`[speech-engine] markets ${marketsIntent.kind}: ${spoken.slice(0, 160)}`);
+      return spoken;
+    } catch (err) {
+      console.error("[speech-engine] markets failed:", err);
+      return "I couldn't get that price just now.";
     }
   }
   if (looksLikeDocsIngestTask(text)) {

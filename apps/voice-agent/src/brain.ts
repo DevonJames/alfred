@@ -13,9 +13,20 @@ import {
 } from "@alfred/agents";
 import {
   createBriefingController,
+  lookupEarthquakes,
+  lookupExchangeRate,
+  lookupHackerNews,
+  lookupLiveCryptoPrice,
+  lookupLiveMetalsPrice,
+  lookupLiveNewsHeadlines,
   lookupLiveWeatherForecast,
+  lookupNaturalEvents,
+  lookupSpaceWeather,
+  lookupWeatherAlerts,
+  summarizeNewsArticle,
   type BriefingController,
   type GreetingLlm,
+  type NewsHeadline,
 } from "@alfred/briefing";
 import { createPlaywrightCaptureAdapter } from "@alfred/browser";
 import type { UserConfiguration } from "@alfred/contracts";
@@ -81,6 +92,37 @@ export interface AlfredBrain {
   };
   weather: {
     getForecast(opts?: { location?: string; days?: number }): Promise<string>;
+  };
+  news: {
+    getHeadlines(): Promise<{ speech: string; headlines: NewsHeadline[] }>;
+    summarizeArticle(opts: {
+      index?: number;
+      match?: string;
+      url?: string;
+      title?: string;
+      recent?: NewsHeadline[];
+    }): Promise<string>;
+  };
+  markets: {
+    getCryptoPrice(opts?: { cryptoId?: string }): Promise<string>;
+    getMetalsPrice(opts?: { metalSymbol?: "gold" | "silver" }): Promise<string>;
+  };
+  situational: {
+    earthquakes(query?: {
+      scope?: "significant" | "notable";
+      recent?: boolean;
+      place?: string;
+    }): Promise<string>;
+    weatherAlerts(query?: { location?: string }): Promise<string>;
+    spaceWeather(): Promise<string>;
+    naturalEvents(query?: { kind?: "wildfires" | "volcanoes" | "both" }): Promise<string>;
+    exchangeRate(query: {
+      amount?: number;
+      from: string;
+      to: string;
+      change?: boolean;
+    }): Promise<string>;
+    hackerNews(query?: { topic?: "general" | "ai" }): Promise<string>;
   };
   lights: ElgatoLightsController;
   listDueReminders(): Promise<DueReminderSummary[]>;
@@ -185,6 +227,41 @@ export async function createAlfredBrain(opts?: {
       });
     },
   };
+  let recentNews: NewsHeadline[] = [];
+  const news = {
+    async getHeadlines() {
+      const result = await lookupLiveNewsHeadlines();
+      recentNews = result.headlines;
+      return result;
+    },
+    async summarizeArticle(articleOpts: {
+      index?: number;
+      match?: string;
+      url?: string;
+      title?: string;
+      recent?: NewsHeadline[];
+    }) {
+      return summarizeNewsArticle({
+        ...articleOpts,
+        recent: articleOpts.recent?.length ? articleOpts.recent : recentNews,
+        llm: opts?.greetingLlm,
+      });
+    },
+  };
+  const markets = {
+    getCryptoPrice: (marketOpts?: { cryptoId?: string }) =>
+      lookupLiveCryptoPrice({ cryptoId: marketOpts?.cryptoId }),
+    getMetalsPrice: (marketOpts?: { metalSymbol?: "gold" | "silver" }) =>
+      lookupLiveMetalsPrice({ metalSymbol: marketOpts?.metalSymbol }),
+  };
+  const situational = {
+    earthquakes: lookupEarthquakes,
+    weatherAlerts: lookupWeatherAlerts,
+    spaceWeather: lookupSpaceWeather,
+    naturalEvents: lookupNaturalEvents,
+    exchangeRate: lookupExchangeRate,
+    hackerNews: lookupHackerNews,
+  };
   const lights = createElgatoLightsController();
   void lights.refresh().catch((err) => {
     console.warn("[brain] Elgato light discovery failed:", err);
@@ -210,6 +287,9 @@ export async function createAlfredBrain(opts?: {
     reminders,
     structuredMemory,
     weather,
+    news,
+    markets,
+    situational,
     lights,
     async listDueReminders() {
       try {

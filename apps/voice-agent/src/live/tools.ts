@@ -181,6 +181,189 @@ export function createAlfredLiveTools(
       },
     }),
 
+    get_news_headlines: llm.tool({
+      description:
+        "Fetch today's top news headlines from the user's briefing sources. Call for 'what's in the news', 'any headlines', etc. Do not invent headlines.",
+      parameters: z.object({}),
+      execute: async () => {
+        try {
+          const result = await brain.news.getHeadlines();
+          return result.speech;
+        } catch (err) {
+          console.error("[voice:live] get_news_headlines failed:", err);
+          return "Could not pull the headlines just now.";
+        }
+      },
+    }),
+
+    summarize_news_article: llm.tool({
+      description:
+        "Fetch and summarize one headline from the last news rundown (or a URL). Use after get_news_headlines when the user asks for more detail.",
+      parameters: z.object({
+        index: z.number().min(1).max(20).optional(),
+        match: z.string().optional(),
+        url: z.string().optional(),
+        title: z.string().optional(),
+      }),
+      execute: async ({ index, match, url, title }) => {
+        try {
+          return await brain.news.summarizeArticle({
+            index,
+            match: match?.trim() || undefined,
+            url: url?.trim() || undefined,
+            title: title?.trim() || undefined,
+          });
+        } catch (err) {
+          console.error("[voice:live] summarize_news_article failed:", err);
+          return "Could not summarize that article just now.";
+        }
+      },
+    }),
+
+    get_crypto_price: llm.tool({
+      description:
+        "Look up a live cryptocurrency price (CoinGecko, same as the daily briefing). Default is the user's briefing crypto (usually Bitcoin).",
+      parameters: z.object({
+        cryptoId: z.string().optional(),
+      }),
+      execute: async ({ cryptoId }) => {
+        try {
+          return await brain.markets.getCryptoPrice({
+            cryptoId: cryptoId?.trim() || undefined,
+          });
+        } catch (err) {
+          console.error("[voice:live] get_crypto_price failed:", err);
+          return "Could not get that crypto price just now.";
+        }
+      },
+    }),
+
+    get_metals_price: llm.tool({
+      description:
+        "Look up a live gold or silver price (Stooq, same as the daily briefing).",
+      parameters: z.object({
+        metalSymbol: z.enum(["gold", "silver"]).optional(),
+      }),
+      execute: async ({ metalSymbol }) => {
+        try {
+          return await brain.markets.getMetalsPrice({ metalSymbol });
+        } catch (err) {
+          console.error("[voice:live] get_metals_price failed:", err);
+          return "Could not get that metals price just now.";
+        }
+      },
+    }),
+
+    get_earthquakes: llm.tool({
+      description:
+        "Look up recent earthquakes from USGS. Use scope significant for notable quakes, recent for the last hour, and place when the user names a region.",
+      parameters: z.object({
+        scope: z.enum(["significant", "notable"]).optional(),
+        recent: z.boolean().optional(),
+        place: z.string().optional(),
+      }),
+      execute: async ({ scope, recent, place }) => {
+        try {
+          return await brain.situational.earthquakes({
+            scope,
+            recent,
+            place: place?.trim() || undefined,
+          });
+        } catch (err) {
+          console.error("[voice:live] get_earthquakes failed:", err);
+          return "Could not check earthquakes just now.";
+        }
+      },
+    }),
+
+    get_weather_alerts: llm.tool({
+      description:
+        "Look up active National Weather Service warnings and advisories. Omit location for home. This is not the temperature forecast.",
+      parameters: z.object({
+        location: z.string().optional(),
+      }),
+      execute: async ({ location }) => {
+        try {
+          return await brain.situational.weatherAlerts({
+            location: location?.trim() || undefined,
+          });
+        } catch (err) {
+          console.error("[voice:live] get_weather_alerts failed:", err);
+          return "Could not check weather alerts just now.";
+        }
+      },
+    }),
+
+    get_space_weather: llm.tool({
+      description:
+        "Look up NOAA geomagnetic storm scales and whether aurora is more likely.",
+      parameters: z.object({}),
+      execute: async () => {
+        try {
+          return await brain.situational.spaceWeather();
+        } catch (err) {
+          console.error("[voice:live] get_space_weather failed:", err);
+          return "Could not check space weather just now.";
+        }
+      },
+    }),
+
+    get_natural_events: llm.tool({
+      description:
+        "Look up open wildfires and volcanoes from NASA EONET.",
+      parameters: z.object({
+        kind: z.enum(["wildfires", "volcanoes", "both"]).optional(),
+      }),
+      execute: async ({ kind }) => {
+        try {
+          return await brain.situational.naturalEvents({ kind });
+        } catch (err) {
+          console.error("[voice:live] get_natural_events failed:", err);
+          return "Could not check natural events just now.";
+        }
+      },
+    }),
+
+    get_exchange_rate: llm.tool({
+      description:
+        "Convert currencies with European Central Bank rates, or compare a rate with about a week ago. Not for Bitcoin or gold.",
+      parameters: z.object({
+        amount: z.number().optional(),
+        from: z.string(),
+        to: z.string(),
+        change: z.boolean().optional(),
+      }),
+      execute: async ({ amount, from, to, change }) => {
+        try {
+          return await brain.situational.exchangeRate({
+            amount,
+            from: from.trim(),
+            to: to.trim(),
+            change,
+          });
+        } catch (err) {
+          console.error("[voice:live] get_exchange_rate failed:", err);
+          return "Could not get that exchange rate just now.";
+        }
+      },
+    }),
+
+    get_hacker_news: llm.tool({
+      description:
+        "Read the Hacker News front page. Use topic ai when the user asks about AI on Hacker News or what developers are discussing in AI.",
+      parameters: z.object({
+        topic: z.enum(["general", "ai"]).optional(),
+      }),
+      execute: async ({ topic }) => {
+        try {
+          return await brain.situational.hackerNews({ topic });
+        } catch (err) {
+          console.error("[voice:live] get_hacker_news failed:", err);
+          return "Could not read Hacker News just now.";
+        }
+      },
+    }),
+
     control_studio_lights: llm.tool({
       description:
         "Control local Elgato Key Lights: on/off, brighter/dimmer, warmer/cooler, or set brightness/color. Omit target for all lights.",

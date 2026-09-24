@@ -266,6 +266,203 @@ export const CONTROL_STUDIO_LIGHTS_TOOL = {
   },
 } as const;
 
+/**
+ * Live news headlines from the same RSS sources as the daily briefing.
+ * Prefer this over delegate_task for "what's in the news".
+ */
+export const GET_NEWS_HEADLINES_TOOL = {
+  name: "get_news_headlines",
+  description:
+    "Fetch today's top news headlines from the user's configured briefing sources. " +
+    "Call this for casual phrasing too (e.g. 'what's in the news', 'any headlines', 'catch me up on the news', 'top headlines'). " +
+    "Do not invent headlines — always call this tool. After speaking them, the user may ask to dig into one by number or title.",
+  parameters: {
+    type: "object",
+    properties: {},
+  },
+} as const;
+
+/**
+ * Fetch and summarize one headline from the last news rundown (or a URL).
+ */
+export const SUMMARIZE_NEWS_ARTICLE_TOOL = {
+  name: "summarize_news_article",
+  description:
+    "Fetch the full article for a recent headline and return a short spoken summary. " +
+    "Call after get_news_headlines when the user asks for more detail (e.g. 'tell me more about the second one', 'summarize that story', 'dig into the AP headline'). " +
+    "Prefer index (1-based) from the last rundown, or match text from the title. Pass url only when known.",
+  parameters: {
+    type: "object",
+    properties: {
+      index: {
+        type: "number",
+        description: "1-based index from the last headline rundown (1 = first).",
+      },
+      match: {
+        type: "string",
+        description: "Fragment of the headline title when the index is unknown.",
+      },
+      url: {
+        type: "string",
+        description: "Direct article URL when already known.",
+      },
+      title: {
+        type: "string",
+        description: "Headline title when summarizing a direct URL.",
+      },
+    },
+  },
+} as const;
+
+/**
+ * Live crypto quote (CoinGecko — same path as the daily briefing).
+ */
+export const GET_CRYPTO_PRICE_TOOL = {
+  name: "get_crypto_price",
+  description:
+    "Look up a live cryptocurrency price (default: the user's briefing crypto, usually Bitcoin). " +
+    "Call for casual phrasing too (e.g. 'what's bitcoin at', 'BTC price', 'how's ethereum'). " +
+    "Do not invent prices — always call this tool.",
+  parameters: {
+    type: "object",
+    properties: {
+      cryptoId: {
+        type: "string",
+        description:
+          "CoinGecko id such as bitcoin, ethereum, solana. Omit to use the briefing default.",
+      },
+    },
+  },
+} as const;
+
+/**
+ * Live gold/silver quote (Stooq — same path as the daily briefing).
+ */
+export const GET_METALS_PRICE_TOOL = {
+  name: "get_metals_price",
+  description:
+    "Look up a live gold or silver price. " +
+    "Call for casual phrasing too (e.g. 'gold price', 'how's silver', 'precious metals'). " +
+    "Do not invent prices — always call this tool.",
+  parameters: {
+    type: "object",
+    properties: {
+      metalSymbol: {
+        type: "string",
+        enum: ["gold", "silver"],
+        description: "Which metal. Default gold when omitted.",
+      },
+    },
+  },
+} as const;
+
+export const GET_EARTHQUAKES_TOOL = {
+  name: "get_earthquakes",
+  description:
+    "Look up recent earthquakes from the USGS feed. " +
+    "Call for 'any earthquakes', 'significant earthquakes today', or 'what just shook' a place. " +
+    "Do not invent magnitudes or locations.",
+  parameters: {
+    type: "object",
+    properties: {
+      scope: {
+        type: "string",
+        enum: ["significant", "notable"],
+        description: "significant for the USGS significant feed. notable (default) for magnitude 4.5, or 2.5 when recent.",
+      },
+      recent: {
+        type: "boolean",
+        description: "True when the user means the last hour or 'just now'.",
+      },
+      place: {
+        type: "string",
+        description: "Region or place to filter, such as California or Japan. Omit for worldwide.",
+      },
+    },
+  },
+} as const;
+
+export const GET_WEATHER_ALERTS_TOOL = {
+  name: "get_weather_alerts",
+  description:
+    "Look up active National Weather Service warnings and advisories. " +
+    "Call for severe weather, warnings, watches, and advisories. " +
+    "This is not the daily forecast — use get_weather_forecast for temperature and conditions. " +
+    "Omit location to use home. Do not invent alerts.",
+  parameters: {
+    type: "object",
+    properties: {
+      location: {
+        type: "string",
+        description: "City, region, or zip. Omit for the configured home location.",
+      },
+    },
+  },
+} as const;
+
+export const GET_SPACE_WEATHER_TOOL = {
+  name: "get_space_weather",
+  description:
+    "Look up NOAA geomagnetic storm scales and whether aurora is more likely. " +
+    "Call for geomagnetic storms, space weather, solar storms, and aurora. " +
+    "Do not invent storm levels.",
+  parameters: { type: "object", properties: {} },
+} as const;
+
+export const GET_NATURAL_EVENTS_TOOL = {
+  name: "get_natural_events",
+  description:
+    "Look up open wildfires and volcanoes from NASA EONET. " +
+    "Call for wildfires, forest fires, volcanoes, and eruptions. " +
+    "Do not invent events.",
+  parameters: {
+    type: "object",
+    properties: {
+      kind: {
+        type: "string",
+        enum: ["wildfires", "volcanoes", "both"],
+        description: "Which events to speak. Default both.",
+      },
+    },
+  },
+} as const;
+
+export const GET_EXCHANGE_RATE_TOOL = {
+  name: "get_exchange_rate",
+  description:
+    "Convert an amount between currencies using European Central Bank rates, or say how a rate moved over the past week. " +
+    "Call for euros, yen, pounds, and similar. Do not use this for Bitcoin or gold. " +
+    "Do not invent rates.",
+  parameters: {
+    type: "object",
+    properties: {
+      amount: { type: "number", description: "Amount to convert. Omit for 1, or when asking how the rate moved." },
+      from: { type: "string", description: "Source ISO currency code, such as USD." },
+      to: { type: "string", description: "Target ISO currency code, such as EUR or JPY." },
+      change: { type: "boolean", description: "True when the user asks how the rate has moved." },
+    },
+    required: ["from", "to"],
+  },
+} as const;
+
+export const GET_HACKER_NEWS_TOOL = {
+  name: "get_hacker_news",
+  description:
+    "Read the current Hacker News front page. " +
+    "Call when the user asks what developers are talking about, or for AI stories on Hacker News. " +
+    "This is not the general news briefing. Do not invent story titles.",
+  parameters: {
+    type: "object",
+    properties: {
+      topic: {
+        type: "string",
+        enum: ["general", "ai"],
+        description: "ai filters titles for AI. general is the front page.",
+      },
+    },
+  },
+} as const;
+
 export const AgentRoutingRuleSchema = z.object({
   category: TaskCategorySchema,
   orderedHarnessIds: z.array(z.string().min(1)).min(1),

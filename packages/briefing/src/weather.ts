@@ -55,7 +55,7 @@ function getConditionFromCode(code: number): string {
   return WMO_CODES[code]?.condition ?? `Unknown (${code})`;
 }
 
-async function geocodeLocation(
+export async function geocodePlace(
   query: string,
 ): Promise<{ name: string; lat: number; lon: number; timezone: string } | null> {
   try {
@@ -106,7 +106,7 @@ export async function fetchWeather(
         timezone: coords.timezone?.trim() || "auto",
       };
     } else {
-      geo = await geocodeLocation(location);
+      geo = await geocodePlace(location);
     }
     if (!geo) return null;
 

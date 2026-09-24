@@ -93,7 +93,9 @@ export function formatIndexSpeech(q: MarketQuote, indexSymbol: "sp500" | "dow"):
 export function formatMetalsSpeech(q: MarketQuote, metalSymbol: "gold" | "silver"): string {
   const name = metalSymbol === "gold" ? "Gold" : "Silver";
   const { direction, amount } = speakPercentChange(q.change24h);
-  return `${name} is ${direction} ${amount} percent.`;
+  const rounded =
+    metalSymbol === "gold" ? Math.round(q.price / 10) * 10 : Math.round(q.price * 100) / 100;
+  return `${name} is ${direction} ${amount} percent, trading at ${speakUsdAmount(rounded)} an ounce.`;
 }
 
 /** Display/markdown lines may keep compact symbols. */

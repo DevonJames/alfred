@@ -196,6 +196,9 @@ export async function createCascadedVoiceRuntime(opts?: {
     reminders: brain.reminders,
     structuredMemory: brain.structuredMemory,
     weather: brain.weather,
+    news: brain.news,
+    markets: brain.markets,
+    situational: brain.situational,
     lights: brain.lights,
   });
 

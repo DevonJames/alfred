@@ -66,7 +66,7 @@ export function formatBriefingForSpeech(
   const launches = formatLaunchesSpeech(data.launches);
   if (launches) parts.push(launches);
 
-  const news = formatNewsSpeech(data.news);
+  const news = formatNewsSpeech(data.news, { inviteFollowUp: false });
   if (news) parts.push(news);
 
   const xIngest = data.xIngestText || data.xIngest?.speech;

@@ -53,6 +53,31 @@ export class PromptAssembler {
           "When the user asks about current weather or the forecast, call get_weather_forecast immediately (including casual phrasing like \"what's the weather\"). Do not ask which city or zip unless they named a different place — if they omit a location, call the tool with no location argument so home (BRIEFING_ZIP / lat-lon) is used. Only pass location when they specify another city, place, or zip. Do not invent temperatures or conditions. Prefer this over delegate_task for weather.",
         );
       }
+      if (caps.has("get_news_headlines")) {
+        guidance.push(
+          "When the user asks what's in the news, for headlines, or to catch them up on the news, call get_news_headlines immediately. Do not invent headlines. Prefer this over delegate_task.",
+        );
+      }
+      if (caps.has("summarize_news_article")) {
+        guidance.push(
+          "When the user asks to dig into / summarize / hear more about a recent headline (by number or title fragment), call summarize_news_article. Prefer index from the last rundown when they say first/second/third. Do not invent article contents.",
+        );
+      }
+      if (caps.has("get_crypto_price")) {
+        guidance.push(
+          "When the user asks about Bitcoin or other crypto prices, call get_crypto_price immediately. Do not invent prices. Prefer this over delegate_task.",
+        );
+      }
+      if (caps.has("get_metals_price")) {
+        guidance.push(
+          "When the user asks about gold or silver prices, call get_metals_price immediately. Do not invent prices. Prefer this over delegate_task.",
+        );
+      }
+      if (caps.has("get_earthquakes")) {
+        guidance.push(
+          "When the user asks about earthquakes, severe weather alerts or warnings, geomagnetic storms, aurora, wildfires, volcanoes, currency conversion, or Hacker News, call the matching tool immediately: get_earthquakes, get_weather_alerts, get_space_weather, get_natural_events, get_exchange_rate, or get_hacker_news. Severe weather warnings are get_weather_alerts, not get_weather_forecast. Space weather is get_space_weather, not the forecast. Do not invent magnitudes, alerts, rates, or story titles. Prefer these over delegate_task.",
+        );
+      }
       if (caps.has("control_studio_lights")) {
         guidance.push(
           "When the user asks to turn lights on or off, up or down, warmer or cooler, or to set brightness or color temperature, call control_studio_lights immediately (including casual phrasing like \"lights down\", \"make it warm\", \"kill the lights\", \"turn off the lights\"). " +

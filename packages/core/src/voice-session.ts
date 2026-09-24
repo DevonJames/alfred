@@ -2,8 +2,18 @@ import {
   createId,
   CONTROL_STUDIO_LIGHTS_TOOL,
   DELEGATE_TASK_TOOL,
+  GET_CRYPTO_PRICE_TOOL,
+  GET_EARTHQUAKES_TOOL,
+  GET_EXCHANGE_RATE_TOOL,
+  GET_HACKER_NEWS_TOOL,
+  GET_METALS_PRICE_TOOL,
+  GET_NATURAL_EVENTS_TOOL,
+  GET_NEWS_HEADLINES_TOOL,
+  GET_SPACE_WEATHER_TOOL,
+  GET_WEATHER_ALERTS_TOOL,
   GET_WEATHER_FORECAST_TOOL,
   REMEMBER_MEMORY_TOOL,
+  SUMMARIZE_NEWS_ARTICLE_TOOL,
   UPDATE_REMINDER_TOOL,
   type AudioFrame,
   type LatencyMarkName,
@@ -27,8 +37,12 @@ import type {
   AgentRouterPort,
   DueReminderSummary,
   MemoryControllerPort,
+  NewsHeadlineRef,
+  NewsPort,
+  MarketsPort,
   ProviderRegistryPort,
   ReminderPort,
+  SituationalPort,
   StudioLightsPort,
   StructuredMemoryPort,
   WeatherForecastPort,
@@ -51,6 +65,14 @@ import { looksLikeDocsIngestTask } from "./docs-ingest-intent.js";
 import { looksLikeXIngestTask } from "./x-ingest-intent.js";
 import { looksLikeStudioLightsTask, parseStudioLightIntent } from "./studio-lights-intent.js";
 import { looksLikeWeatherTask, parseWeatherIntent } from "./weather-intent.js";
+import {
+  looksLikeNewsTask,
+  parseNewsIntent,
+  resolveNewsArticleIndex,
+} from "./news-intent.js";
+import { looksLikeMarketsTask, parseMarketsIntent } from "./markets-intent.js";
+import { applyConversationalTool } from "./conversational-tools.js";
+import { looksLikeSituationalTask, parseSituationalIntent } from "./situational-intent.js";
 
 /** Structural port for Daily Briefing (implemented by @alfred/briefing). */
 export type BriefingVoiceDecision =
@@ -85,6 +107,12 @@ export interface VoiceSessionDeps {
   structuredMemory?: StructuredMemoryPort;
   /** Optional live weather forecast for conversational asks. */
   weather?: WeatherForecastPort;
+  /** Optional live news headlines + article follow-ups. */
+  news?: NewsPort;
+  /** Optional live crypto / metals quotes. */
+  markets?: MarketsPort;
+  /** Earthquakes, alerts, space weather, natural events, FX, Hacker News. */
+  situational?: SituationalPort;
   /** Optional local Elgato Key Light control. */
   lights?: StudioLightsPort;
   backchannelClassifier?: BackchannelClassifier;
@@ -135,6 +163,8 @@ export class VoiceSessionController {
   /** Cached Elgato inventory line — discovery is too slow to run every turn. */
   private lightsHintCache?: { atMs: number; text?: string };
   private readonly lightsHintTtlMs = 60_000;
+  /** Last spoken news rundown so "the second one" can open that article. */
+  private lastNewsHeadlines: NewsHeadlineRef[] = [];
   private activeContextId?: string;
   private activeResponseId?: string;
   private isSpeaking = false;
@@ -790,6 +820,15 @@ export class VoiceSessionController {
           // and invents "which location?" instead of using home BRIEFING_*.
           break;
         }
+        if (this.deps.news && looksLikeNewsTask(this.partialText)) {
+          break;
+        }
+        if (this.deps.markets && looksLikeMarketsTask(this.partialText)) {
+          break;
+        }
+        if (this.isSituationalAsk(this.partialText)) {
+          break;
+        }
         await this.beginProvisionalGeneration(this.partialText);
         break;
 
@@ -858,6 +897,9 @@ export class VoiceSessionController {
     if (!text.trim()) return;
     if (this.deps.lights && looksLikeStudioLightsTask(text)) return;
     if (this.deps.weather && looksLikeWeatherTask(text)) return;
+    if (this.deps.news && looksLikeNewsTask(text)) return;
+    if (this.deps.markets && looksLikeMarketsTask(text)) return;
+    if (this.isSituationalAsk(text)) return;
     // Do not commit user turn yet — provisional segment only.
     this.provisionalAbort?.abort({ reason: "superseded_generation" });
     this.provisionalAbort = new AbortController();
@@ -1155,6 +1197,32 @@ export class VoiceSessionController {
       }
     }
 
+    if (this.deps.situational && looksLikeSituationalTask(text)) {
+      const intent = parseSituationalIntent(text);
+      if (intent) {
+        await this.speakLookupResult(turnId, speak, intent.tool, async () => {
+          const port = this.deps.situational!;
+          switch (intent.tool) {
+            case "earthquakes":
+              return port.earthquakes(intent);
+            case "weather_alerts":
+              return port.weatherAlerts(intent);
+            case "space_weather":
+              return port.spaceWeather();
+            case "natural_events":
+              return port.naturalEvents(intent);
+            case "exchange_rate":
+              return port.exchangeRate(intent);
+            case "hacker_news":
+              return port.hackerNews(intent);
+            default:
+              return "I couldn't look that up just now.";
+          }
+        });
+        return;
+      }
+    }
+
     if (this.deps.weather) {
       const weatherIntent = parseWeatherIntent(text);
       if (weatherIntent) {
@@ -1192,6 +1260,92 @@ export class VoiceSessionController {
           this.provisionalResponseId = undefined;
         } catch (err) {
           console.error("[voice] weather short-circuit failed:", err);
+        } finally {
+          await this.finishTurn({ speak });
+        }
+        return;
+      }
+    }
+
+    if (this.deps.news) {
+      const newsIntent = parseNewsIntent(text);
+      if (newsIntent) {
+        try {
+          this.provisionalAbort?.abort({ reason: "news_short_circuit" });
+          const responseId = this.deps.responseLedger.beginResponse(this.deps.sessionId, turnId);
+          this.provisionalResponseId = responseId;
+          let assistantText: string;
+          if (newsIntent.kind === "headlines") {
+            const result = await this.deps.news.getHeadlines();
+            this.lastNewsHeadlines = result.headlines;
+            assistantText = result.speech;
+          } else {
+            const resolved = resolveNewsArticleIndex(newsIntent, this.lastNewsHeadlines.length);
+            assistantText = await this.deps.news.summarizeArticle({
+              ...resolved,
+              recent: this.lastNewsHeadlines,
+            });
+          }
+          if (this.pendingUserText || this.bargeInListening || this.suppressSpeak) {
+            if (this.suppressSpeak) this.suppressSpeak = false;
+            console.log("[voice] skip news speak; barge-in pending");
+            return;
+          }
+          await this.deps.responseLedger.commit(responseId, assistantText);
+          this.activeResponseId = responseId;
+          console.log(`[voice] news ${newsIntent.kind}: "${assistantText.slice(0, 160)}"`);
+          await this.deliverAssistant(responseId, assistantText, speak);
+          await this.deps.memory.commitTurn({
+            profileId: this.deps.profileId,
+            sessionId: this.deps.sessionId,
+            turnId: createId("turn"),
+            role: "assistant",
+            text: assistantText,
+            metadata: { responseId, news: newsIntent.kind },
+          });
+          this.pushRecentTurn("assistant", assistantText);
+          this.provisionalResponseId = undefined;
+        } catch (err) {
+          console.error("[voice] news short-circuit failed:", err);
+        } finally {
+          await this.finishTurn({ speak });
+        }
+        return;
+      }
+    }
+
+    if (this.deps.markets) {
+      const marketsIntent = parseMarketsIntent(text);
+      if (marketsIntent) {
+        try {
+          this.provisionalAbort?.abort({ reason: "markets_short_circuit" });
+          const responseId = this.deps.responseLedger.beginResponse(this.deps.sessionId, turnId);
+          this.provisionalResponseId = responseId;
+          const assistantText =
+            marketsIntent.kind === "crypto"
+              ? await this.deps.markets.getCryptoPrice({ cryptoId: marketsIntent.cryptoId })
+              : await this.deps.markets.getMetalsPrice({ metalSymbol: marketsIntent.metalSymbol });
+          if (this.pendingUserText || this.bargeInListening || this.suppressSpeak) {
+            if (this.suppressSpeak) this.suppressSpeak = false;
+            console.log("[voice] skip markets speak; barge-in pending");
+            return;
+          }
+          await this.deps.responseLedger.commit(responseId, assistantText);
+          this.activeResponseId = responseId;
+          console.log(`[voice] markets ${marketsIntent.kind}: "${assistantText.slice(0, 160)}"`);
+          await this.deliverAssistant(responseId, assistantText, speak);
+          await this.deps.memory.commitTurn({
+            profileId: this.deps.profileId,
+            sessionId: this.deps.sessionId,
+            turnId: createId("turn"),
+            role: "assistant",
+            text: assistantText,
+            metadata: { responseId, markets: marketsIntent.kind },
+          });
+          this.pushRecentTurn("assistant", assistantText);
+          this.provisionalResponseId = undefined;
+        } catch (err) {
+          console.error("[voice] markets short-circuit failed:", err);
         } finally {
           await this.finishTurn({ speak });
         }
@@ -1340,7 +1494,10 @@ export class VoiceSessionController {
         memoryMissedInProvisional ||
         appendOffer ||
         (this.deps.lights && looksLikeStudioLightsTask(text)) ||
-        (this.deps.weather && looksLikeWeatherTask(text));
+        (this.deps.weather && looksLikeWeatherTask(text)) ||
+        (this.deps.news && looksLikeNewsTask(text)) ||
+        (this.deps.markets && looksLikeMarketsTask(text)) ||
+        this.isSituationalAsk(text);
 
       if (!shouldRegenerate && responseId) {
         // Wait for the EagerEOT stream to finish — aborting early spoke truncated
@@ -1478,11 +1635,70 @@ export class VoiceSessionController {
     return this.deps.responseLedger.getProposedText(responseId);
   }
 
+  private isSituationalAsk(text: string): boolean {
+    return Boolean(this.deps.situational && looksLikeSituationalTask(text));
+  }
+
+  private async speakLookupResult(
+    turnId: string,
+    speak: boolean,
+    label: string,
+    load: () => Promise<string>,
+  ): Promise<void> {
+    try {
+      this.provisionalAbort?.abort({ reason: `${label}_short_circuit` });
+      const responseId = this.deps.responseLedger.beginResponse(this.deps.sessionId, turnId);
+      this.provisionalResponseId = responseId;
+      const assistantText = await load();
+      if (this.pendingUserText || this.bargeInListening || this.suppressSpeak) {
+        if (this.suppressSpeak) this.suppressSpeak = false;
+        console.log(`[voice] skip ${label} speak; barge-in pending`);
+        return;
+      }
+      await this.deps.responseLedger.commit(responseId, assistantText);
+      this.activeResponseId = responseId;
+      console.log(`[voice] ${label}: "${assistantText.slice(0, 160)}"`);
+      await this.deliverAssistant(responseId, assistantText, speak);
+      await this.deps.memory.commitTurn({
+        profileId: this.deps.profileId,
+        sessionId: this.deps.sessionId,
+        turnId: createId("turn"),
+        role: "assistant",
+        text: assistantText,
+        metadata: { responseId, situational: label },
+      });
+      this.pushRecentTurn("assistant", assistantText);
+      this.provisionalResponseId = undefined;
+    } catch (err) {
+      console.error(`[voice] ${label} short-circuit failed:`, err);
+    } finally {
+      await this.finishTurn({ speak });
+    }
+  }
+
   private voiceCapabilities(): string[] {
     const caps = ["delegate_task"];
     if (this.deps.reminders) caps.push("update_reminder");
     if (this.deps.structuredMemory) caps.push("remember_memory");
     if (this.deps.weather) caps.push("get_weather_forecast");
+    if (this.deps.news) {
+      caps.push("get_news_headlines");
+      caps.push("summarize_news_article");
+    }
+    if (this.deps.markets) {
+      caps.push("get_crypto_price");
+      caps.push("get_metals_price");
+    }
+    if (this.deps.situational) {
+      caps.push(
+        "get_earthquakes",
+        "get_weather_alerts",
+        "get_space_weather",
+        "get_natural_events",
+        "get_exchange_rate",
+        "get_hacker_news",
+      );
+    }
     if (this.deps.lights) caps.push("control_studio_lights");
     return caps;
   }
@@ -1528,6 +1744,22 @@ export class VoiceSessionController {
     if (this.deps.reminders) tools.push(UPDATE_REMINDER_TOOL);
     if (this.deps.structuredMemory) tools.push(REMEMBER_MEMORY_TOOL);
     if (this.deps.weather) tools.push(GET_WEATHER_FORECAST_TOOL);
+    if (this.deps.news) {
+      tools.push(GET_NEWS_HEADLINES_TOOL);
+      tools.push(SUMMARIZE_NEWS_ARTICLE_TOOL);
+    }
+    if (this.deps.markets) {
+      tools.push(GET_CRYPTO_PRICE_TOOL);
+      tools.push(GET_METALS_PRICE_TOOL);
+    }
+    if (this.deps.situational) {
+      tools.push(GET_EARTHQUAKES_TOOL);
+      tools.push(GET_WEATHER_ALERTS_TOOL);
+      tools.push(GET_SPACE_WEATHER_TOOL);
+      tools.push(GET_NATURAL_EVENTS_TOOL);
+      tools.push(GET_EXCHANGE_RATE_TOOL);
+      tools.push(GET_HACKER_NEWS_TOOL);
+    }
     if (this.deps.lights) tools.push(CONTROL_STUDIO_LIGHTS_TOOL);
     return tools;
   }
@@ -1605,10 +1837,42 @@ export class VoiceSessionController {
       if (opts?.streamCaptions) await this.publishCaptionReveal(forecast, true);
       return forecast;
     }
+    if (toolCall?.toolName === "get_news_headlines" && this.deps.news) {
+      const speech = await this.applyNewsHeadlines();
+      if (opts?.streamCaptions) await this.publishCaptionReveal(speech, true);
+      return speech;
+    }
+    if (toolCall?.toolName === "summarize_news_article" && this.deps.news) {
+      const speech = await this.applyNewsArticle(toolCall.toolArgs ?? {});
+      if (opts?.streamCaptions) await this.publishCaptionReveal(speech, true);
+      return speech;
+    }
+    if (toolCall?.toolName === "get_crypto_price" && this.deps.markets) {
+      const speech = await this.applyCryptoPrice(toolCall.toolArgs ?? {});
+      if (opts?.streamCaptions) await this.publishCaptionReveal(speech, true);
+      return speech;
+    }
+    if (toolCall?.toolName === "get_metals_price" && this.deps.markets) {
+      const speech = await this.applyMetalsPrice(toolCall.toolArgs ?? {});
+      if (opts?.streamCaptions) await this.publishCaptionReveal(speech, true);
+      return speech;
+    }
     if (toolCall?.toolName === "control_studio_lights" && this.deps.lights) {
       const speech = await this.applyStudioLights(toolCall.toolArgs ?? {});
       if (opts?.streamCaptions) await this.publishCaptionReveal(speech, true);
       return speech;
+    }
+    if (toolCall?.toolName && this.deps.situational) {
+      const applied = await applyConversationalTool(
+        toolCall.toolName,
+        toolCall.toolArgs ?? {},
+        { situational: this.deps.situational },
+        dueReminders,
+      );
+      if (applied?.mode === "replace") {
+        if (opts?.streamCaptions) await this.publishCaptionReveal(applied.speech, true);
+        return applied.speech;
+      }
     }
     if (opts?.streamCaptions) await this.publishCaptionReveal(text, true);
     return text;
@@ -1759,6 +2023,72 @@ export class VoiceSessionController {
     } catch (err) {
       console.error("[voice] get_weather_forecast failed:", err);
       return "I couldn't get the weather forecast just now.";
+    }
+  }
+
+  private async applyNewsHeadlines(): Promise<string> {
+    const port = this.deps.news;
+    if (!port) return "I couldn't look up the news right now.";
+    try {
+      const result = await port.getHeadlines();
+      this.lastNewsHeadlines = result.headlines;
+      return result.speech;
+    } catch (err) {
+      console.error("[voice] get_news_headlines failed:", err);
+      return "I couldn't pull the headlines just now.";
+    }
+  }
+
+  private async applyNewsArticle(args: Record<string, unknown>): Promise<string> {
+    const port = this.deps.news;
+    if (!port) return "I couldn't open that article right now.";
+    const indexRaw = args.index;
+    const index =
+      typeof indexRaw === "number" && Number.isFinite(indexRaw)
+        ? Math.floor(indexRaw)
+        : typeof indexRaw === "string" && indexRaw.trim() && Number.isFinite(Number(indexRaw))
+          ? Math.floor(Number(indexRaw))
+          : undefined;
+    const match = typeof args.match === "string" && args.match.trim() ? args.match.trim() : undefined;
+    const url = typeof args.url === "string" && args.url.trim() ? args.url.trim() : undefined;
+    const title = typeof args.title === "string" && args.title.trim() ? args.title.trim() : undefined;
+    try {
+      return await port.summarizeArticle({
+        index,
+        match,
+        url,
+        title,
+        recent: this.lastNewsHeadlines,
+      });
+    } catch (err) {
+      console.error("[voice] summarize_news_article failed:", err);
+      return "I couldn't summarize that article just now.";
+    }
+  }
+
+  private async applyCryptoPrice(args: Record<string, unknown>): Promise<string> {
+    const port = this.deps.markets;
+    if (!port) return "I couldn't look up crypto prices right now.";
+    const cryptoId =
+      typeof args.cryptoId === "string" && args.cryptoId.trim() ? args.cryptoId.trim() : undefined;
+    try {
+      return await port.getCryptoPrice({ cryptoId });
+    } catch (err) {
+      console.error("[voice] get_crypto_price failed:", err);
+      return "I couldn't get that crypto price just now.";
+    }
+  }
+
+  private async applyMetalsPrice(args: Record<string, unknown>): Promise<string> {
+    const port = this.deps.markets;
+    if (!port) return "I couldn't look up metals prices right now.";
+    const raw = typeof args.metalSymbol === "string" ? args.metalSymbol.trim().toLowerCase() : "";
+    const metalSymbol = raw === "silver" ? "silver" : raw === "gold" ? "gold" : undefined;
+    try {
+      return await port.getMetalsPrice({ metalSymbol });
+    } catch (err) {
+      console.error("[voice] get_metals_price failed:", err);
+      return "I couldn't get that metals price just now.";
     }
   }
 

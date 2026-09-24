@@ -38,3 +38,20 @@ export {
   parseWeatherIntent,
   type WeatherIntent,
 } from "./weather-intent.js";
+export {
+  extractHeadlineIndex,
+  looksLikeNewsTask,
+  parseNewsIntent,
+  resolveNewsArticleIndex,
+  type NewsIntent,
+} from "./news-intent.js";
+export {
+  looksLikeMarketsTask,
+  parseMarketsIntent,
+  type MarketsIntent,
+} from "./markets-intent.js";
+export {
+  looksLikeSituationalTask,
+  parseSituationalIntent,
+  type SituationalIntent,
+} from "./situational-intent.js";

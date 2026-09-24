@@ -79,6 +79,49 @@ export interface WeatherForecastPort {
   getForecast(opts?: { location?: string; days?: number }): Promise<string>;
 }
 
+/** Conversational crypto / metals quotes (same feeds as the daily briefing). */
+export interface MarketsPort {
+  getCryptoPrice(opts?: { cryptoId?: string }): Promise<string>;
+  getMetalsPrice(opts?: { metalSymbol?: "gold" | "silver" }): Promise<string>;
+}
+
+/** Conversational news headlines + article follow-ups (same RSS as briefing). */
+export interface NewsHeadlineRef {
+  title: string;
+  url?: string;
+  source: string;
+}
+
+export interface NewsPort {
+  getHeadlines(): Promise<{ speech: string; headlines: NewsHeadlineRef[] }>;
+  summarizeArticle(opts: {
+    index?: number;
+    match?: string;
+    url?: string;
+    title?: string;
+    recent?: NewsHeadlineRef[];
+  }): Promise<string>;
+}
+
+/** USGS earthquakes, NWS alerts, space weather, EONET, FX, and Hacker News. */
+export interface SituationalPort {
+  earthquakes(query?: {
+    scope?: "significant" | "notable";
+    recent?: boolean;
+    place?: string;
+  }): Promise<string>;
+  weatherAlerts(query?: { location?: string }): Promise<string>;
+  spaceWeather(): Promise<string>;
+  naturalEvents(query?: { kind?: "wildfires" | "volcanoes" | "both" }): Promise<string>;
+  exchangeRate(query: {
+    amount?: number;
+    from: string;
+    to: string;
+    change?: boolean;
+  }): Promise<string>;
+  hackerNews(query?: { topic?: "general" | "ai" }): Promise<string>;
+}
+
 /** Local Elgato Key Light control for conversational asks. */
 export interface StudioLightCommand {
   action: "on" | "off" | "brighter" | "dimmer" | "warmer" | "cooler" | "set" | "status";
