@@ -110,6 +110,15 @@ export interface CurrentTimePort {
   getCurrentTime(opts?: { place?: string; kind?: "time" | "date" }): Promise<string>;
 }
 
+/** Durable Talk conversation history (drawer / resume across voice + chat). */
+export interface ConversationHistoryPort {
+  append(opts: {
+    role: "user" | "assistant";
+    text: string;
+    source: "voice" | "text";
+  }): Promise<void>;
+}
+
 /** USGS earthquakes, NWS alerts, space weather, EONET, FX, and Hacker News. */
 export interface SituationalPort {
   earthquakes(query?: {
@@ -140,6 +149,14 @@ export interface StudioLightCommand {
 export interface StudioLightsPort {
   control(command: StudioLightCommand): Promise<string>;
   inventorySpeech?(): Promise<string>;
+}
+
+/** Local Alexandria / OIP archive. Present only when ALFRED_ARCHIVE_URL is set. */
+export interface ArchivePort {
+  search(query: string): Promise<string>;
+  openRecord(did: string): Promise<string>;
+  neighbors(did: string): Promise<string>;
+  ask(question: string): Promise<string>;
 }
 
 export interface ProviderRegistryPort {

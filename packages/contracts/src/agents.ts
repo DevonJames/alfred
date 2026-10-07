@@ -73,7 +73,7 @@ export interface AgentHarness {
 export const DELEGATE_TASK_TOOL = {
   name: "delegate_task",
   description:
-    "Delegate an external action such as ingesting X.com links from Apple Notes or fetching a single X URL into memory.",
+    "Delegate an external action. Use category calendar to read or change calendars on this Mac (the Context & Action Gateway access list). For calendar, put the user's own wording in taskDescription, including the clock time (for example 8:00-8:45 AM) and the calendar name. If they answer a question about the time or calendar, call this again with that answer and the original request. Use other categories for ingest, coding, email, or browser work. Do not use calendar for Alfred's own reminders.",
   parameters: {
     type: "object",
     properties: {
@@ -195,6 +195,57 @@ export const REMEMBER_MEMORY_TOOL = {
         description: "Free-text durable notes when a full Entity/Assertion does not fit",
       },
     },
+  },
+} as const;
+
+export const SEARCH_ARCHIVE_TOOL = {
+  name: "search_archive",
+  description:
+    "Search the local Alexandria archive of documents, people, places, and events. " +
+    "Use this for questions about the collections. Name the records you use. Never state a truth score.",
+  parameters: {
+    type: "object",
+    properties: {
+      query: { type: "string", description: "Names, dates, or a natural-language question." },
+    },
+    required: ["query"],
+  },
+} as const;
+
+export const OPEN_ARCHIVE_RECORD_TOOL = {
+  name: "open_archive_record",
+  description: "Read one Alexandria record by its DID and speak what it is.",
+  parameters: {
+    type: "object",
+    properties: {
+      did: { type: "string", description: "The did:oip record identifier." },
+    },
+    required: ["did"],
+  },
+} as const;
+
+export const ARCHIVE_NEIGHBORS_TOOL = {
+  name: "archive_neighbors",
+  description: "List the records connected to an Alexandria record. Name them. Do not merge identities that are only possible matches.",
+  parameters: {
+    type: "object",
+    properties: {
+      did: { type: "string", description: "The did:oip record to look around." },
+    },
+    required: ["did"],
+  },
+} as const;
+
+export const ASK_ARCHIVE_TOOL = {
+  name: "ask_archive",
+  description:
+    "Answer a research question from the Alexandria archive. The reply names source records and keeps AI analysis separate. Never give a truth percentage.",
+  parameters: {
+    type: "object",
+    properties: {
+      question: { type: "string" },
+    },
+    required: ["question"],
   },
 } as const;
 

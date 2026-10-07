@@ -240,15 +240,22 @@ export async function fetchArticleText(url: string): Promise<string | null> {
   }
 }
 
-/** Short extractive summary when no LLM is available. */
-export function extractiveArticleSummary(text: string, title?: string): string {
+/** Extractive spoken summary when no LLM is available. */
+export function extractiveArticleSummary(
+  text: string,
+  title?: string,
+  opts?: { maxSentences?: number; maxChars?: number },
+): string {
+  const maxSentences = opts?.maxSentences ?? 3;
+  const maxChars = opts?.maxChars ?? 520;
   const cleaned = text.replace(/\s+/g, " ").trim();
   const sentences = cleaned
     .split(/(?<=[.!?])\s+/)
     .map((s) => s.trim())
     .filter((s) => s.length >= 40);
-  const picked = (sentences.length ? sentences : [cleaned]).slice(0, 3).join(" ");
-  const body = picked.length > 520 ? `${picked.slice(0, 500).trim()}…` : picked;
+  const picked = (sentences.length ? sentences : [cleaned]).slice(0, maxSentences).join(" ");
+  const body =
+    picked.length > maxChars ? `${picked.slice(0, Math.max(40, maxChars - 1)).trim()}…` : picked;
   const lead = title?.trim() ? `About "${cleanHeadlineTitle(title)}": ` : "";
   return `${lead}${body}`;
 }

@@ -253,6 +253,32 @@
       </section>
 
       <section>
+        <h2>Ingested notes</h2>
+        <p class="hint">
+          When Notes ingest saves X / YouTube links into memory, Alfred can mention them in the
+          briefing (including failed loads). Turn off to skip that section.
+        </p>
+        <div class="row">
+          <label class="opt">
+            <input type="checkbox" id="include-ingested-notes" />
+            Include ingested notes in briefing
+          </label>
+        </div>
+      </section>
+
+      <section>
+        <h2>Agenda</h2>
+        <p class="hint">
+          Events on today's date from the calendars you check are included in the daily briefing.
+          Only calendars with Read or Write access are listed.
+        </p>
+        <p class="hint hidden" id="agenda-empty">
+          No calendars are open yet. Set Read or Write under Context &amp; Action Gateway.
+        </p>
+        <div class="check-grid" id="agenda-calendars"></div>
+      </section>
+
+      <section>
         <h2>Soft offer</h2>
         <p class="hint">
           Alfred asks “Would you like the daily briefing now?” once per briefing day (cascade,
@@ -366,8 +392,15 @@
           prefs.metalSymbol = id;
           paint();
         });
+        document.getElementById("include-ingested-notes").checked = Boolean(
+          prefs.includeIngestedNotes !== false,
+        );
 
         renderChecks("news-sources", catalog.newsSources, prefs.newsSources || []);
+        const listed = Array.isArray(catalog.calendars);
+        const calendars = listed ? catalog.calendars : [];
+        renderChecks("agenda-calendars", calendars, prefs.agendaCalendarIds || []);
+        document.getElementById("agenda-empty").classList.toggle("hidden", !listed || calendars.length > 0);
         syncDependent();
       }
 
@@ -381,7 +414,9 @@
           cryptoId: document.getElementById("crypto-id").value,
           includeMetals: document.getElementById("include-metals").checked,
           metalSymbol: prefs.metalSymbol,
+          includeIngestedNotes: document.getElementById("include-ingested-notes").checked,
           newsSources: news,
+          agendaCalendarIds: selectedIds("agenda-calendars"),
         };
       }
 

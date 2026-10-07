@@ -63,4 +63,11 @@ describe("acceptLiveTranscript", () => {
       acceptLiveTranscript("Hold on, tell me about the moon instead.", story, "Tell me about Mars", true),
     ).toMatch(/moon/i);
   });
+
+  it("drops punctuation-only re-finals of the same user ask", () => {
+    const ask = "Hey, Alfred. Can you give me the daily briefing, please?";
+    const again = "Hey, Alfred, can you give me the daily briefing, please?";
+    expect(acceptLiveTranscript(again, "", ask, true)).toBeNull();
+    expect(acceptLiveTranscript(again, "", ask, false)).toBeNull();
+  });
 });

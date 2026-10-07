@@ -12,6 +12,7 @@
  *
  * Markdown folders (scheduled scan, separate from the file picker):
  * GET/POST /memory/ingest/folders · POST .../pick · POST .../scan · POST .../remove
+ * GET/POST /memory/ingest/notes-sources · POST .../scan · POST .../remove
  * POST /memory/ingest/discover-links — SSE: propose missing high-level graph links
  */
 
@@ -38,6 +39,14 @@ import {
 } from "../lib/notes/folders.js";
 import type { IngestFileResult, IngestUploadMode } from "../lib/memory-ingest.js";
 import { ingestPhotoFiles, ingestUploadedFile } from "../lib/memory-ingest.js";
+import type { NotesIngestSourceList } from "../lib/notes-ingest-sources.js";
+import {
+  addNotesIngestSource,
+  listNotesIngestSources,
+  notesIngestSchedule,
+  removeNotesIngestSource,
+  scanNotesIngestSource,
+} from "../lib/notes-ingest-sources.js";
 import { kindFromFilename } from "../lib/text-extract.js";
 import { memoryGraphRouter } from "./memory-graph.js";
 import { memoryGraphBetaRouter } from "./memory-graph-beta.js";
@@ -54,15 +63,62 @@ function asUploadFiles(value: unknown): File[] {
 async function readFolderActionId(c: Context): Promise<string> {
   const ct = c.req.header("content-type") ?? "";
   if (ct.includes("application/json")) {
-    const body = (await c.req.json().catch(() => ({}))) as { id?: unknown };
-    return typeof body.id === "string" ? body.id.trim() : "";
+    const body = (await c.req.json().catch(() => ({}))) as { id?: unknown; note?: unknown };
+    if (typeof body.id === "string" && body.id.trim()) return body.id.trim();
+    return typeof body.note === "string" ? body.note.trim() : "";
   }
   const body = await c.req.parseBody();
-  return typeof body.id === "string" ? body.id.trim() : "";
+  if (typeof body.id === "string" && body.id.trim()) return body.id.trim();
+  return typeof body.note === "string" ? body.note.trim() : "";
 }
 
 memoryRouter.route("/graph", memoryGraphRouter);
 memoryRouter.route("/graph-beta", memoryGraphBetaRouter);
+
+memoryRouter.get("/ingest/notes-sources", async (c) => {
+  return c.json(await listNotesIngestSources());
+});
+
+memoryRouter.post("/ingest/notes-sources/scan", async (c) => {
+  try {
+    const id = await readFolderActionId(c);
+    if (!id) return c.json({ error: "missing_id", message: "Note id is required" }, 400);
+    const result = await scanNotesIngestSource(id);
+    return c.json({ ok: true, ...result });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return c.json({ error: "scan_failed", message }, 400);
+  }
+});
+
+memoryRouter.post("/ingest/notes-sources/remove", async (c) => {
+  try {
+    const id = await readFolderActionId(c);
+    if (!id) return c.json({ error: "missing_id", message: "Note id is required" }, 400);
+    const result = await removeNotesIngestSource(id);
+    return c.json({ ok: true, ...result });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return c.json({ error: "remove_failed", message }, 400);
+  }
+});
+
+memoryRouter.post("/ingest/notes-sources", async (c) => {
+  try {
+    const ct = c.req.header("content-type") ?? "";
+    const body = ct.includes("application/json")
+      ? ((await c.req.json().catch(() => ({}))) as Record<string, unknown>)
+      : ((await c.req.parseBody()) as Record<string, unknown>);
+    const folder = typeof body.folder === "string" ? body.folder : "";
+    const note = typeof body.note === "string" ? body.note : "";
+    const archiveNote = typeof body.archiveNote === "string" ? body.archiveNote : "";
+    const result = await addNotesIngestSource({ folder, note, archiveNote });
+    return c.json({ ok: true, ...result });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return c.json({ error: "add_failed", message }, 400);
+  }
+});
 
 memoryRouter.get("/ingest/folders", async (c) => {
   return c.json(await listWatchedDocsFolders());
@@ -234,7 +290,13 @@ memoryRouter.get("/ingest", async (c) => {
       message: "Idle",
     },
   }));
-  return c.html(ingestPageHtml(providerId, folders, voiceFolders.folders, voiceFolders.queue.message));
+  const notesSources = await listNotesIngestSources().catch(() => ({
+    schedule: notesIngestSchedule(),
+    sources: [],
+  }));
+  return c.html(
+    ingestPageHtml(providerId, folders, voiceFolders.folders, voiceFolders.queue.message, notesSources),
+  );
 });
 
 memoryRouter.post("/ingest", async (c) => {
@@ -424,6 +486,7 @@ function ingestPageHtml(
   folderList: DocsFolderList,
   voiceFolders: AudioNoteFolderRow[] = [],
   voiceQueueMessage = "Idle",
+  notesSources: NotesIngestSourceList = { schedule: notesIngestSchedule(), sources: [] },
 ): string {
   return `<!doctype html>
 <html lang="en">
@@ -618,31 +681,36 @@ function ingestPageHtml(
     button.secondary {
       border-color: var(--line);
     }
-    #folder-status {
+    #folder-status, #notes-source-status {
       min-height: 1.3em;
       margin: 0 0 0.85rem;
       font-size: 0.95rem;
       color: var(--ink);
     }
-    #folder-list li.is-busy {
+    #folder-list li.is-busy,
+    #notes-source-list li.is-busy {
       border-color: var(--accent);
     }
-    #folder-list li.is-busy [data-action="scan"] {
+    #folder-list li.is-busy [data-action="scan"],
+    #notes-source-list li.is-busy [data-action="scan"] {
       background: color-mix(in srgb, var(--accent) 22%, transparent);
     }
     button:disabled { opacity: 0.55; cursor: default; }
     .folder-note { margin-top: 0.45rem; font-size: 0.88rem; color: var(--ink); }
-    #folder-list {
+    #folder-list,
+    #notes-source-list {
       list-style: none;
       margin: 0 0 0.4rem;
       padding: 0;
     }
-    #folder-list li {
+    #folder-list li,
+    #notes-source-list li {
       border: 1px solid var(--line);
       padding: 0.75rem 0.8rem;
       margin: 0 0 0.55rem;
     }
-    #folder-list strong { color: var(--ink); }
+    #folder-list strong,
+    #notes-source-list strong { color: var(--ink); }
     .folder-path {
       display: block;
       margin: 0.2rem 0 0.35rem;
@@ -685,6 +753,23 @@ function ingestPageHtml(
       <p id="ingest-status"></p>
       <div id="ingest-result" hidden></div>
     </form>
+    <hr class="rule" />
+    <h2>Apple Notes inboxes</h2>
+    <p>Scan these Apple Notes for X and YouTube links ${escapeHtml(notesSources.schedule.label)}. After ingest, saved links move to the archive note. Close the login Chrome window before scanning.</p>
+    <form id="notes-source-form" class="folder-form">
+      <label for="notes-source-folder">Notes folder</label>
+      <input id="notes-source-folder" name="folder" type="text" placeholder="USPTO" autocomplete="off" />
+      <label for="notes-source-note">Note title</label>
+      <input id="notes-source-note" name="note" type="text" placeholder="uspto job prep" autocomplete="off" />
+      <label for="notes-source-archive">Archive note (optional)</label>
+      <input id="notes-source-archive" name="archiveNote" type="text" placeholder="uspto job prep Ingested" autocomplete="off" />
+      <div class="folder-actions">
+        <button type="submit" id="notes-source-watch">Watch this note</button>
+      </div>
+    </form>
+    <p id="notes-source-status"></p>
+    <p>Currently scanning</p>
+    <ul id="notes-source-list">${renderNotesSourceListItems(notesSources)}</ul>
     <hr class="rule" />
     <h2>Markdown folders</h2>
     <p>Watch a folder of <code>.md</code>, <code>.txt</code>, <code>.rtf</code>, and <code>.pdf</code> files. The label becomes a hub in the memory graph; every file and section ingested from the folder connects to it. Alfred also scans it ${escapeHtml(folderList.schedule.label)} and re-ingests files that changed.</p>
@@ -1033,6 +1118,124 @@ function ingestPageHtml(
       }
     });
     refreshFolderList().catch(() => {});
+
+    const notesForm = document.getElementById("notes-source-form");
+    const notesFolder = document.getElementById("notes-source-folder");
+    const notesNote = document.getElementById("notes-source-note");
+    const notesArchive = document.getElementById("notes-source-archive");
+    const notesWatch = document.getElementById("notes-source-watch");
+    const notesStatus = document.getElementById("notes-source-status");
+    const notesList = document.getElementById("notes-source-list");
+    function setNotesStatus(text, isError) {
+      notesStatus.textContent = text || "";
+      notesStatus.style.color = isError ? "#d7a07a" : "var(--ink)";
+    }
+    function notesRow(id) {
+      return notesList.querySelector('li[data-id="' + CSS.escape(id) + '"]');
+    }
+    function setNotesRowBusy(id, busy, note) {
+      const li = notesRow(id);
+      if (!li) return;
+      li.classList.toggle("is-busy", !!busy);
+      const scanBtn = li.querySelector("[data-action=scan]");
+      const removeBtn = li.querySelector("[data-action=remove]");
+      if (scanBtn) {
+        scanBtn.disabled = !!busy;
+        scanBtn.textContent = busy ? "Scanning…" : "Scan now";
+      }
+      if (removeBtn) removeBtn.disabled = !!busy;
+      let noteEl = li.querySelector(".folder-note");
+      if (note) {
+        if (!noteEl) {
+          noteEl = document.createElement("div");
+          noteEl.className = "folder-note";
+          li.appendChild(noteEl);
+        }
+        noteEl.textContent = note;
+      } else if (noteEl) {
+        noteEl.remove();
+      }
+    }
+    function renderNotesSources(sources) {
+      if (!sources.length) {
+        notesList.innerHTML = '<li class="empty">No Apple Notes are being scanned yet.</li>';
+        return;
+      }
+      notesList.innerHTML = sources.map((s) => {
+        return '<li data-id="' + esc(s.id) + '"><strong>' + esc(s.note) + '</strong>' +
+          '<code class="folder-path">' + esc(s.folder) + ' · archive: ' + esc(s.archiveNote) + '</code>' +
+          '<div class="folder-meta">' + s.trackedLinks + ' link' + (s.trackedLinks === 1 ? "" : "s") +
+          ' · last scan ' + formatWhen(s.lastIngestedAt) + '</div>' +
+          '<div class="folder-row-actions">' +
+          '<button type="button" data-action="scan" data-id="' + esc(s.id) + '">Scan now</button>' +
+          '<button type="button" class="secondary" data-action="remove" data-id="' + esc(s.id) + '">Stop scanning</button>' +
+          '</div></li>';
+      }).join("");
+    }
+    async function refreshNotesSources() {
+      const data = await readJson(await fetch(api("/memory/ingest/notes-sources"), {
+        headers: { accept: "application/json" },
+      }));
+      renderNotesSources(data.sources || []);
+      return data;
+    }
+    notesForm.addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      const folder = notesFolder.value.trim();
+      const note = notesNote.value.trim();
+      const archiveNote = notesArchive.value.trim();
+      if (!folder) { setNotesStatus("Notes folder is required.", true); return; }
+      if (!note) { setNotesStatus("Note title is required.", true); return; }
+      notesWatch.disabled = true;
+      try {
+        setNotesStatus("Registering note…");
+        const data = await readJson(await fetch(api("/memory/ingest/notes-sources"), {
+          method: "POST",
+          headers: { accept: "application/json", "content-type": "application/json" },
+          body: JSON.stringify({ folder, note, archiveNote }),
+        }));
+        renderNotesSources(data.sources || []);
+        notesFolder.value = "";
+        notesNote.value = "";
+        notesArchive.value = "";
+        setNotesStatus("Now scanning that Apple Note.");
+      } catch (err) {
+        try { await refreshNotesSources(); } catch { /* ignore */ }
+        setNotesStatus(err.message || String(err), true);
+      } finally {
+        notesWatch.disabled = false;
+      }
+    });
+    notesList.addEventListener("click", async (ev) => {
+      const el = ev.target instanceof Element ? ev.target : ev.target.parentElement;
+      const btn = el && el.closest("button[data-action]");
+      if (!btn || btn.disabled) return;
+      const id = btn.getAttribute("data-id");
+      const action = btn.getAttribute("data-action");
+      try {
+        if (action === "remove") {
+          setNotesStatus("Removing…");
+          setNotesRowBusy(id, true, "Removing…");
+          await paint();
+          const data = await postFolderAction("/memory/ingest/notes-sources/remove", id);
+          renderNotesSources(data.sources || []);
+          setNotesStatus("Stopped scanning that note.");
+        } else if (action === "scan") {
+          setNotesStatus("Scanning… close the login Chrome window if it is still open.");
+          setNotesRowBusy(id, true, "Scanning…");
+          await paint();
+          const data = await postFolderAction("/memory/ingest/notes-sources/scan", id);
+          renderNotesSources(data.sources || []);
+          const speech = data.run && data.run.speech ? data.run.speech : "Scan finished.";
+          setNotesStatus(speech);
+          setNotesRowBusy(id, false, speech);
+        }
+      } catch (err) {
+        setNotesRowBusy(id, false);
+        setNotesStatus(err.message || String(err), true);
+      }
+    });
+    refreshNotesSources().catch(() => {});
 
     const voiceForm = document.getElementById("voice-folder-form");
     const voicePath = document.getElementById("voice-folder-path");
@@ -1437,6 +1640,27 @@ function successPageHtml(result: IngestFileResult): string {
   ${EMBED_BRIDGE}
 </body>
 </html>`;
+}
+
+function renderNotesSourceListItems(list: NotesIngestSourceList): string {
+  if (!list.sources.length) {
+    return `<li class="empty">No Apple Notes are being scanned yet.</li>`;
+  }
+  return list.sources
+    .map((s) => {
+      const when = s.lastIngestedAt
+        ? escapeHtml(new Date(s.lastIngestedAt).toLocaleString())
+        : "not scanned yet";
+      const links = `${s.trackedLinks} link${s.trackedLinks === 1 ? "" : "s"}`;
+      return `<li data-id="${escapeHtml(s.id)}"><strong>${escapeHtml(s.note)}</strong>
+        <code class="folder-path">${escapeHtml(s.folder)} · archive: ${escapeHtml(s.archiveNote)}</code>
+        <div class="folder-meta">${links} · last scan ${when}</div>
+        <div class="folder-row-actions">
+          <button type="button" data-action="scan" data-id="${escapeHtml(s.id)}">Scan now</button>
+          <button type="button" class="secondary" data-action="remove" data-id="${escapeHtml(s.id)}">Stop scanning</button>
+        </div></li>`;
+    })
+    .join("");
 }
 
 function renderVoiceFolderListItems(folders: AudioNoteFolderRow[]): string {

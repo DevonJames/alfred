@@ -8,11 +8,15 @@ import {
   createCodexStub,
   createDocsIngestHarness,
   createHermesStub,
+  calendarPolicyPath,
+  createCalendarGatewayHarness,
   createOpenClawStub,
+  loadBriefingAgendaEvents,
   createXIngestHarness,
 } from "@alfred/agents";
 import {
   createBriefingController,
+  loadBriefingPrefs,
   lookupCurrentTime,
   lookupEarthquakes,
   lookupExchangeRate,
@@ -32,9 +36,11 @@ import {
 import { createPlaywrightCaptureAdapter } from "@alfred/browser";
 import type { UserConfiguration } from "@alfred/contracts";
 import {
+  createHttpArchivePort,
   FakeClock,
   SecretResolver,
   SystemClock,
+  type ArchivePort,
   type Clock,
   type DueReminderSummary,
   type ReminderPort,
@@ -54,6 +60,37 @@ import {
 } from "@alfred/memory";
 import { createInMemoryPersistence } from "@alfred/persistence";
 import { createOipReminderPort } from "./reminder-port.js";
+
+const HYPATIA_INSTRUCTIONS =
+  "You are HYPATIA, the librarian of a local Alexandria archive. Follow the persona below. " +
+  "For documents, people, places, events, and collections, call search_archive or ask_archive. " +
+  "Name the records you use. Source documents and AI analyses are different kinds of records. " +
+  "Never state a truth score or percentage. Keep spoken answers to a few sentences.";
+
+const HYPATIA_SOUL =
+  "You sit beside the reader. You are concise, precise, and unwilling to flatten evidence into a score. " +
+  "If the archive does not contain something, say so. Possible name matches stay possible; do not merge them.";
+
+const HYPATIA_IDENTITY =
+  "HYPATIA — HYPermedia Agent for Transparent Information Access. " +
+  "You speak for the local Open Index, not for Alfred's personal assistant duties, while this archive is connected.";
+
+async function agendaBriefingEvents(now: Date) {
+  const prefs = await loadBriefingPrefs();
+  if (!prefs.agendaCalendarIds.length) return { enabled: false, events: [] };
+  try {
+    const events = await loadBriefingAgendaEvents({
+      policyPath: calendarPolicyPath(),
+      calendarIds: prefs.agendaCalendarIds,
+      now,
+      timeZone: process.env.BRIEFING_TIMEZONE?.trim() || Intl.DateTimeFormat().resolvedOptions().timeZone,
+    });
+    return { enabled: true, events };
+  } catch (err) {
+    console.warn("[voice] agenda briefing", err instanceof Error ? err.message : err);
+    return { enabled: false, events: [] };
+  }
+}
 
 export interface AlfredBrain {
   clock: Clock;
@@ -130,6 +167,7 @@ export interface AlfredBrain {
     hackerNews(query?: { topic?: "general" | "ai" }): Promise<string>;
   };
   lights: ElgatoLightsController;
+  archive?: ArchivePort;
   listDueReminders(): Promise<DueReminderSummary[]>;
 }
 
@@ -171,9 +209,10 @@ export async function createAlfredBrain(opts?: {
       },
       { category: "browser", orderedHarnessIds: ["harness.x-ingest", "harness.hermes"] },
       { category: "computer_use", orderedHarnessIds: ["harness.x-ingest", "harness.claude"] },
+      { category: "calendar", orderedHarnessIds: ["harness.openclaw-local"] },
     ],
     systemInstructions:
-      "You are ALFRED. Follow SOUL.md, IDENTITY.md, and USER.md below. Prefer delegate_task for external actions. Keep spoken answers concise.",
+      "You are ALFRED. Follow SOUL.md, IDENTITY.md, and USER.md below. Prefer delegate_task for external actions. For calendars on this Mac, use delegate_task with category calendar and the user's own wording, including the clock time and calendar name. If they answer a calendar question, call delegate_task again instead of repeating it. Keep spoken answers concise.",
   };
 
   const memory = new MemoryController(config.profile.id, persistence.memorySettings);
@@ -181,7 +220,20 @@ export async function createAlfredBrain(opts?: {
   memory.register(oipMemory);
   await memory.initialize(memoryProviderId);
 
-  const persona = await ensureAndLoadPersona(profileId);
+  const personaLoaded = await ensureAndLoadPersona(profileId);
+  const archiveUrl = process.env.ALFRED_ARCHIVE_URL?.trim();
+  const archive = archiveUrl ? createHttpArchivePort(archiveUrl) : undefined;
+  const persona = archive
+    ? {
+        dir: personaLoaded.dir,
+        soul: HYPATIA_SOUL,
+        identity: HYPATIA_IDENTITY,
+        user: "The user is researching documents in a local Alexandria archive.",
+      }
+    : personaLoaded;
+  if (archive) {
+    config.systemInstructions = HYPATIA_INSTRUCTIONS;
+  }
 
   const agents = new AgentRouter();
   agents.register(createOpenClawStub());
@@ -195,11 +247,13 @@ export async function createAlfredBrain(opts?: {
       capture: composeNotesCaptureAdapter(createPlaywrightCaptureAdapter()),
     }),
   );
+  agents.register(createCalendarGatewayHarness({ profileId }));
   agents.setRoutingRules(config.agentRouting);
 
   const briefing = createBriefingController({
     memory: oipMemory,
     llm: opts?.greetingLlm,
+    agendaEvents: agendaBriefingEvents,
   });
   const reminders = createOipReminderPort(oipMemory, briefing);
   const structuredMemory = {
@@ -304,6 +358,7 @@ export async function createAlfredBrain(opts?: {
     currentTime,
     situational,
     lights,
+    archive,
     async listDueReminders() {
       try {
         return await reminders.listDue();

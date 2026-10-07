@@ -20,12 +20,14 @@ import { config as loadEnv } from "dotenv";
 import { resolve } from "node:path";
 import { LiveKitRoomSession } from "@alfred/livekit";
 import { createCascadedVoiceRuntime } from "./wiring.js";
+import { setConversationHistoryStack } from "./conversation-history.js";
 
 // Load repo-root .env when started from apps/voice-agent.
 loadEnv({ path: resolve(process.cwd(), "../../.env") });
 loadEnv();
 
 async function main(): Promise<void> {
+  setConversationHistoryStack("cascade");
   const required = [
     "DEEPGRAM_API_KEY",
     "OPENAI_API_KEY",

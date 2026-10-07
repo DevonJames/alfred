@@ -6,6 +6,7 @@ import {
   getBriefingDayKey,
 } from "./day.js";
 import { BriefingCache } from "./cache.js";
+import { formatBriefingForDisplay } from "./display.js";
 import { formatBriefingAsMarkdown, formatBriefingForSpeech } from "./format.js";
 import { buildGreeting, type GreetingLlm } from "./greeting.js";
 import { fetchLaunches, formatLaunchesSpeech } from "./launches.js";
@@ -21,11 +22,14 @@ import {
 import { fetchNewsHeadlines, formatNewsSpeech, normalizeNewsHeadlines } from "./news.js";
 import {
   formatRemindersSpeech,
+  formatTaskSpeech,
   loadDueReminders,
   markRemindersSurfaced,
+  type TaskReminder,
 } from "./reminders.js";
 import type { BriefingData, BriefingPayload } from "./types.js";
 import { fetchWeather, formatWeatherSpeech } from "./weather.js";
+import { formatAgendaSpeech, type BriefingAgendaSlice } from "./agenda.js";
 import { toXIngestBriefing } from "./x-ingest.js";
 
 export interface GenerateBriefingOptions {
@@ -35,8 +39,12 @@ export interface GenerateBriefingOptions {
   refresh?: boolean;
   llm?: GreetingLlm | null;
   markSurfaced?: boolean;
+  /** When set, the brief uses this list instead of memory reminders. */
+  taskReminders?: () => Promise<TaskReminder[]>;
   /** Opt-in: include rocket launches only when the user asked for them. Default false. */
   includeLaunches?: boolean;
+  /** Today's events from calendars selected under Settings → Briefing → Agenda. */
+  agendaEvents?: (now: Date) => Promise<BriefingAgendaSlice>;
 }
 
 export async function generateBriefing(
@@ -52,6 +60,15 @@ export async function generateBriefing(
     const hit = await cache.get(dayKey, includeLaunches);
     if (hit) {
       hit.briefing.news = normalizeNewsHeadlines(hit.briefing.news);
+      if (!config.includeIngestedNotes) {
+        hit.briefing.xIngest = null;
+        hit.briefing.xIngestText = null;
+      }
+      const agenda = await readAgenda(opts.agendaEvents, now);
+      applyAgenda(hit.briefing, agenda, config.timezone);
+      hit.speech = formatBriefingForSpeech(hit.briefing, { now, timezone: config.timezone });
+      hit.markdown = formatBriefingAsMarkdown(hit.briefing, { timezone: config.timezone });
+      hit.display = formatBriefingForDisplay(hit.briefing, { now, timezone: config.timezone });
       return hit;
     }
   }
@@ -88,15 +105,18 @@ export async function generateBriefing(
     llm: opts.llm,
   });
 
-  const [launches, crypto, headlines, reminders] = await Promise.all([
+  const [launches, crypto, headlines, memoryReminders, taskReminders] = await Promise.all([
     includeLaunches ? fetchLaunches(config.launchLocationIds) : Promise.resolve([]),
     config.includeCrypto ? fetchCrypto(config.cryptoId) : Promise.resolve(null),
     fetchNewsHeadlines(config.newsSources),
-    loadDueReminders(opts.memory, {
-      date: dayKey,
-      timezone: config.timezone,
-      windowEnd,
-    }),
+    opts.taskReminders
+      ? Promise.resolve([])
+      : loadDueReminders(opts.memory, {
+          date: dayKey,
+          timezone: config.timezone,
+          windowEnd,
+        }),
+    opts.taskReminders ? opts.taskReminders().catch(() => []) : Promise.resolve(undefined),
   ]);
 
   const marketLines: string[] = [];
@@ -125,8 +145,10 @@ export async function generateBriefing(
       metalSymbol: config.includeMetals ? config.metalSymbol : null,
     }) || null;
 
-  const xDigest = await loadXIngestDigest(config.profileId, dayKey, config.cacheDir);
-  const xIngest = toXIngestBriefing(xDigest);
+  const xIngest = config.includeIngestedNotes
+    ? toXIngestBriefing(await loadXIngestDigest(config.profileId, dayKey, config.cacheDir))
+    : null;
+  const agenda = await readAgenda(opts.agendaEvents, now);
 
   const data: BriefingData = {
     greeting,
@@ -150,23 +172,56 @@ export async function generateBriefing(
     newsText: formatNewsSpeech(headlines, { inviteFollowUp: true }) || null,
     xIngest,
     xIngestText: xIngest?.speech ?? null,
-    reminders,
-    remindersText: formatRemindersSpeech(reminders) || null,
+    reminders: memoryReminders,
+    taskReminders,
+    remindersText:
+      (taskReminders ? formatTaskSpeech(taskReminders) : formatRemindersSpeech(memoryReminders)) ||
+      null,
     generated: now.toISOString(),
   };
+  applyAgenda(data, agenda, config.timezone);
 
   const payload: BriefingPayload = {
     briefing: data,
     speech: formatBriefingForSpeech(data, { now, timezone: config.timezone }),
-    markdown: formatBriefingAsMarkdown(data),
+    markdown: formatBriefingAsMarkdown(data, { timezone: config.timezone }),
+    display: formatBriefingForDisplay(data, { now, timezone: config.timezone }),
     generated: data.generated,
   };
 
   await cache.set(dayKey, payload, includeLaunches);
 
-  if (opts.markSurfaced && reminders.length) {
-    await markRemindersSurfaced(opts.memory, reminders);
+  if (opts.markSurfaced && !opts.taskReminders && memoryReminders.length) {
+    await markRemindersSurfaced(opts.memory, memoryReminders);
   }
 
   return payload;
+}
+
+async function readAgenda(
+  load: GenerateBriefingOptions["agendaEvents"],
+  now: Date,
+): Promise<BriefingAgendaSlice | null> {
+  if (!load) return null;
+  try {
+    return await load(now);
+  } catch (err) {
+    console.warn("[briefing] agenda", err instanceof Error ? err.message : err);
+    return { enabled: false, events: [] };
+  }
+}
+
+function applyAgenda(
+  data: BriefingData,
+  agenda: BriefingAgendaSlice | null,
+  timezone: string,
+): void {
+  if (!agenda) return;
+  if (!agenda.enabled) {
+    delete data.agenda;
+    data.agendaText = null;
+    return;
+  }
+  data.agenda = agenda.events;
+  data.agendaText = formatAgendaSpeech(agenda.events, timezone) ?? "Nothing on your agenda today.";
 }

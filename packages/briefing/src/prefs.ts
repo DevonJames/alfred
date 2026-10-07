@@ -16,7 +16,11 @@ export interface BriefingPrefs {
   cryptoId: string;
   includeMetals: boolean;
   metalSymbol: "gold" | "silver";
+  /** Include Notes ingest digest (saved X / YouTube links) in the briefing. */
+  includeIngestedNotes: boolean;
   newsSources: string[];
+  /** EventKit calendar ids whose events on today's date are read into the briefing. */
+  agendaCalendarIds: string[];
 }
 
 export const CRYPTO_OPTIONS: Array<{ id: string; label: string }> = [
@@ -45,7 +49,9 @@ export function defaultBriefingPrefs(): BriefingPrefs {
     cryptoId: "bitcoin",
     includeMetals: false,
     metalSymbol: "gold",
+    includeIngestedNotes: true,
     newsSources: ["AP News", "BBC News", "TechCrunch"],
+    agendaCalendarIds: [],
   };
 }
 
@@ -73,6 +79,10 @@ function normalizePrefs(raw: Partial<BriefingPrefs> | null | undefined): Briefin
     ? raw.newsSources.map(String).map((s) => s.trim()).filter(Boolean).slice(0, 10)
     : d.newsSources;
 
+  const agendaCalendarIds = Array.isArray(raw.agendaCalendarIds)
+    ? [...new Set(raw.agendaCalendarIds.map(String).map((id) => id.trim()).filter(Boolean))].slice(0, 40)
+    : d.agendaCalendarIds;
+
   const launchLocationIds =
     typeof raw.launchLocationIds === "string" && raw.launchLocationIds.trim()
       ? raw.launchLocationIds
@@ -94,7 +104,12 @@ function normalizePrefs(raw: Partial<BriefingPrefs> | null | undefined): Briefin
     cryptoId,
     includeMetals: raw.includeMetals !== undefined ? Boolean(raw.includeMetals) : d.includeMetals,
     metalSymbol,
+    includeIngestedNotes:
+      raw.includeIngestedNotes !== undefined
+        ? Boolean(raw.includeIngestedNotes)
+        : d.includeIngestedNotes,
     newsSources: newsSources.length ? newsSources : d.newsSources,
+    agendaCalendarIds,
   };
 }
 
@@ -133,7 +148,9 @@ export async function resolveBriefingConfig(
     cryptoId: prefs.cryptoId,
     includeMetals: prefs.includeMetals,
     metalSymbol: prefs.metalSymbol,
+    includeIngestedNotes: prefs.includeIngestedNotes,
     newsSources: prefs.newsSources,
+    agendaCalendarIds: prefs.agendaCalendarIds,
     ...overrides,
   });
 }

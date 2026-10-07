@@ -18,6 +18,7 @@
     "lint": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@alfred/calendar-gateway": "workspace:*",
     "@alfred/contracts": "workspace:*",
     "@alfred/core": "workspace:*",
     "@alfred/memory": "workspace:*"

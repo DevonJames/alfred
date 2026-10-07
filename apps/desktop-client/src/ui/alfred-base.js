@@ -10,7 +10,11 @@
 
   function alfredUrl(path) {
     const normalized = path.startsWith("/") ? path : `/${path}`;
-    return `${alfredBase()}${normalized}`;
+    const base = alfredBase();
+    // HTML served through /proxy/:id is rewritten to already include that
+    // prefix. Prefixing again sends /agenda/board to a path that 404s.
+    if (!base || normalized === base || normalized.startsWith(`${base}/`)) return normalized;
+    return `${base}${normalized}`;
   }
 
   /** Strip proxy prefix so local path checks (e.g. /voice) still work. */

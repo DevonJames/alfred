@@ -66,9 +66,15 @@ importers:
       '@alfred/browser':
         specifier: workspace:^
         version: link:../../packages/browser
+      '@alfred/calendar-gateway':
+        specifier: workspace:^
+        version: link:../../packages/calendar-gateway
       '@alfred/contracts':
         specifier: workspace:^
         version: link:../../packages/contracts
+      '@alfred/conversations':
+        specifier: workspace:^
+        version: link:../../packages/conversations
       '@alfred/core':
         specifier: workspace:^
         version: link:../../packages/core
@@ -93,6 +99,9 @@ importers:
       '@alfred/providers':
         specifier: workspace:^
         version: link:../../packages/providers
+      '@alfred/reminders-gateway':
+        specifier: workspace:^
+        version: link:../../packages/reminders-gateway
       '@elevenlabs/elevenlabs-js':
         specifier: ^2.68.0
         version: 2.68.0
@@ -702,6 +711,9 @@ importers:
       '@alfred/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@alfred/conversations':
+        specifier: workspace:*
+        version: link:../../packages/conversations
       '@alfred/core':
         specifier: workspace:*
         version: link:../../packages/core
@@ -785,6 +797,9 @@ importers:
 
   packages/agents:
     dependencies:
+      '@alfred/calendar-gateway':
+        specifier: workspace:*
+        version: link:../calendar-gateway
       '@alfred/contracts':
         specifier: workspace:*
         version: link:../contracts
@@ -828,6 +843,15 @@ importers:
         specifier: ^5.7.2
         version: 5.9.3
 
+  packages/calendar-gateway:
+    devDependencies:
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.8
+        version: 2.1.9(@types/node@22.20.1)(lightningcss@1.33.0)(terser@5.50.0)
+
   packages/contracts:
     dependencies:
       zod:
@@ -837,6 +861,15 @@ importers:
       typescript:
         specifier: ^5.7.2
         version: 5.9.3
+
+  packages/conversations:
+    devDependencies:
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.8
+        version: 2.1.9(@types/node@22.20.1)(lightningcss@1.33.0)(terser@5.50.0)
 
   packages/core:
     dependencies:
@@ -1000,6 +1033,15 @@ importers:
       typescript:
         specifier: ^5.7.2
         version: 5.9.3
+
+  packages/reminders-gateway:
+    devDependencies:
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.8
+        version: 2.1.9(@types/node@22.20.1)(lightningcss@1.33.0)(terser@5.50.0)
 
 packages:
 

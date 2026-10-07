@@ -1,6 +1,8 @@
 import { createBriefingController } from "@alfred/briefing";
 import { Hono } from "hono";
+import { agendaBriefingEvents } from "../lib/agenda-briefing.js";
 import { oipForProfile } from "../lib/oip-memory.js";
+import { loadTaskReminders } from "../lib/message-commitments.js";
 import { requireDevice } from "../middleware/require-device.js";
 
 export const briefingRouter = new Hono();
@@ -13,7 +15,11 @@ briefingRouter.get("/briefing", async (c) => {
   const includeLaunches =
     c.req.query("launches") === "1" || c.req.query("launches") === "true";
   const memory = oipForProfile();
-  const controller = createBriefingController({ memory });
+  const controller = createBriefingController({
+    memory,
+    taskReminders: loadTaskReminders,
+    agendaEvents: agendaBriefingEvents,
+  });
   try {
     const payload = await controller.generate({
       refresh,

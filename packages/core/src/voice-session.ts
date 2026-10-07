@@ -14,6 +14,10 @@ import {
   GET_WEATHER_ALERTS_TOOL,
   GET_WEATHER_FORECAST_TOOL,
   REMEMBER_MEMORY_TOOL,
+  SEARCH_ARCHIVE_TOOL,
+  OPEN_ARCHIVE_RECORD_TOOL,
+  ARCHIVE_NEIGHBORS_TOOL,
+  ASK_ARCHIVE_TOOL,
   SUMMARIZE_NEWS_ARTICLE_TOOL,
   UPDATE_REMINDER_TOOL,
   type AudioFrame,
@@ -44,8 +48,10 @@ import type {
   ProviderRegistryPort,
   ReminderPort,
   CurrentTimePort,
+  ConversationHistoryPort,
   SituationalPort,
   StudioLightsPort,
+  ArchivePort,
   StructuredMemoryPort,
   WeatherForecastPort,
 } from "./ports.js";
@@ -116,10 +122,14 @@ export interface VoiceSessionDeps {
   markets?: MarketsPort;
   /** Spoken local time and date. */
   currentTime?: CurrentTimePort;
+  /** Durable Talk history for the chat drawer (voice + typed). */
+  conversationHistory?: ConversationHistoryPort;
   /** Earthquakes, alerts, space weather, natural events, FX, Hacker News. */
   situational?: SituationalPort;
   /** Optional local Elgato Key Light control. */
   lights?: StudioLightsPort;
+  /** Optional Alexandria archive. Set only when ALFRED_ARCHIVE_URL is configured. */
+  archive?: ArchivePort;
   backchannelClassifier?: BackchannelClassifier;
   interruptionArbiter?: InterruptionArbiter;
   /** Injected streaming STT for tests; otherwise opened from registry. */
@@ -302,7 +312,7 @@ export class VoiceSessionController {
     await this.onSttEvent(event);
   }
 
-  /** Client typed send (or test helper): same session, no TTS. */
+  /** Client typed send (or test helper): same session, captions only — never TTS. */
   async handleUserText(text: string): Promise<void> {
     const trimmed = text.trim();
     if (!trimmed) return;
@@ -1109,6 +1119,13 @@ export class VoiceSessionController {
         metadata: {},
       })
       .catch((err) => console.error("[voice] commitTurn (user) failed:", err));
+    void this.deps.conversationHistory
+      ?.append({
+        role: "user",
+        text,
+        source: source === "text" ? "text" : "voice",
+      })
+      .catch((err) => console.error("[voice] conversationHistory (user) failed:", err));
     this.pushRecentTurn("user", text);
 
     // Briefing + memory in parallel — both were sequential on the hot path.
@@ -1745,6 +1762,9 @@ export class VoiceSessionController {
       );
     }
     if (this.deps.lights) caps.push("control_studio_lights");
+    if (this.deps.archive) {
+      caps.push("search_archive", "open_archive_record", "archive_neighbors", "ask_archive");
+    }
     return caps;
   }
 
@@ -1807,6 +1827,9 @@ export class VoiceSessionController {
       tools.push(GET_HACKER_NEWS_TOOL);
     }
     if (this.deps.lights) tools.push(CONTROL_STUDIO_LIGHTS_TOOL);
+    if (this.deps.archive) {
+      tools.push(SEARCH_ARCHIVE_TOOL, OPEN_ARCHIVE_RECORD_TOOL, ARCHIVE_NEIGHBORS_TOOL, ASK_ARCHIVE_TOOL);
+    }
     return tools;
   }
 
@@ -1907,6 +1930,13 @@ export class VoiceSessionController {
       const speech = await this.applyStudioLights(toolCall.toolArgs ?? {});
       if (opts?.streamCaptions) await this.publishCaptionReveal(speech, true);
       return speech;
+    }
+    if (this.deps.archive && toolCall?.toolName) {
+      const archiveSpeech = await this.applyArchiveTool(toolCall.toolName, toolCall.toolArgs ?? {});
+      if (archiveSpeech) {
+        if (opts?.streamCaptions) await this.publishCaptionReveal(archiveSpeech, true);
+        return archiveSpeech;
+      }
     }
     if (toolCall?.toolName && this.deps.situational) {
       const applied = await applyConversationalTool(
@@ -2048,6 +2078,27 @@ export class VoiceSessionController {
       console.error("[voice] control_studio_lights failed:", err);
       return "I couldn't reach the lights just now.";
     }
+  }
+
+  private async applyArchiveTool(
+    toolName: string,
+    args: Record<string, unknown>,
+  ): Promise<string | undefined> {
+    const archive = this.deps.archive;
+    if (!archive) return undefined;
+    try {
+      if (toolName === "search_archive") return archive.search(String(args.query ?? ""));
+      if (toolName === "open_archive_record") return archive.openRecord(String(args.did ?? ""));
+      if (toolName === "archive_neighbors") return archive.neighbors(String(args.did ?? ""));
+      if (toolName === "ask_archive") {
+        const speech = await archive.ask(String(args.question ?? ""));
+        return speech || undefined;
+      }
+    } catch (err) {
+      console.error("[voice] archive tool failed:", err);
+      return "I couldn't reach the Alexandria archive just now.";
+    }
+    return undefined;
   }
 
   private async applyWeatherForecast(args: Record<string, unknown>): Promise<string> {
@@ -2246,6 +2297,7 @@ export class VoiceSessionController {
     this.pendingUserText = undefined;
     if (pending) {
       const source = this.pendingUserSource ?? "stt.end_of_turn";
+      const pendingSpeak = this.pendingUserSpeak;
       this.pendingUserSpeak = undefined;
       this.pendingUserSource = undefined;
       this.bargeInListening = false;
@@ -2275,8 +2327,15 @@ export class VoiceSessionController {
     responseId: string,
     text: string,
     speak: boolean,
-    opts?: { alreadyStreaming?: boolean },
+    opts?: { alreadyStreaming?: boolean; userSource?: "voice" | "text" },
   ): Promise<void> {
+    void this.deps.conversationHistory
+      ?.append({
+        role: "assistant",
+        text,
+        source: opts?.userSource ?? (this.uiLayout === "chat" ? "text" : "voice"),
+      })
+      .catch((err) => console.error("[voice] conversationHistory (assistant) failed:", err));
     if (speak) {
       await this.speakWithMultiContext(responseId, text, "primary");
       return;

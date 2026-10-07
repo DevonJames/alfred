@@ -2,6 +2,8 @@ import type { OipLocalMemoryProvider } from "@alfred/memory";
 import { loadBriefingConfig, type BriefingConfig } from "./config.js";
 import { getBriefingDayKey } from "./day.js";
 import { generateBriefing, type GenerateBriefingOptions } from "./generate.js";
+import type { BriefingAgendaSlice } from "./agenda.js";
+import type { TaskReminder } from "./reminders.js";
 import type { GreetingLlm } from "./greeting.js";
 import { detectBriefingIntent, type BriefingIntentKind } from "./intent.js";
 import { resolveBriefingConfig, resolveIncludeLaunches } from "./prefs.js";
@@ -43,6 +45,8 @@ export class BriefingController {
     private readonly memory: OipLocalMemoryProvider | null,
     config?: Partial<BriefingConfig>,
     private readonly llm?: GreetingLlm | null,
+    private readonly taskReminders?: () => Promise<TaskReminder[]>,
+    private readonly agendaEvents?: (now: Date) => Promise<BriefingAgendaSlice>,
   ) {
     this.configOverrides = config;
     const base = loadBriefingConfig(config);
@@ -176,6 +180,8 @@ export class BriefingController {
       markSurfaced: opts.markSurfaced,
       now: opts.now,
       includeLaunches,
+      taskReminders: this.taskReminders,
+      agendaEvents: this.agendaEvents,
     });
   }
 
@@ -223,8 +229,16 @@ export function createBriefingController(opts: {
   memory?: OipLocalMemoryProvider | null;
   config?: Partial<BriefingConfig>;
   llm?: GreetingLlm | null;
+  taskReminders?: () => Promise<TaskReminder[]>;
+  agendaEvents?: (now: Date) => Promise<BriefingAgendaSlice>;
 }): BriefingController {
-  return new BriefingController(opts.memory ?? null, opts.config, opts.llm);
+  return new BriefingController(
+    opts.memory ?? null,
+    opts.config,
+    opts.llm,
+    opts.taskReminders,
+    opts.agendaEvents,
+  );
 }
 
 export type { GenerateBriefingOptions };

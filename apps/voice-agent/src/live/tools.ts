@@ -19,7 +19,7 @@ export function createAlfredLiveTools(
   brain: AlfredBrain,
   opts: { publishExpression?: ExpressionPublisher } = {},
 ) {
-  return {
+  const tools = {
     search_memory: llm.tool({
       description:
         "Search Alfred long-term memory for people, facts, notes, ingested docs, and past context. " +
@@ -520,7 +520,7 @@ export function createAlfredLiveTools(
 
     delegate_task: llm.tool({
       description:
-        "Delegate an external action such as ingesting X.com links from Apple Notes or fetching a single X URL into memory.",
+        "Delegate an external action. Use category calendar to read or change calendars on this Mac. Put the user's own wording in the task, including the clock time and calendar name, and call again when they answer a question about either. Other categories cover ingest, coding, email, and browser work.",
       parameters: z.object({
         category: z.enum([
           "email",
@@ -555,6 +555,36 @@ export function createAlfredLiveTools(
           console.error("[voice:live] delegate_task failed:", err);
           return "Delegation failed.";
         }
+      },
+    }),
+  };
+  if (!brain.archive) return tools;
+  const archive = brain.archive;
+  return {
+    ...tools,
+    search_archive: llm.tool({
+      description:
+        "Search the local Alexandria archive. Name the records you use. Never state a truth score.",
+      parameters: z.object({ query: z.string() }),
+      execute: async ({ query }) => archive.search(query),
+    }),
+    open_archive_record: llm.tool({
+      description: "Open one Alexandria record by DID.",
+      parameters: z.object({ did: z.string() }),
+      execute: async ({ did }) => archive.openRecord(did),
+    }),
+    archive_neighbors: llm.tool({
+      description: "List records connected to an Alexandria record.",
+      parameters: z.object({ did: z.string() }),
+      execute: async ({ did }) => archive.neighbors(did),
+    }),
+    ask_archive: llm.tool({
+      description:
+        "Answer a research question from the Alexandria archive. Name sources. Never give a truth percentage.",
+      parameters: z.object({ question: z.string() }),
+      execute: async ({ question }) => {
+        const speech = await archive.ask(question);
+        return speech || "Nothing in the archive matched that.";
       },
     }),
   };

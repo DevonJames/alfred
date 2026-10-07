@@ -455,6 +455,190 @@ html.embedded .bottom {
   color: rgba(111, 143, 163, 0.45);
 }
 
+/* Daily Brief: structured data blocks instead of spoken paragraph. */
+body[data-briefing="1"] .workspace {
+  width: min(1280px, 100%);
+}
+
+body[data-briefing="1"] .thread {
+  opacity: 0;
+  visibility: hidden;
+}
+
+body[data-briefing="1"] .stage {
+  align-content: stretch;
+  gap: 0.55rem;
+}
+
+body[data-briefing="1"] .user-panel {
+  padding: 0.35rem 0.15rem 0.2rem;
+  opacity: 0.85;
+}
+
+body[data-briefing="1"] .user-caption {
+  min-height: 1.4em;
+  max-height: 2.6em;
+  font-size: clamp(0.85rem, 1.8vw, 1.05rem);
+}
+
+body[data-briefing="1"] #wave {
+  max-height: min(16vh, 110px);
+}
+
+body[data-briefing="1"] .hud-ring {
+  display: none;
+}
+
+body[data-briefing="1"] .readout {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+}
+
+body[data-briefing="1"] .readout-meta {
+  margin-bottom: 0.35rem;
+}
+
+.briefing-panel {
+  flex: 1 1 auto;
+  min-height: 0;
+  /* Use nearly all remaining stage height so headlines are not clipped. */
+  max-height: none;
+  height: 100%;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0.15rem 0.25rem 0.75rem 0;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(61, 255, 196, 0.45) transparent;
+  columns: 1;
+}
+
+@media (min-width: 900px) {
+  body[data-briefing="1"] .briefing-panel {
+    column-count: 2;
+    column-gap: 2.25rem;
+  }
+
+  body[data-briefing="1"] .briefing-when,
+  body[data-briefing="1"] .briefing-section[data-id="weather"],
+  body[data-briefing="1"] .briefing-section[data-id="agenda"],
+  body[data-briefing="1"] .briefing-section[data-id="due"],
+  body[data-briefing="1"] .briefing-section[data-id="open"],
+  body[data-briefing="1"] .briefing-section[data-id="headlines"] {
+    column-span: all;
+  }
+}
+
+.briefing-when {
+  margin: 0 0 0.55rem;
+  font-family: var(--font-mono);
+  font-size: clamp(0.9rem, 1.6vw, 1.1rem);
+  letter-spacing: 0.04em;
+  color: var(--amber);
+}
+
+.briefing-section {
+  break-inside: avoid;
+  margin: 0 0 0.7rem;
+}
+
+.briefing-section h3 {
+  margin: 0 0 0.35rem;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.briefing-section-nav {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  cursor: pointer;
+  transition: color 0.15s ease;
+}
+
+.briefing-section-nav:hover,
+.briefing-section-nav:focus-visible {
+  color: var(--mint);
+  outline: none;
+}
+
+.briefing-section-nav:active {
+  color: #f4fbff;
+}
+
+.briefing-section ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.briefing-section li {
+  margin: 0 0 0.22rem;
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: clamp(0.9rem, 1.45vw, 1.15rem);
+  line-height: 1.32;
+  color: var(--ink);
+  text-wrap: pretty;
+}
+
+body[data-briefing="1"] .briefing-section[data-id="headlines"] li {
+  font-size: clamp(0.88rem, 1.35vw, 1.08rem);
+}
+
+.briefing-headline {
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 0.15rem 0.35rem 0.15rem 0;
+  border: 0;
+  border-left: 2px solid transparent;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  text-wrap: pretty;
+  cursor: pointer;
+  transition:
+    color 0.15s ease,
+    border-color 0.15s ease,
+    background 0.15s ease;
+}
+
+.briefing-headline:hover,
+.briefing-headline:focus-visible {
+  color: #f4fbff;
+  border-left-color: var(--mint);
+  background: rgba(61, 255, 196, 0.06);
+  outline: none;
+}
+
+.briefing-headline:active {
+  color: var(--mint);
+}
+
+.briefing-section[data-id="markets"] li,
+.briefing-section[data-id="weather"] li {
+  font-family: var(--font-mono);
+  font-weight: 500;
+  font-size: clamp(0.92rem, 1.5vw, 1.12rem);
+  letter-spacing: 0.01em;
+}
+
+.briefing-panel[hidden] {
+  display: none !important;
+}
+
 .cursor {
   display: inline-block;
   width: 0.55ch;
@@ -701,5 +885,132 @@ body[data-layout="chat"] .composer {
 
   body[data-layout="chat"] .bubble {
     max-width: 92%;
+  }
+}
+
+.history-drawer {
+  position: fixed;
+  z-index: 5;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: min(20rem, 88vw);
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 1rem 0.85rem 1.25rem;
+  background: rgba(8, 14, 22, 0.96);
+  border-right: 1px solid var(--line);
+  box-shadow: 12px 0 40px rgba(0, 0, 0, 0.35);
+  transform: translateX(-105%);
+  transition: transform 0.28s ease;
+}
+
+.history-drawer[hidden] {
+  display: none;
+}
+
+.history-drawer.open {
+  display: flex;
+  transform: translateX(0);
+}
+
+.history-drawer-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.history-drawer-head h2 {
+  margin: 0;
+  font-size: 0.72rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--mint);
+  font-weight: 600;
+}
+
+.history-drawer-head button,
+#history-toggle,
+#new-chat {
+  padding: 0.55rem 0.85rem;
+  font-size: 0.68rem;
+}
+
+.history-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.history-empty {
+  margin: 0.75rem 0.25rem;
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+
+.history-item {
+  appearance: none;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.28rem;
+  width: 100%;
+  text-align: left;
+  border: 1px solid transparent;
+  background: rgba(61, 255, 196, 0.03);
+  color: var(--ink);
+  font: inherit;
+  padding: 0.7rem 0.75rem;
+  cursor: pointer;
+}
+
+.history-item:hover {
+  border-color: rgba(61, 255, 196, 0.28);
+}
+
+.history-item.active {
+  border-color: rgba(61, 255, 196, 0.45);
+  background: rgba(61, 255, 196, 0.08);
+}
+
+.history-item-title {
+  font-size: 0.82rem;
+  line-height: 1.35;
+  color: var(--ink);
+}
+
+.history-item-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  font-size: 0.65rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.history-chip {
+  color: var(--mint);
+}
+
+.history-item-preview {
+  font-size: 0.72rem;
+  color: var(--muted);
+  line-height: 1.35;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+@media (min-width: 900px) {
+  body.history-open .workspace {
+    margin-left: min(20rem, 88vw);
   }
 }

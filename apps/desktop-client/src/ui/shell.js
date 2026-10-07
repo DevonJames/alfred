@@ -1,17 +1,23 @@
 const CHANNEL = "alfred.shell";
 
-/** @typedef {"voice" | "brief" | "notes" | "graph" | "graphBeta" | "vectors" | "ingest" | "claim"} Screen */
+/** @typedef {"voice" | "brief" | "notes" | "graph" | "graphBeta" | "vectors" | "ingest" | "claim" | "gateway" | "agenda" | "reminders"} Screen */
 
 const SCREENS = {
   voice: { title: "Talk", src: null },
-  brief: { title: "Brief", src: "/briefing" },
+  brief: { title: "Briefing", src: "/briefing" },
   notes: { title: "Notes", src: "/notes" },
+  gateway: { title: "Gateway", src: "/gateway" },
+  agenda: { title: "Agenda", src: "/agenda" },
+  reminders: { title: "Reminders", src: "/reminders" },
   graph: { title: "Graph", src: "/memory/graph" },
   graphBeta: { title: "Graph (beta)", src: "/memory/graph-beta" },
   vectors: { title: "Vector Explorer", src: "/vector-explorer" },
   ingest: { title: "Ingest", src: "/memory/ingest" },
   claim: { title: "Claim", src: "/connect/claim" },
 };
+
+const MEMORY_SCREENS = new Set(["graph", "graphBeta", "vectors"]);
+const SETTINGS_SCREENS = new Set(["brief", "gateway", "notes", "ingest", "claim"]);
 
 const nav = document.getElementById("shell-nav");
 const voiceFrame = document.getElementById("voice-frame");
@@ -25,8 +31,8 @@ const pipDot = document.getElementById("pip-dot");
 let screen = "voice";
 let voiceLinked = false;
 let voiceSpeaking = false;
-const levels = new Array(48).fill(0);
-let pipRaf = 0;
+let voiceMuted = false;
+let pipSurface = null;
 
 function url(path) {
   return typeof alfredUrl === "function" ? alfredUrl(path) : path;
@@ -52,7 +58,7 @@ function screenFromHash() {
   const raw = (location.hash || "#voice").replace(/^#/, "").toLowerCase();
   if (raw === "graphbeta" || raw === "graph-beta") return "graphBeta";
   if (raw === "vectors" || raw === "vector" || raw === "vector-explorer") return "vectors";
-  if (raw === "graph" || raw === "ingest" || raw === "claim" || raw === "voice" || raw === "brief" || raw === "notes")
+  if (raw === "graph" || raw === "ingest" || raw === "claim" || raw === "voice" || raw === "brief" || raw === "notes" || raw === "gateway" || raw === "agenda" || raw === "reminders")
     return raw;
   return "voice";
 }
@@ -62,14 +68,34 @@ function setHash(next) {
   if (location.hash !== hash) history.replaceState(null, "", hash);
 }
 
-function applyScreen(next, opts = {}) {
-  const { persistHash = true } = opts;
-  screen = next;
-  if (persistHash) setHash(next);
+function closeMenus() {
+  for (const menu of nav.querySelectorAll(".nav-menu")) {
+    menu.classList.remove("open");
+    const trigger = menu.querySelector(".nav-menu-trigger");
+    if (trigger) trigger.setAttribute("aria-expanded", "false");
+  }
+}
 
+function syncNavActive(next) {
   for (const btn of nav.querySelectorAll("[data-screen]")) {
     btn.classList.toggle("active", btn.dataset.screen === next);
   }
+  for (const menu of nav.querySelectorAll(".nav-menu")) {
+    const kind = menu.dataset.menu;
+    const active =
+      (kind === "memory" && MEMORY_SCREENS.has(next)) ||
+      (kind === "settings" && SETTINGS_SCREENS.has(next));
+    menu.classList.toggle("has-active", active);
+  }
+}
+
+function applyScreen(next, opts = {}) {
+  const { persistHash = true, force = false } = opts;
+  const previous = screen;
+  screen = next;
+  if (persistHash) setHash(next);
+  closeMenus();
+  syncNavActive(next);
 
   const onVoice = next === "voice";
   contentFrame.classList.toggle("is-hidden", onVoice);
@@ -88,68 +114,83 @@ function applyScreen(next, opts = {}) {
     const already =
       (next === "brief" && current.startsWith("/briefing")) ||
       (next === "notes" && current.startsWith("/notes")) ||
+      (next === "gateway" && current.startsWith("/gateway")) ||
+      (next === "agenda" && current.startsWith("/agenda")) ||
+      (next === "reminders" && current.startsWith("/reminders")) ||
       (next === "graphBeta" && isGraphBetaPath(current)) ||
       (next === "graph" && isClassicGraphPath(current)) ||
       (next === "vectors" && isVectorExplorerPath(current)) ||
       (next === "ingest" && current.startsWith("/memory/ingest")) ||
       (next === "claim" && current.startsWith("/connect/claim"));
-    if (!already && src) contentFrame.src = url(src);
+    const canonical = src ? localPath(src) : "";
+    const onCanonical = !canonical || current === canonical || current === `${canonical}/`;
+    if (src && (!already || (force && !onCanonical))) contentFrame.src = url(src);
   }
 
   updatePipVisibility();
+
+  // Agenda ear steals Talk turns into the calendar LLM — clear whenever we
+  // leave Agenda, and also whenever Talk/Voice is focused (in case a prior
+  // clear was missed while the ear was still armed).
+  if ((previous === "agenda" && next !== "agenda") || next === "talk" || next === "voice") {
+    void fetch(url("/agenda/ear"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ active: false }),
+    });
+  }
+  if (next === "agenda" && contentFrame.contentWindow) {
+    contentFrame.contentWindow.postMessage({ channel: CHANNEL, type: "visible" }, location.origin);
+    postVoice();
+  }
 }
 
 function updatePipVisibility() {
-  const show = voiceLinked && screen !== "voice";
+  const show = voiceLinked && screen !== "voice" && screen !== "agenda";
   pip.hidden = !show;
   pip.classList.toggle("speaking", voiceSpeaking);
   pipDot.classList.toggle("live", voiceLinked && !voiceSpeaking);
   pipDot.classList.toggle("speaking", voiceSpeaking);
-  if (show && !pipRaf) drawPip();
-  if (!show && pipRaf) {
-    cancelAnimationFrame(pipRaf);
-    pipRaf = 0;
-  }
 }
 
-function pushLevel(rms) {
-  levels.shift();
-  levels.push(Math.min(1, rms * 4));
+function postVoice() {
+  if (screen !== "agenda" || !contentFrame.contentWindow) return;
+  contentFrame.contentWindow.postMessage(
+    {
+      channel: CHANNEL,
+      type: "voice",
+      linked: voiceLinked,
+      speaking: voiceSpeaking,
+      muted: voiceMuted,
+    },
+    location.origin,
+  );
 }
 
-function drawPip() {
-  const canvas = pipCanvas;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return;
-  const dpr = window.devicePixelRatio || 1;
-  const w = canvas.clientWidth;
-  const h = canvas.clientHeight;
-  if (canvas.width !== Math.floor(w * dpr) || canvas.height !== Math.floor(h * dpr)) {
-    canvas.width = Math.floor(w * dpr);
-    canvas.height = Math.floor(h * dpr);
+function sendPipSurface() {
+  if (!voiceFrame.contentWindow || typeof pipCanvas.transferControlToOffscreen !== "function") return;
+  if (!pipSurface) {
+    const dpr = window.devicePixelRatio || 1;
+    pipSurface = {
+      canvas: pipCanvas.transferControlToOffscreen(),
+      width: Math.max(1, Math.floor((pipCanvas.clientWidth || 280) * dpr)),
+      height: Math.max(1, Math.floor(44 * dpr)),
+    };
   }
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  ctx.clearRect(0, 0, w, h);
-
-  const mid = h / 2;
-  const barW = w / levels.length;
-  for (let i = 0; i < levels.length; i++) {
-    const mag = levels[i] ?? 0;
-    const bh = Math.max(1.5, mag * (h * 0.42));
-    ctx.fillStyle = voiceSpeaking
-      ? `rgba(255, 179, 71, ${0.25 + mag * 0.65})`
-      : `rgba(61, 255, 196, ${0.18 + mag * 0.55})`;
-    ctx.fillRect(i * barW + 0.6, mid - bh, barW - 1.2, bh * 2);
-  }
-
-  ctx.strokeStyle = "rgba(215, 246, 255, 0.35)";
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.moveTo(0, mid);
-  ctx.lineTo(w, mid);
-  ctx.stroke();
-
-  if (!pip.hidden) pipRaf = requestAnimationFrame(drawPip);
+  if (pipSurface.sent) return;
+  pipSurface.sent = true;
+  voiceFrame.contentWindow.postMessage(
+    {
+      channel: CHANNEL,
+      type: "wave-surface",
+      id: "pip",
+      canvas: pipSurface.canvas,
+      width: pipSurface.width,
+      height: pipSurface.height,
+    },
+    location.origin,
+    [pipSurface.canvas],
+  );
 }
 
 function onShellMessage(event) {
@@ -162,23 +203,75 @@ function onShellMessage(event) {
     return;
   }
 
+  if ((data.type === "ask" || data.type === "listen" || data.type === "voice-cmd" || data.type === "wave-size") && voiceFrame.contentWindow && event.source !== voiceFrame.contentWindow) {
+    voiceFrame.contentWindow.postMessage(data, location.origin);
+    return;
+  }
+
+  if (data.type === "wave-surface" && data.canvas && voiceFrame.contentWindow && event.source !== voiceFrame.contentWindow) {
+    voiceFrame.contentWindow.postMessage(data, location.origin, [data.canvas]);
+    return;
+  }
+
+  if ((data.type === "ask-failed" || data.type === "listen-failed") && contentFrame.contentWindow) {
+    contentFrame.contentWindow.postMessage(data, location.origin);
+    return;
+  }
+
+  if (data.type === "wave-ready" && event.source === voiceFrame.contentWindow) {
+    sendPipSurface();
+    return;
+  }
+
+  if (data.type === "turn" && event.source === voiceFrame.contentWindow && screen === "agenda" && contentFrame.contentWindow) {
+    contentFrame.contentWindow.postMessage(data, location.origin);
+    return;
+  }
+
   if (data.type === "state") {
+    const wasLinked = voiceLinked;
+    const wasSpeaking = voiceSpeaking;
+    const wasMuted = voiceMuted;
     voiceLinked = Boolean(data.linked);
     voiceSpeaking = Boolean(data.speaking);
-    if (typeof data.rms === "number") pushLevel(data.rms);
+    voiceMuted = Boolean(data.muted);
     if (typeof data.caption === "string" && data.caption.trim()) {
       pipCaption.textContent = data.caption.trim();
     } else if (!voiceLinked) {
       pipCaption.textContent = "Voice idle";
     }
     updatePipVisibility();
+    if (wasLinked !== voiceLinked || wasSpeaking !== voiceSpeaking || wasMuted !== voiceMuted) postVoice();
   }
 }
 
 nav.addEventListener("click", (event) => {
+  const trigger = event.target.closest(".nav-menu-trigger");
+  if (trigger) {
+    const menu = trigger.closest(".nav-menu");
+    if (!menu) return;
+    const willOpen = !menu.classList.contains("open");
+    closeMenus();
+    if (willOpen) {
+      menu.classList.add("open");
+      trigger.setAttribute("aria-expanded", "true");
+    }
+    return;
+  }
+
   const btn = event.target.closest("[data-screen]");
   if (!btn || !btn.dataset.screen) return;
-  applyScreen(/** @type {Screen} */ (btn.dataset.screen));
+  applyScreen(/** @type {Screen} */ (btn.dataset.screen), { force: true });
+});
+
+document.addEventListener("click", (event) => {
+  if (!(event.target instanceof Element)) return;
+  if (event.target.closest("#shell-nav .nav-menu")) return;
+  closeMenus();
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") closeMenus();
 });
 
 pip.addEventListener("click", () => {
@@ -207,6 +300,9 @@ contentFrame.addEventListener("load", () => {
     else if (path.startsWith("/memory/ingest")) applyScreen("ingest", { persistHash: true });
     else if (path.startsWith("/connect/claim")) applyScreen("claim", { persistHash: true });
     else if (path.startsWith("/notes")) applyScreen("notes", { persistHash: true });
+    else if (path.startsWith("/gateway")) applyScreen("gateway", { persistHash: true });
+    else if (path.startsWith("/agenda")) applyScreen("agenda", { persistHash: true });
+    else if (path.startsWith("/reminders")) applyScreen("reminders", { persistHash: true });
     else if (path === "/" || path === "") applyScreen("voice");
   } catch {
     /* cross-origin — ignore */

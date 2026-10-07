@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Alfred // Agenda blocks</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Syne:wght@700;800&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg: #071018;
+        --fg: #e8eef5;
+        --muted: #8b9bb0;
+        --line: #1c2733;
+        --mint: #3dffc4;
+        --accent: #7ee0c3;
+        --warn: #e0c07e;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family: "IBM Plex Mono", ui-monospace, monospace;
+        background:
+          radial-gradient(900px 420px at 10% -10%, #163049 0%, transparent 55%),
+          var(--bg);
+        color: var(--fg);
+        padding: 1.5rem 1.1rem 3rem;
+      }
+      main { width: min(46rem, 100%); margin: 0 auto; }
+      h1 {
+        font-family: Syne, sans-serif;
+        font-weight: 800;
+        font-size: 1.8rem;
+        margin: 0 0 0.35rem;
+      }
+      a { color: var(--accent); }
+      .hint, .status { color: var(--muted); font-size: 0.75rem; line-height: 1.45; }
+      .status { min-height: 1.2rem; color: var(--warn); }
+      .block {
+        border: 1px solid var(--line);
+        background: rgba(8, 14, 22, 0.72);
+        padding: 0.9rem 1rem 1rem;
+        margin: 0.75rem 0;
+      }
+      label { display: block; font-size: 0.68rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin: 0.55rem 0 0.25rem; }
+      input, select, button {
+        font: inherit;
+        color: var(--fg);
+        background: #101820;
+        border: 1px solid var(--line);
+        padding: 0.4rem 0.5rem;
+      }
+      input[type="text"] { width: 100%; }
+      .row { display: flex; gap: 0.6rem; flex-wrap: wrap; align-items: end; }
+      .row > div { flex: 1; min-width: 8rem; }
+      .days { display: flex; gap: 0.35rem; flex-wrap: wrap; margin-top: 0.35rem; }
+      .days label { display: flex; gap: 0.3rem; align-items: center; text-transform: none; letter-spacing: 0; font-size: 0.75rem; color: var(--fg); margin: 0; }
+      button { cursor: pointer; }
+      button.primary { color: #042018; background: var(--mint); border-color: var(--mint); }
+      .actions { display: flex; gap: 0.5rem; margin-top: 0.8rem; }
+      select.calendar { width: 100%; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Time blocks</h1>
+      <p class="hint">
+        Name the parts of the day. A reminder placed in a block becomes an event on that block’s calendar.
+        <a id="back" href="/agenda">Back to Agenda</a>
+      </p>
+      <p class="status" id="status"></p>
+      <div id="blocks"></div>
+      <div class="actions">
+        <button type="button" id="add">Add a block</button>
+        <button type="button" class="primary" id="save">Save</button>
+      </div>
+    </main>
+    <script src="/alfred-base.js"></script>
+    <script src="/embed-bridge.js"></script>
+    <script>
+      function api(path) {
+        return typeof alfredUrl === "function" ? alfredUrl(path) : path;
+      }
+      document.getElementById("back").href = api("/agenda");
+
+      const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+      let calendars = [];
+      let blocks = [];
+
+      function setStatus(text) {
+        document.getElementById("status").textContent = text || "";
+      }
+
+      function blank() {
+        return {
+          id: "",
+          name: "",
+          start: "09:00",
+          end: "12:00",
+          repeat: "weekdays",
+          days: [1, 2, 3, 4, 5],
+          calendarId: calendars[0]?.id || "",
+        };
+      }
+
+      function readCard(card) {
+        const days = [...card.querySelectorAll("input[data-day]:checked")].map((input) => Number(input.dataset.day));
+        return {
+          id: card.dataset.id || "",
+          name: card.querySelector(".name").value,
+          start: card.querySelector(".start").value,
+          end: card.querySelector(".end").value,
+          repeat: card.querySelector(".repeat").value,
+          days,
+          calendarId: card.querySelector(".calendar").value,
+        };
+      }
+
+      function paint() {
+        const root = document.getElementById("blocks");
+        root.replaceChildren();
+        if (!blocks.length) {
+          const empty = document.createElement("p");
+          empty.className = "hint";
+          empty.textContent = "No time blocks yet.";
+          root.appendChild(empty);
+        }
+        for (const block of blocks) {
+          const card = document.createElement("div");
+          card.className = "block";
+          card.dataset.id = block.id || "";
+          const nameLabel = document.createElement("label");
+          nameLabel.textContent = "Name";
+          const name = document.createElement("input");
+          name.className = "name";
+          name.type = "text";
+          name.value = block.name || "";
+          name.placeholder = "Work";
+          const times = document.createElement("div");
+          times.className = "row";
+          times.innerHTML = `<div><label>From</label><input class="start" type="time" value="${block.start || "09:00"}"></div><div><label>To</label><input class="end" type="time" value="${block.end || "12:00"}"></div>`;
+          const repeatLabel = document.createElement("label");
+          repeatLabel.textContent = "Repeats";
+          const repeat = document.createElement("select");
+          repeat.className = "repeat";
+          for (const [value, label] of [
+            ["all", "Every day"],
+            ["weekdays", "Weekdays"],
+            ["weekends", "Weekends"],
+            ["custom", "Selected days"],
+          ]) {
+            const option = document.createElement("option");
+            option.value = value;
+            option.textContent = label;
+            if (block.repeat === value) option.selected = true;
+            repeat.appendChild(option);
+          }
+          const days = document.createElement("div");
+          days.className = "days";
+          for (let index = 0; index < 7; index += 1) {
+            const label = document.createElement("label");
+            const box = document.createElement("input");
+            box.type = "checkbox";
+            box.dataset.day = String(index);
+            box.checked = (block.days || []).includes(index);
+            label.append(box, document.createTextNode(dayNames[index]));
+            days.appendChild(label);
+          }
+          const calendarLabel = document.createElement("label");
+          calendarLabel.textContent = "Calendar";
+          const calendar = document.createElement("select");
+          calendar.className = "calendar";
+          if (!calendars.length) {
+            const option = document.createElement("option");
+            option.textContent = "No writable calendar";
+            calendar.appendChild(option);
+            calendar.disabled = true;
+          }
+          for (const item of calendars) {
+            const option = document.createElement("option");
+            option.value = item.id;
+            option.textContent = item.sourceTitle ? `${item.title} · ${item.sourceTitle}` : item.title;
+            if (item.id === block.calendarId) option.selected = true;
+            calendar.appendChild(option);
+          }
+          const remove = document.createElement("button");
+          remove.type = "button";
+          remove.textContent = "Remove";
+          remove.addEventListener("click", () => {
+            const cards = [...root.querySelectorAll(".block")];
+            const index = cards.indexOf(card);
+            blocks = cards.map(readCard).filter((_, item) => item !== index);
+            paint();
+          });
+          const syncDays = () => {
+            days.hidden = repeat.value !== "custom";
+          };
+          repeat.addEventListener("change", syncDays);
+          syncDays();
+          card.append(nameLabel, name, times, repeatLabel, repeat, days, calendarLabel, calendar, remove);
+          root.appendChild(card);
+        }
+      }
+
+      async function load() {
+        const [blockRes, calendarRes] = await Promise.all([
+          fetch(api("/agenda/blocks")),
+          fetch(api("/agenda/calendars")),
+        ]);
+        const blockBody = await blockRes.json();
+        const calendarBody = await calendarRes.json();
+        if (calendarBody.error) setStatus(calendarBody.error);
+        calendars = calendarBody.calendars || [];
+        blocks = blockBody.blocks || [];
+        paint();
+      }
+
+      document.getElementById("add").addEventListener("click", () => {
+        blocks = [...document.querySelectorAll(".block")].map(readCard);
+        blocks.push(blank());
+        paint();
+      });
+
+      document.getElementById("save").addEventListener("click", async () => {
+        setStatus("");
+        const payload = [...document.querySelectorAll(".block")].map(readCard).map((block) => ({
+          ...block,
+          start: (block.start || "09:00").slice(0, 5),
+          end: (block.end || "12:00").slice(0, 5),
+        }));
+        const res = await fetch(api("/agenda/blocks"), {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ blocks: payload }),
+        });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          setStatus(body.error || "Could not save");
+          return;
+        }
+        blocks = body.blocks || [];
+        paint();
+        setStatus("Saved.");
+      });
+
+      load().catch((err) => setStatus(String(err)));
+    </script>
+  </body>
+</html>

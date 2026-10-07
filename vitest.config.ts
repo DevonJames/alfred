@@ -21,6 +21,7 @@ export default defineConfig({
       "@alfred/provider-elevenlabs": path.join(root, "packages/provider-elevenlabs/src/index.ts"),
       "@alfred/livekit": path.join(root, "packages/livekit/src/index.ts"),
       "@alfred/browser": path.join(root, "packages/browser/src/index.ts"),
+      "@alfred/calendar-gateway": path.join(root, "packages/calendar-gateway/src/index.ts"),
     },
   },
   test: {

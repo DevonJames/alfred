@@ -2,15 +2,23 @@ import {
   CRYPTO_OPTIONS,
   LAUNCH_SITE_OPTIONS,
   NEWS_SOURCE_OPTIONS,
+  createBriefingController,
   loadBriefingPrefs,
   saveBriefingPrefs,
   type BriefingPrefs,
 } from "@alfred/briefing";
+import {
+  calendarPolicyPath,
+  createEventKitGateway,
+  loadCalendarPolicy,
+  mergeCalendarAccess,
+  readableCalendars,
+} from "@alfred/calendar-gateway";
 import { Hono } from "hono";
 import { readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { resetSpeechEngineBriefingOffer } from "../lib/speech-engine.js";
+import { getBriefingHud, resetSpeechEngineBriefingOffer } from "../lib/speech-engine.js";
 
 const uiDir = resolve(dirname(fileURLToPath(import.meta.url)), "../ui");
 
@@ -26,9 +34,40 @@ briefingUiRouter.get("/", async (c) => {
   return c.html(html);
 });
 
+/** GET /briefing/hud — last structured Daily Brief layout for the voice UI. */
+briefingUiRouter.get("/hud", (c) => {
+  const hud = getBriefingHud();
+  return c.json({
+    active: Boolean(hud),
+    display: hud?.display ?? null,
+    spokenAt: hud?.spokenAt ?? null,
+  });
+});
+
+async function agendaCalendars(): Promise<Array<{ id: string; label: string }>> {
+  const file = calendarPolicyPath(profileId());
+  const gateway = createEventKitGateway(file);
+  const [discovered, policy] = await Promise.all([gateway.catalog(), loadCalendarPolicy(file)]);
+  return readableCalendars(mergeCalendarAccess(discovered, policy).sources)
+    .map((calendar) => ({
+      id: calendar.id,
+      label: `${calendar.title} · ${calendar.sourceTitle}`,
+      source: calendar.sourceTitle,
+      title: calendar.title,
+    }))
+    .sort((a, b) => a.source.localeCompare(b.source) || a.title.localeCompare(b.title))
+    .map(({ id, label }) => ({ id, label }));
+}
+
 /** GET /briefing/prefs */
 briefingUiRouter.get("/prefs", async (c) => {
   const prefs = await loadBriefingPrefs(profileId());
+  let calendars: Array<{ id: string; label: string }> = [];
+  try {
+    calendars = await agendaCalendars();
+  } catch (err) {
+    console.warn("[briefing] agenda calendars", err instanceof Error ? err.message : err);
+  }
   return c.json({
     prefs,
     catalog: {
@@ -39,6 +78,7 @@ briefingUiRouter.get("/prefs", async (c) => {
         { id: "silver", label: "Silver" },
       ],
       newsSources: NEWS_SOURCE_OPTIONS,
+      calendars,
       launchesModes: [
         { id: "on", label: "On" },
         { id: "off", label: "Off" },
@@ -58,6 +98,7 @@ briefingUiRouter.put("/prefs", async (c) => {
   }
   const current = await loadBriefingPrefs(profileId());
   const next = await saveBriefingPrefs({ ...current, ...body }, profileId());
+  await createBriefingController({}).invalidateTodayCache().catch(() => {});
   return c.json({ prefs: next, saved: true });
 });
 

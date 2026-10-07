@@ -672,6 +672,7 @@ describe("VoiceSessionController chat layout and text turns", () => {
 
   it("commits a typed turn with captions and no TTS audio", async () => {
     const { voice, events, sessionId, media } = await setup();
+    // Typed turns are always silent regardless of layout.
     await voice.handleUserText("What is on my calendar?");
     const commits = (await events.list(sessionId)).filter((e) => e.type === "turn.committed");
     expect(commits).toHaveLength(1);
@@ -749,8 +750,9 @@ describe("VoiceSessionController chat layout and text turns", () => {
     await voice.stop();
   });
 
-  it("routes alfred.control text commands into a silent turn", async () => {
+  it("routes alfred.control text commands into a silent turn in chat layout", async () => {
     const { voice, events, sessionId, media } = await setup();
+    voice.handleUiCommand({ type: "layout", layout: "chat" });
     voice.handleUiCommand({ type: "text", text: "typed via control" });
     await new Promise((r) => setTimeout(r, 80));
     const commits = (await events.list(sessionId)).filter((e) => e.type === "turn.committed");

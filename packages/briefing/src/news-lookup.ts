@@ -8,6 +8,12 @@ import {
   matchNewsHeadline,
   type NewsHeadline,
 } from "./news.js";
+import {
+  DIG_SYSTEM_PROMPT,
+  researchNewsWithOpenAiWebSearch,
+  searchNewsWeb,
+  type NewsSearchHit,
+} from "./news-search.js";
 import { resolveBriefingConfig } from "./prefs.js";
 
 export interface LiveNewsLookupResult {
@@ -52,7 +58,8 @@ export interface SummarizeNewsArticleOpts {
 }
 
 /**
- * Fetch a headline's article and return a short spoken summary.
+ * Dig into a headline: web-search the story, read coverage, then speak a
+ * detailed rundown — not a one-line paraphrase of the title.
  */
 export async function summarizeNewsArticle(
   opts: SummarizeNewsArticleOpts = {},
@@ -73,39 +80,140 @@ export async function summarizeNewsArticle(
   }
 
   const title = (opts.title?.trim() || headline?.title || "").trim();
+  if (!title && !url) {
+    return "Which headline should I dig into — say the number, or a few words from the title.";
+  }
+
+  // 1) OpenAI Responses + web_search — best when keyed.
+  const viaOpenAi = await researchNewsWithOpenAiWebSearch({
+    title: title || "this headline",
+    url: url || undefined,
+  });
+  if (viaOpenAi) return viaOpenAi;
+
+  // 2) DuckDuckGo search + fetch top articles + LLM (or extractive).
+  const viaSearch = await digViaWebSearch({
+    title: title || "this headline",
+    url: url || undefined,
+    llm: opts.llm,
+  });
+  if (viaSearch) return viaSearch;
+
+  // 3) Last resort: original feed URL alone.
   if (!url) {
     return title
-      ? `I have that headline — "${title}" — but the feed didn't include a link I can open.`
-      : "I couldn't find a link for that headline.";
+      ? `I searched for "${title}" but couldn't pull enough coverage just now.`
+      : "I couldn't dig into that headline just now.";
   }
 
   const body = await fetchArticleText(url);
   if (!body) {
     return title
-      ? `I couldn't load the full article for "${title}" just now.`
+      ? `I couldn't load coverage for "${title}" just now.`
       : "I couldn't load that article just now.";
   }
 
   if (opts.llm) {
-    try {
-      const drafted = await opts.llm([
-        {
-          role: "system",
-          content:
-            "You are Alfred. Summarize the news article for spoken conversation in 2-4 short sentences. " +
-            "Lead with the news, not 'this article says'. No markdown, no bullet lists, no preamble.",
-        },
-        {
-          role: "user",
-          content: `Headline: ${title || "(untitled)"}\n\nArticle text:\n${body.slice(0, 12_000)}`,
-        },
-      ]);
-      const spoken = drafted.trim();
-      if (spoken) return spoken.replace(/\s+/g, " ").trim();
-    } catch {
-      /* fall through to extractive */
-    }
+    const drafted = await draftDigFromSources(opts.llm, title || "(untitled)", [
+      { label: "Feed article", text: body },
+    ]);
+    if (drafted) return drafted;
   }
 
-  return extractiveArticleSummary(body, title || undefined);
+  return extractiveArticleSummary(body, title || undefined, { maxSentences: 8, maxChars: 1400 });
+}
+
+async function digViaWebSearch(opts: {
+  title: string;
+  url?: string;
+  llm?: GreetingLlm | null;
+}): Promise<string | null> {
+  const hits = await searchNewsWeb(opts.title);
+  const urls: string[] = [];
+  const seen = new Set<string>();
+  if (opts.url) {
+    seen.add(opts.url);
+    urls.push(opts.url);
+  }
+  for (const hit of hits) {
+    if (seen.has(hit.url)) continue;
+    seen.add(hit.url);
+    urls.push(hit.url);
+    if (urls.length >= 4) break;
+  }
+
+  const snippets = formatSearchSnippets(hits);
+  const bodies = await Promise.all(
+    urls.slice(0, 3).map(async (articleUrl) => {
+      const text = await fetchArticleText(articleUrl);
+      return text ? { label: articleUrl, text } : null;
+    }),
+  );
+  const sources = bodies.filter((b): b is { label: string; text: string } => Boolean(b));
+
+  if (!sources.length && !snippets) return null;
+
+  if (opts.llm) {
+    const drafted = await draftDigFromSources(opts.llm, opts.title, sources, snippets);
+    if (drafted) return drafted;
+  }
+
+  if (sources[0]) {
+    return extractiveArticleSummary(sources[0].text, opts.title, {
+      maxSentences: 8,
+      maxChars: 1400,
+    });
+  }
+  if (snippets) {
+    return `On "${opts.title}": ${snippets.slice(0, 900)}`;
+  }
+  return null;
+}
+
+async function draftDigFromSources(
+  llm: GreetingLlm,
+  title: string,
+  sources: Array<{ label: string; text: string }>,
+  snippets?: string,
+): Promise<string | null> {
+  const chunks: string[] = [];
+  if (snippets?.trim()) {
+    chunks.push(`Search snippets:\n${snippets.trim().slice(0, 4_000)}`);
+  }
+  let used = 0;
+  for (const source of sources) {
+    const room = 14_000 - used;
+    if (room < 500) break;
+    const slice = source.text.slice(0, room);
+    used += slice.length;
+    chunks.push(`Source (${source.label}):\n${slice}`);
+  }
+  if (!chunks.length) return null;
+
+  try {
+    const drafted = await llm([
+      { role: "system", content: DIG_SYSTEM_PROMPT },
+      {
+        role: "user",
+        content:
+          `Headline: ${title}\n\n` +
+          "Using the search results and article text below, tell the full story with concrete detail.\n\n" +
+          chunks.join("\n\n---\n\n"),
+      },
+    ]);
+    const spoken = drafted.trim().replace(/\s+/g, " ").trim();
+    return spoken || null;
+  } catch {
+    return null;
+  }
+}
+
+function formatSearchSnippets(hits: NewsSearchHit[]): string {
+  return hits
+    .slice(0, 6)
+    .map((hit, i) => {
+      const bit = hit.snippet || hit.title;
+      return `${i + 1}. ${hit.title}${bit && bit !== hit.title ? ` — ${bit}` : ""} (${hit.url})`;
+    })
+    .join("\n");
 }

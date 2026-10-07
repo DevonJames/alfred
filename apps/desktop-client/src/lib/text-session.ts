@@ -6,6 +6,7 @@
 import {
   AgentRouter,
   createAlfredHomeHarness,
+  createCalendarGatewayHarness,
   createClaudeStub,
   createCodexStub,
   createDocsIngestHarness,
@@ -43,7 +44,9 @@ import {
   XaiGrokLLMProvider,
 } from "@alfred/provider-xai";
 import { oipForProfile, personaDirForProfile } from "./oip-memory.js";
-import { createOipReminderPort } from "./reminder-port.js";
+import { createAppleReminderPort } from "./reminder-port.js";
+import { agendaBriefingEvents } from "./agenda-briefing.js";
+import { loadTaskReminders } from "./message-commitments.js";
 
 export type SessionKeyParts = {
   householdId?: string;
@@ -163,7 +166,7 @@ async function buildRuntime(sessionKey: string, parts: SessionKeyParts): Promise
     priorityLists: [],
     agentRouting: [
       { category: "household", orderedHarnessIds: ["harness.alfred-home"] },
-      { category: "calendar", orderedHarnessIds: ["harness.alfred-home"] },
+      { category: "calendar", orderedHarnessIds: ["harness.openclaw-local"] },
       { category: "coding", orderedHarnessIds: ["harness.openclaw"] },
       { category: "email", orderedHarnessIds: ["harness.openclaw"] },
       { category: "computer_use", orderedHarnessIds: ["harness.alfred-home", "harness.x-ingest"] },
@@ -171,8 +174,9 @@ async function buildRuntime(sessionKey: string, parts: SessionKeyParts): Promise
       { category: "browser", orderedHarnessIds: ["harness.x-ingest", "harness.openclaw"] },
       { category: "general", orderedHarnessIds: ["harness.alfred-home", "harness.openclaw"] },
     ],
-    systemInstructions:
-      "You are ALFRED, a helpful personal assistant. Be concise. Use retrieved memory when relevant. For household calendar, camera, reminders, or approvals, use delegate_task with category household.",
+    systemInstructions: process.env.ALFRED_ARCHIVE_URL?.trim()
+      ? "You are HYPATIA, the librarian of a local Alexandria archive. Name the records you use. Distinguish source documents from AI analysis. Never state a truth score or percentage. Keep spoken answers short."
+      : "You are ALFRED, a helpful personal assistant. Be concise. Use retrieved memory when relevant. For calendars on this Mac, use delegate_task with category calendar and the user's own wording, including the clock time and calendar name. If a calendar question is answered, call delegate_task again instead of repeating the question. For camera or approvals, use delegate_task with category household.",
   };
 
   const memory = new MemoryController(profileId, persistence.memorySettings);
@@ -186,6 +190,7 @@ async function buildRuntime(sessionKey: string, parts: SessionKeyParts): Promise
 
   const agents = new AgentRouter();
   agents.register(createAlfredHomeHarness({ getContext: () => homeContext }));
+  agents.register(createCalendarGatewayHarness({ profileId }));
   agents.register(createDocsIngestHarness({ profileId }));
   agents.register(createOpenClawHarness());
   agents.register(createHermesStub());
@@ -199,7 +204,11 @@ async function buildRuntime(sessionKey: string, parts: SessionKeyParts): Promise
   );
   agents.setRoutingRules(config.agentRouting);
 
-  const briefing = createBriefingController({ memory: oip });
+  const briefing = createBriefingController({
+    memory: oip,
+    taskReminders: loadTaskReminders,
+    agendaEvents: agendaBriefingEvents,
+  });
   const lights = createElgatoLightsController();
   void lights.refresh().catch((err) => {
     console.warn("[text-session] Elgato light discovery failed:", err);
@@ -217,7 +226,7 @@ async function buildRuntime(sessionKey: string, parts: SessionKeyParts): Promise
     personaContext,
     speech: { chunkDurationMs: 0, charsPerChunk: 10_000 },
     conversational: {
-      reminders: createOipReminderPort(oip, briefing),
+      reminders: createAppleReminderPort(briefing),
       structuredMemory: {
         remember: (write) => writeConversationalMemory(oip, write),
       },

@@ -9,6 +9,11 @@ export function buildLiveVoiceInstructions(brain: AlfredBrain): string {
     "Delegate anything that needs tools, memory lookup, weather, lights, reminders, briefing playback, robot expressions, or external harnesses. Say a short filler while that work runs (e.g. \"one sec\", \"checking\").",
     "When speaking from the robot, use show_expression for a smile, frown, wink, nod, tilt, or wave that matches the turn. Do not emote on every sentence. Never perform angry as aggressive motion.",
     "Answer greetings, small talk, and simple clarifications yourself. Do not invent the time, weather, weather alerts, earthquakes, space weather, wildfires, exchange rates, Hacker News stories, news headlines, crypto or metals prices, memory facts, light state, or briefing content — delegate those.",
+    ...(brain.archive
+      ? [
+          "When the user asks about documents, people, collections, or the archive, call search_archive or ask_archive. Name the records. Never state a truth percentage.",
+        ]
+      : []),
     "When the user asks you to remember something lasting (people, nicknames, handles, facts), delegate remember_memory. Do not only say you will remember — the tool write is required.",
     "When the user asks for the daily briefing or accepts an offer, delegate play_daily_briefing. When they decline an offer, delegate decline_briefing_offer.",
     "When the user asks what's in the news or for headlines, delegate get_news_headlines. When they ask to dig into one of those headlines, delegate summarize_news_article.",
@@ -54,7 +59,9 @@ export async function buildLiveBackendInstructions(brain: AlfredBrain): Promise<
   return [
     "You handle work the GPT-Live voice model delegates. Use tools when current information or side effects are required.",
     "Return short results the voice model can speak aloud — no markdown.",
-    "Tools: search_memory, remember_memory, update_reminder, list_due_reminders, get_current_time, get_weather_forecast, get_weather_alerts, get_earthquakes, get_space_weather, get_natural_events, get_exchange_rate, get_hacker_news, get_news_headlines, summarize_news_article, get_crypto_price, get_metals_price, control_studio_lights, play_daily_briefing, decline_briefing_offer, show_expression, delegate_task.",
+    "Tools: search_memory, remember_memory, update_reminder, list_due_reminders, get_current_time, get_weather_forecast, get_weather_alerts, get_earthquakes, get_space_weather, get_natural_events, get_exchange_rate, get_hacker_news, get_news_headlines, summarize_news_article, get_crypto_price, get_metals_price, control_studio_lights, play_daily_briefing, decline_briefing_offer, show_expression, delegate_task" +
+      (brain.archive ? ", search_archive, open_archive_record, archive_neighbors, ask_archive" : "") +
+      ".",
     "show_expression drives AlfredBot's face (smile, frown, wink, curious, …) and optional body cues (nod, tilt, wave). The robot times out to calm. Skip it when the user is on phone or desktop only if you are unsure a robot is in the room — calling it is harmless.",
     "For the current time or today's date, call get_current_time. Omit place for home.",
     "For weather without a named place, call get_weather_forecast with no location (home).",

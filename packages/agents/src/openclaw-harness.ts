@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import type {
   AgentDelegationRequest,
   AgentDelegationResult,
@@ -5,6 +8,17 @@ import type {
   AgentHarnessManifest,
   TaskCategory,
 } from "@alfred/contracts";
+
+function gatewayTokenFromConfig(): string {
+  try {
+    const raw = JSON.parse(readFileSync(join(homedir(), ".openclaw", "openclaw.json"), "utf8")) as {
+      gateway?: { auth?: { token?: string } };
+    };
+    return raw.gateway?.auth?.token?.trim() ?? "";
+  } catch {
+    return "";
+  }
+}
 
 export interface OpenClawHarnessOptions {
   baseUrl?: string;
@@ -51,7 +65,7 @@ export class OpenClawHarness implements AgentHarness {
       this.opts.token ??
       process.env.OPENCLAW_GATEWAY_TOKEN ??
       process.env.OPENCLAW_TOKEN ??
-      "";
+      gatewayTokenFromConfig();
     const agentId = this.opts.agentId ?? process.env.OPENCLAW_DELEGATE_AGENT_ID;
 
     try {

@@ -1,6 +1,8 @@
 import type { BriefingController } from "@alfred/briefing";
+import { loadBriefingConfig } from "@alfred/briefing";
 import type { DueReminderSummary, ReminderPort, ReminderStatusAction } from "@alfred/core";
 import type { OipLocalMemoryProvider } from "@alfred/memory";
+import { createRemindersGateway, remindersForBriefing, remindersPolicyPath } from "@alfred/reminders-gateway";
 
 /** Same OIP reminder port the cascade voice session uses. */
 export function createOipReminderPort(
@@ -47,6 +49,35 @@ export function createOipReminderPort(
       await memory.updateRecord(recordId, patch);
     },
 
+    async invalidateBriefingDay(now) {
+      await briefing.invalidateTodayCache(now);
+    },
+  };
+}
+
+/** Apple Reminders is the task list Talk checks off. */
+export function createAppleReminderPort(briefing: BriefingController): ReminderPort {
+  const policy = remindersPolicyPath(process.env.ALFRED_PROFILE_ID ?? "profile.default");
+  const gateway = createRemindersGateway(policy);
+  const zone = () => loadBriefingConfig().timezone;
+  return {
+    async listDue() {
+      const items = remindersForBriefing(await gateway.items(), new Date(), zone());
+      return items.map(
+        (reminder): DueReminderSummary => ({
+          recordId: reminder.id,
+          summary: reminder.title,
+          remindAt: reminder.due ?? null,
+          status: "pending",
+        }),
+      );
+    },
+    async setStatus(recordId, status) {
+      if (status === "completed" || status === "dismissed") {
+        await gateway.complete(recordId);
+      }
+      await briefing.invalidateTodayCache();
+    },
     async invalidateBriefingDay(now) {
       await briefing.invalidateTodayCache(now);
     },

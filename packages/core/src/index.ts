@@ -6,6 +6,7 @@ export * from "./media-port.js";
 export * from "./observability.js";
 export * from "./pipeline.js";
 export * from "./ports.js";
+export { createHttpArchivePort } from "./archive-port.js";
 export * from "./prompt-assembler.js";
 export * from "./reminder-match.js";
 export * from "./response-ledger.js";

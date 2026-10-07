@@ -38,6 +38,10 @@ apps/iOS-client/dist
 
 apps/iOS-client/.env
 
+packages/calendar-gateway/native/CalendarHelper.app/Contents/MacOS/
+packages/reminders-gateway/native/RemindersHelper.app/Contents/MacOS/
+packages/reminders-gateway/native/reminders-launch
+
 # Expo / Metro (iOS client)
 apps/iOS-client/web-build
 apps/iOS-client/expo-env.d.ts

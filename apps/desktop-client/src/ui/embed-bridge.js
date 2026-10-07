@@ -21,6 +21,8 @@
     if (path === "/vector-explorer" || path.startsWith("/vector-explorer/")) return "vectors";
     if (path.startsWith("/memory/ingest")) return "ingest";
     if (path.startsWith("/notes") && !pathname.includes(".")) return "notes";
+    if (path.startsWith("/gateway") && !pathname.includes(".")) return "gateway";
+    if (path.startsWith("/agenda") && !pathname.includes(".")) return "agenda";
     if (path.startsWith("/connect/claim") && !pathname.includes(".")) return "claim";
     return null;
   }
@@ -48,6 +50,13 @@
       if (parsed.origin !== window.location.origin) return;
       const screen = screenFromPath(parsed.pathname);
       if (!screen) return;
+      const here = screenFromPath(location.pathname);
+      const nextPath = localPath(parsed.pathname);
+      const currentPath = localPath(location.pathname);
+      // Subpages of the same screen (Agenda → time blocks) have to load in
+      // this frame. The shell only knows one URL per screen, so handing it
+      // the screen name would leave the click with nowhere to go.
+      if (screen === here && nextPath !== currentPath) return;
       event.preventDefault();
       requestNavigate(screen);
     },

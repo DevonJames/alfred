@@ -24,6 +24,28 @@ export function speechEngineRunning(): boolean {
   return Boolean(active);
 }
 
+/** Playback stream the Speech Engine already plays. Talk's waveform taps this. */
+export function speechEngineOutputTrack(): MediaStreamTrack | undefined {
+  const elements = document.querySelectorAll("audio");
+  for (let i = elements.length - 1; i >= 0; i--) {
+    const stream = elements[i]?.srcObject;
+    if (!(stream instanceof MediaStream)) continue;
+    const track = stream.getAudioTracks().find((item) => item.readyState === "live");
+    if (track) return track;
+  }
+  return undefined;
+}
+
+/** Open a Speech Engine turn so a primed agenda reply is spoken in Alfred's voice. */
+export function submitSpeechEngineText(text: string): boolean {
+  const session = active;
+  const trimmed = text.trim();
+  if (!session || !trimmed) return false;
+  noteSpeechEngineUserTurn();
+  session.sendUserMessage(trimmed);
+  return true;
+}
+
 export async function startSpeechEngineSession(
   conversationToken: string,
   hooks: {
@@ -192,10 +214,31 @@ export function setSpeechEngineMicMuted(muted: boolean): void {
   }, SPEECH_TAIL_MS);
 }
 
+/** True when Talk has closed the mic / live scribe to keep Alfred out of YOU // MIC. */
+export function speechEngineEchoMuted(): boolean {
+  return echoMuted;
+}
+
+/**
+ * Force echo-mute even if the user briefly unmuted. Used while a reply is
+ * audibly playing so speaker-bleed cannot paint into the user HUD.
+ */
+export function forceSpeechEngineEchoMute(): void {
+  window.clearTimeout(unmuteTimer);
+  allowEchoMute = true;
+  echoMuted = true;
+  applyMicMuted();
+}
+
 function cutPlayback(): void {
-  active?.setVolume({ volume: 0 });
+  try {
+    active?.setVolume({ volume: 0 });
+  } catch {
+    /* session may already be closing */
+  }
   for (const el of document.querySelectorAll("audio")) {
     el.volume = 0;
+    el.muted = true;
     el.pause();
     const stream = el.srcObject;
     if (stream instanceof MediaStream) {
@@ -205,8 +248,13 @@ function cutPlayback(): void {
 }
 
 function restorePlayback(): void {
-  active?.setVolume({ volume: 1 });
+  try {
+    active?.setVolume({ volume: 1 });
+  } catch {
+    /* session may already be closing */
+  }
   for (const el of document.querySelectorAll("audio")) {
+    el.muted = false;
     el.volume = 1;
     const stream = el.srcObject;
     if (stream instanceof MediaStream) {
@@ -222,6 +270,37 @@ function armMicForUser(): void {
   echoMuted = false;
   allowEchoMute = false;
   applyMicMuted();
+}
+
+/**
+ * One-shot stop of current TTS for a dig/click handoff. Does not latch hush —
+ * that would keep muting through a long research wait / session reconnect and
+ * leave the next reply visually "speaking" but silent.
+ */
+export function interruptSpeechEnginePlayback(): void {
+  window.clearInterval(hushEnforceTimer);
+  hushEnforceTimer = 0;
+  hushed = false;
+  userAfterHush = false;
+  cutPlayback();
+  try {
+    active?.sendUserActivity();
+  } catch {
+    /* session may already be closing */
+  }
+  void fetch(speechHushUrl(), { method: "POST", keepalive: true }).catch(() => {
+    /* desktop may already have finished sending the reply */
+  });
+}
+
+/** Make sure Speech Engine audio can be heard (clears a stuck Shhh mute). */
+export function ensureSpeechEngineAudible(): void {
+  hushed = false;
+  userAfterHush = false;
+  window.clearInterval(hushEnforceTimer);
+  hushEnforceTimer = 0;
+  allowEchoMute = true;
+  restorePlayback();
 }
 
 /**
@@ -274,13 +353,8 @@ export function noteSpeechEngineUserTurn(): void {
 }
 
 export function releaseSpeechEngineHush(): void {
-  if (!hushed) return;
-  hushed = false;
-  userAfterHush = false;
-  window.clearInterval(hushEnforceTimer);
-  hushEnforceTimer = 0;
-  allowEchoMute = true;
-  restorePlayback();
+  if (!hushed && !hushEnforceTimer) return;
+  ensureSpeechEngineAudible();
 }
 
 export async function stopSpeechEngineSession(): Promise<void> {

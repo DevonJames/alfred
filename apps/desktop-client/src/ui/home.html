@@ -74,6 +74,55 @@
         color: var(--mint);
         border-color: rgba(61, 255, 196, 0.35);
       }
+      .nav-menu {
+        position: relative;
+      }
+      .nav-menu-trigger {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+      }
+      .nav-menu-trigger::after {
+        content: "";
+        width: 0;
+        height: 0;
+        border-left: 3.5px solid transparent;
+        border-right: 3.5px solid transparent;
+        border-top: 4px solid currentColor;
+        opacity: 0.7;
+      }
+      .nav-menu.open > .nav-menu-trigger,
+      .nav-menu.has-active > .nav-menu-trigger {
+        color: var(--mint);
+        border-color: rgba(61, 255, 196, 0.35);
+      }
+      .nav-menu-panel {
+        display: none;
+        position: absolute;
+        top: calc(100% + 0.35rem);
+        left: 0;
+        min-width: 11.5rem;
+        padding: 0.3rem;
+        border: 1px solid var(--line);
+        background: rgba(8, 12, 18, 0.98);
+        box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+        z-index: 20;
+      }
+      .nav-menu.open > .nav-menu-panel {
+        display: grid;
+        gap: 0.15rem;
+      }
+      .nav-menu-panel button {
+        width: 100%;
+        text-align: left;
+        padding: 0.45rem 0.65rem;
+        letter-spacing: 0.12em;
+      }
+      .nav-menu-panel button.active {
+        color: var(--mint);
+        border-color: rgba(61, 255, 196, 0.35);
+        background: rgba(61, 255, 196, 0.06);
+      }
       .backronym {
         margin-left: auto;
         color: var(--muted);
@@ -190,13 +239,30 @@
     <nav class="shell-nav" id="shell-nav">
       <span class="brand">ALFRED</span>
       <button type="button" data-screen="voice" class="active">Talk</button>
-      <button type="button" data-screen="brief">Brief</button>
-      <button type="button" data-screen="notes">Notes</button>
-      <button type="button" data-screen="graph">Graph</button>
-      <button type="button" data-screen="graphBeta">Graph (beta)</button>
-      <button type="button" data-screen="vectors">Vector Explorer</button>
-      <button type="button" data-screen="ingest">Ingest</button>
-      <button type="button" data-screen="claim">Claim</button>
+      <button type="button" data-screen="agenda">Agenda</button>
+      <button type="button" data-screen="reminders">Reminders</button>
+      <div class="nav-menu" data-menu="memory">
+        <button type="button" class="nav-menu-trigger" aria-expanded="false" aria-haspopup="true">
+          Memory
+        </button>
+        <div class="nav-menu-panel" role="menu">
+          <button type="button" data-screen="graph" role="menuitem">Graph</button>
+          <button type="button" data-screen="graphBeta" role="menuitem">Graph (beta)</button>
+          <button type="button" data-screen="vectors" role="menuitem">Vector Explorer</button>
+        </div>
+      </div>
+      <div class="nav-menu" data-menu="settings">
+        <button type="button" class="nav-menu-trigger" aria-expanded="false" aria-haspopup="true">
+          Settings
+        </button>
+        <div class="nav-menu-panel" role="menu">
+          <button type="button" data-screen="brief" role="menuitem">Briefing</button>
+          <button type="button" data-screen="gateway" role="menuitem">Gateway</button>
+          <button type="button" data-screen="notes" role="menuitem">Notes</button>
+          <button type="button" data-screen="ingest" role="menuitem">Ingest</button>
+          <button type="button" data-screen="claim" role="menuitem">Claim</button>
+        </div>
+      </div>
       <span class="backronym">Agentic Local Framework for Reasoning, Experience &amp; Doing</span>
     </nav>
     <div class="stage">
@@ -206,7 +272,7 @@
         title="Alfred talk"
         allow="microphone; autoplay"
       ></iframe>
-      <iframe id="content-frame" class="is-hidden" title="Alfred"></iframe>
+      <iframe id="content-frame" class="is-hidden" title="Alfred" allow="microphone; autoplay"></iframe>
     </div>
     <button id="voice-pip" type="button" hidden>
       <canvas id="pip-wave" width="320" height="44" aria-hidden="true"></canvas>

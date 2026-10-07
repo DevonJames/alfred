@@ -36,9 +36,11 @@ import { handleLiveControlPayload } from "./live/control.js";
 import { buildLiveBackendInstructions, buildLiveVoiceInstructions } from "./live/instructions.js";
 import { createAlfredLiveTools } from "./live/tools.js";
 import { createRoomUiTranscriptPublisher } from "./live/ui-transcripts.js";
+import { appendConversationTurn, setConversationHistoryStack } from "./conversation-history.js";
 
 loadEnv({ path: resolve(process.cwd(), "../../.env") });
 loadEnv();
+setConversationHistoryStack("live");
 
 export const LIVE_AGENT_NAME = process.env.LIVEKIT_AGENT_NAME?.trim() || "alfred-live";
 const LIVE_IDENTITY = process.env.LIVEKIT_IDENTITY?.trim() || "alfred-agent";
@@ -389,8 +391,10 @@ export default defineAgent({
     };
 
     let enrichGen = 0;
-    const commitAndEnrichUserTurn = (text: string): void => {
+    let lastUserSource: "voice" | "text" = "voice";
+    const commitAndEnrichUserTurn = (text: string, source: "voice" | "text" = "voice"): void => {
       const gen = ++enrichGen;
+      lastUserSource = source;
 
       void brain.memory
         .commitTurn({
@@ -402,6 +406,9 @@ export default defineAgent({
           metadata: { stack: "gpt-live", jobId: ctx.job.id },
         })
         .catch((err) => console.error("[voice:live] commitTurn (user) failed:", err));
+      void appendConversationTurn({ role: "user", text, source, stack: "live" }).catch((err) =>
+        console.error("[voice:live] conversation history (user) failed:", err),
+      );
 
       void (async () => {
         try {
@@ -436,8 +443,11 @@ export default defineAgent({
             if (decision.newsHeadlines?.length) {
               brain.news.rememberHeadlines(decision.newsHeadlines);
             }
-            // Briefing speech also drives the caption HUD in parallel.
-            ui.beginCaption("");
+            // Structured Daily Brief layout for the voice HUD; speech still drives TTS.
+            ui.beginCaption(decision.speech, {
+              layout: "briefing",
+              display: decision.payload.display,
+            });
             ui.revealCaption(decision.speech);
             duplex.appendCommentary(clipAppend(decision.speech));
           } else if (decision.action === "decline") {
@@ -492,6 +502,12 @@ export default defineAgent({
           metadata: { stack: "gpt-live", jobId: ctx.job.id },
         })
         .catch((err) => console.error("[voice:live] commitTurn (assistant) failed:", err));
+      void appendConversationTurn({
+        role: "assistant",
+        text,
+        source: lastUserSource,
+        stack: "live",
+      }).catch((err) => console.error("[voice:live] conversation history (assistant) failed:", err));
     });
 
     await ctx.connect();
@@ -511,7 +527,7 @@ export default defineAgent({
         return;
       }
       ui.publishUser(text, "final");
-      commitAndEnrichUserTurn(text);
+      commitAndEnrichUserTurn(text, "text");
       try {
         session.interrupt();
       } catch (err) {

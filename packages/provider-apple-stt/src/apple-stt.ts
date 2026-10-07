@@ -117,6 +117,10 @@ export function resolveAppleSttBinary(explicit?: string): string | undefined {
 
   const here = dirname(fileURLToPath(import.meta.url));
   const candidates = [
+    join(here, "../bin/AlfredAppleSTT.app/Contents/MacOS/alfred-apple-stt"),
+    join(here, "../../bin/AlfredAppleSTT.app/Contents/MacOS/alfred-apple-stt"),
+    join(process.cwd(), "packages/provider-apple-stt/bin/AlfredAppleSTT.app/Contents/MacOS/alfred-apple-stt"),
+    join(process.cwd(), "bin/AlfredAppleSTT.app/Contents/MacOS/alfred-apple-stt"),
     join(here, "../bin/alfred-apple-stt"),
     join(here, "../../bin/alfred-apple-stt"),
     join(process.cwd(), "packages/provider-apple-stt/bin/alfred-apple-stt"),
@@ -204,10 +208,17 @@ class AppleSpeechSession implements StreamingSTTSession {
       markFailed(err);
       this.push(null);
     });
-    this.child.on("close", (code) => {
+    this.child.on("close", (code, signal) => {
       if (!this.closed) {
-        this.log.warn(`[apple-stt] helper exited code=${code ?? "?"}`);
-        markFailed(new Error(`Apple STT helper exited code=${code ?? "?"}`));
+        const why = signal ? `signal=${signal}` : `code=${code ?? "?"}`;
+        this.log.warn(`[apple-stt] helper exited ${why}`);
+        const err = new Error(
+          signal
+            ? "Apple speech recognition was blocked before it could start. Voice will use the next speech provider."
+            : `Apple STT helper exited code=${code ?? "?"}`,
+        );
+        (err as Error & { failureClass: "unavailable" }).failureClass = "unavailable";
+        markFailed(err);
       }
       this.push(null);
     });

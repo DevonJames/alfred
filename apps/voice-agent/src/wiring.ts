@@ -9,6 +9,7 @@ import {
 } from "@alfred/core";
 import { LiveKitMediaBridge } from "@alfred/livekit";
 import { createInMemoryPersistence } from "@alfred/persistence";
+import { conversationHistoryPort } from "./conversation-history.js";
 import {
   DEEPGRAM_FLUX_PROVIDER_ID,
   DeepgramFluxSTTProvider,
@@ -201,6 +202,8 @@ export async function createCascadedVoiceRuntime(opts?: {
     currentTime: brain.currentTime,
     situational: brain.situational,
     lights: brain.lights,
+    archive: brain.archive,
+    conversationHistory: conversationHistoryPort(),
   });
 
   return {

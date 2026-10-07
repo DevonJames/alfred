@@ -1,0 +1,429 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Alfred // Reminders</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Syne:wght@700;800&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg: #0b0f14;
+        --fg: #e8eef5;
+        --muted: #8b9bb0;
+        --line: #1c2733;
+        --accent: #7ee0c3;
+        --warn: #e0c07e;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family: "IBM Plex Mono", ui-monospace, monospace;
+        background:
+          radial-gradient(1200px 600px at 20% -10%, #163049 0%, transparent 55%),
+          radial-gradient(900px 500px at 100% 20%, #1a2a22 0%, transparent 50%), var(--bg);
+        color: var(--fg);
+        padding: 2rem 1.25rem 3rem;
+      }
+      main { width: min(46rem, 100%); margin: 0 auto; }
+      .brand {
+        font-family: Syne, sans-serif;
+        font-weight: 800;
+        font-size: clamp(1.6rem, 4vw, 2.1rem);
+        margin: 0 0 0.35rem;
+      }
+      .sub, .hint, .meta { color: var(--muted); }
+      .sub { font-size: 0.72rem; letter-spacing: 0.14em; text-transform: uppercase; margin: 0 0 1.25rem; }
+      .hint { font-size: 0.75rem; line-height: 1.45; margin: 0 0 1.25rem; }
+      section {
+        border: 1px solid var(--line);
+        background: rgba(12, 18, 26, 0.55);
+        padding: 1.1rem 1.15rem;
+        margin-bottom: 1rem;
+      }
+      h2 { margin: 0 0 0.85rem; font-size: 0.95rem; font-weight: 600; }
+      .item, .proposal, .row {
+        display: flex;
+        gap: 0.75rem;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0.55rem 0;
+        border-top: 1px solid var(--line);
+      }
+      .item:first-of-type, .proposal:first-of-type, .row:first-of-type { border-top: 0; }
+      .proposal { display: block; }
+      .proposal-top { display: flex; gap: 0.75rem; align-items: flex-start; justify-content: space-between; }
+      .copy { flex: 1; min-width: 0; }
+      .title { font-size: 0.92rem; }
+      input.title {
+        width: 100%;
+        font-size: 0.92rem;
+        background: transparent;
+        border-color: transparent;
+        padding-left: 0;
+      }
+      input.title:focus { border-color: var(--line); background: #101820; }
+      .context { margin-top: 0.75rem; border-top: 1px solid var(--line); }
+      .line { padding: 0.45rem 0; border-top: 1px solid var(--line); }
+      .line.focus { background: rgba(126, 224, 195, 0.08); margin: 0 -0.4rem; padding: 0.45rem 0.4rem; }
+      .who { font-size: 0.72rem; color: var(--accent); }
+      .line .text { font-size: 0.82rem; white-space: pre-wrap; margin-top: 0.15rem; }
+      .meta { font-size: 0.72rem; margin-top: 0.2rem; }
+      button, select, input {
+        font: inherit;
+        color: var(--fg);
+        background: #101820;
+        border: 1px solid var(--line);
+        padding: 0.35rem 0.55rem;
+      }
+      input[type="date"] { color-scheme: dark; }
+      button { cursor: pointer; }
+      button.primary { color: #042018; background: var(--accent); border-color: var(--accent); }
+      .status { min-height: 1.2rem; font-size: 0.75rem; color: var(--warn); }
+      .controls { display: flex; gap: 0.4rem; align-items: center; flex-wrap: wrap; }
+      details.setup {
+        border: 1px solid var(--line);
+        background: rgba(12, 18, 26, 0.55);
+        margin-bottom: 1rem;
+      }
+      details.setup summary {
+        cursor: pointer;
+        padding: 1.1rem 1.15rem;
+        font-size: 0.95rem;
+        font-weight: 600;
+        list-style: none;
+      }
+      details.setup summary::-webkit-details-marker { display: none; }
+      details.setup summary::before { content: "▸  "; color: var(--muted); }
+      details.setup[open] summary { border-bottom: 1px solid var(--line); }
+      details.setup[open] summary::before { content: "▾  "; }
+      #lists { padding: 0 1.15rem 0.35rem; }
+      #lists section { border: 0; background: transparent; padding: 0.85rem 0 0.35rem; margin: 0; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1 class="brand">Reminders</h1>
+      <p class="sub">Apple Reminders · message commitments</p>
+      <p class="hint">
+        Lists start at No Access. Write access lets Alfred add a reminder after you approve it, change its day, and check one off.
+        A promise in Messages waits here until you approve it. The morning brief reads what is due today and what is still open from earlier.
+      </p>
+      <p class="status" id="status"></p>
+      <div id="proposals"></div>
+      <div id="items"></div>
+      <details class="setup">
+        <summary>Setup Access</summary>
+        <div id="lists"></div>
+      </details>
+    </main>
+    <script>
+      const statusEl = document.getElementById("status");
+      let sources = [];
+
+      function setStatus(text) {
+        statusEl.textContent = text || "";
+      }
+
+      function writeLists() {
+        return sources.flatMap((source) => source.lists.filter((list) => list.access === "write"));
+      }
+
+      function listAccess(listId) {
+        for (const source of sources) {
+          const list = source.lists.find((entry) => entry.id === listId);
+          if (list) return list.access;
+        }
+        return "read";
+      }
+
+      function dueInputValue(due) {
+        return typeof due === "string" && /^\d{4}-\d{2}-\d{2}/.test(due) ? due.slice(0, 10) : "";
+      }
+
+      async function load() {
+        const res = await fetch("/reminders/board");
+        const data = await res.json();
+        if (data.error) setStatus(data.error);
+        sources = data.sources || [];
+        renderProposals(data.proposals || []);
+        renderItems(data.items || []);
+        renderLists();
+      }
+
+      function renderProposals(proposals) {
+        const root = document.getElementById("proposals");
+        root.replaceChildren();
+        const section = document.createElement("section");
+        const heading = document.createElement("h2");
+        heading.textContent = "Waiting for approval";
+        section.appendChild(heading);
+        if (!proposals.length) {
+          const empty = document.createElement("p");
+          empty.className = "hint";
+          empty.textContent = "Nothing from Messages is waiting.";
+          section.appendChild(empty);
+        }
+        for (const proposal of proposals) {
+          const row = document.createElement("div");
+          row.className = "proposal";
+          const top = document.createElement("div");
+          top.className = "proposal-top";
+          const copy = document.createElement("div");
+          copy.className = "copy";
+          const title = document.createElement("input");
+          title.className = "title";
+          title.type = "text";
+          title.value = proposal.title || "";
+          title.setAttribute("aria-label", "Task wording");
+          title.addEventListener("change", () => {
+            const next = title.value.trim();
+            if (!next || next === proposal.title) return;
+            proposal.title = next;
+            void fetch(`/reminders/proposals/${encodeURIComponent(proposal.id)}/title`, {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ title: next }),
+            });
+          });
+          const meta = document.createElement("div");
+          meta.className = "meta";
+          const origin = proposal.isGroup
+            ? proposal.chatName
+              ? `Group · ${proposal.chatName}`
+              : "Group conversation"
+            : proposal.handle || "Direct message";
+          const when = proposal.sentAt
+            ? new Date(proposal.sentAt).toLocaleString(undefined, {
+                weekday: "short",
+                month: "short",
+                day: "numeric",
+                hour: "numeric",
+                minute: "2-digit",
+              })
+            : "Date unknown";
+          meta.textContent = `${when} · ${origin}`;
+          const quote = document.createElement("div");
+          quote.className = "meta";
+          quote.textContent = proposal.quote;
+          const contextButton = document.createElement("button");
+          contextButton.type = "button";
+          contextButton.textContent = "Context";
+          const context = document.createElement("div");
+          context.className = "context";
+          context.hidden = true;
+          copy.append(title, meta, quote, contextButton);
+          const controls = document.createElement("div");
+          controls.className = "controls";
+          const due = document.createElement("input");
+          due.type = "date";
+          due.value = proposal.due || "";
+          const select = document.createElement("select");
+          for (const list of writeLists()) {
+            const option = document.createElement("option");
+            option.value = list.id;
+            option.textContent = list.title;
+            select.appendChild(option);
+          }
+          if (!select.options.length) {
+            const option = document.createElement("option");
+            option.textContent = "No writable list";
+            select.appendChild(option);
+            select.disabled = true;
+          }
+          const approve = document.createElement("button");
+          approve.className = "primary";
+          approve.textContent = "Add";
+          approve.disabled = select.disabled;
+          approve.addEventListener("click", async () => {
+            setStatus("");
+            const res = await fetch(`/reminders/proposals/${encodeURIComponent(proposal.id)}/approve`, {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ listId: select.value, due: due.value, title: title.value }),
+            });
+            const body = await res.json().catch(() => ({}));
+            if (!res.ok) setStatus(body.error || "Could not add it");
+            await load();
+          });
+          const dismiss = document.createElement("button");
+          dismiss.textContent = "Dismiss";
+          dismiss.addEventListener("click", async () => {
+            await fetch(`/reminders/proposals/${encodeURIComponent(proposal.id)}/dismiss`, { method: "POST" });
+            await load();
+          });
+          contextButton.addEventListener("click", async () => {
+            if (!context.hidden) {
+              context.hidden = true;
+              contextButton.textContent = "Context";
+              return;
+            }
+            contextButton.textContent = "Loading";
+            const res = await fetch(`/reminders/proposals/${encodeURIComponent(proposal.id)}/context`);
+            const body = await res.json().catch(() => ({}));
+            context.replaceChildren();
+            if (!res.ok) {
+              setStatus(body.error || "Could not load the conversation");
+              contextButton.textContent = "Context";
+              return;
+            }
+            for (const line of body.lines || []) {
+              const item = document.createElement("div");
+              item.className = line.focus ? "line focus" : "line";
+              const who = document.createElement("div");
+              who.className = "who";
+              const lineWhen = line.at
+                ? new Date(line.at).toLocaleString(undefined, {
+                    month: "short",
+                    day: "numeric",
+                    hour: "numeric",
+                    minute: "2-digit",
+                  })
+                : "";
+              who.textContent = `${line.fromMe ? "You" : line.handle || "Them"}${lineWhen ? ` · ${lineWhen}` : ""}`;
+              const text = document.createElement("div");
+              text.className = "text";
+              text.textContent = line.text || "(no text)";
+              item.append(who, text);
+              context.appendChild(item);
+            }
+            if (!context.childElementCount) {
+              const empty = document.createElement("p");
+              empty.className = "hint";
+              empty.textContent = "No nearby messages.";
+              context.appendChild(empty);
+            }
+            context.hidden = false;
+            contextButton.textContent = "Hide";
+          });
+          controls.append(due, select, approve, dismiss);
+          top.append(copy, controls);
+          row.append(top, context);
+          section.appendChild(row);
+        }
+        root.appendChild(section);
+      }
+
+      function renderItems(items) {
+        const root = document.getElementById("items");
+        root.replaceChildren();
+        const section = document.createElement("section");
+        const heading = document.createElement("h2");
+        heading.textContent = "Open";
+        section.appendChild(heading);
+        if (!items.length) {
+          const empty = document.createElement("p");
+          empty.className = "hint";
+          empty.textContent = "No open reminders on the lists Alfred can read.";
+          section.appendChild(empty);
+        }
+        for (const item of items) {
+          const row = document.createElement("div");
+          row.className = "item";
+          const copy = document.createElement("div");
+          const title = document.createElement("div");
+          title.className = "title";
+          title.textContent = item.title;
+          const meta = document.createElement("div");
+          meta.className = "meta";
+          meta.textContent = item.listTitle || "";
+          copy.append(title, meta);
+          const controls = document.createElement("div");
+          controls.className = "controls";
+          const due = document.createElement("input");
+          due.type = "date";
+          due.value = dueInputValue(item.due);
+          due.setAttribute("aria-label", `Due date for ${item.title}`);
+          const writable = listAccess(item.listId) === "write";
+          due.disabled = !writable;
+          if (!writable) due.title = "This list is not open for changes.";
+          due.addEventListener("change", async () => {
+            setStatus("");
+            const res = await fetch("/reminders/due", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ id: item.id, due: due.value }),
+            });
+            const body = await res.json().catch(() => ({}));
+            if (!res.ok) setStatus(body.error || "Could not change the day");
+            else setStatus(due.value ? "Due date updated." : "Due date cleared.");
+            await load();
+          });
+          const done = document.createElement("button");
+          done.textContent = "Done";
+          done.addEventListener("click", async () => {
+            const res = await fetch("/reminders/complete", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ id: item.id }),
+            });
+            const body = await res.json().catch(() => ({}));
+            if (!res.ok) setStatus(body.error || "Could not check it off");
+            await load();
+          });
+          controls.append(due, done);
+          row.append(copy, controls);
+          section.appendChild(row);
+        }
+        root.appendChild(section);
+      }
+
+      function renderLists() {
+        const root = document.getElementById("lists");
+        root.replaceChildren();
+        for (const source of sources) {
+          const section = document.createElement("section");
+          const heading = document.createElement("h2");
+          heading.textContent = source.sourceTitle || "Lists";
+          section.appendChild(heading);
+          for (const list of source.lists) {
+            const row = document.createElement("div");
+            row.className = "row";
+            const name = document.createElement("div");
+            name.className = "title";
+            name.textContent = list.title;
+            const select = document.createElement("select");
+            for (const access of ["none", "read", "write"]) {
+              const option = document.createElement("option");
+              option.value = access;
+              option.textContent = access === "none" ? "No Access" : access === "read" ? "Read" : "Write";
+              if (access === "write" && !list.writeEnabled) option.disabled = true;
+              if (access === list.access) option.selected = true;
+              select.appendChild(option);
+            }
+            select.addEventListener("change", async () => {
+              list.access = select.value;
+              const grants = sources.flatMap((group) =>
+                group.lists.map((entry) => ({
+                  id: entry.id,
+                  access: entry.access,
+                  title: entry.title,
+                  sourceIdentifier: entry.sourceIdentifier,
+                  sourceTitle: entry.sourceTitle,
+                })),
+              );
+              const res = await fetch("/reminders/lists", {
+                method: "PUT",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({ grants }),
+              });
+              const body = await res.json().catch(() => ({}));
+              if (body.error) setStatus(body.error);
+              await load();
+            });
+            row.append(name, select);
+            section.appendChild(row);
+          }
+          root.appendChild(section);
+        }
+      }
+
+      load().catch((err) => setStatus(String(err)));
+    </script>
+  </body>
+</html>

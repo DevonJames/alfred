@@ -69,7 +69,8 @@ export async function removeXSource(
   note: string,
 ): Promise<XSource | undefined> {
   const sources = await loadXSources(profileId);
-  const idx = sources.findIndex((s) => s.note.toLowerCase() === note.trim().toLowerCase());
+  const q = note.trim().toLowerCase();
+  const idx = sources.findIndex((s) => s.id.toLowerCase() === q || s.note.toLowerCase() === q);
   if (idx < 0) return undefined;
   const [removed] = sources.splice(idx, 1);
   await saveXSources(profileId, sources);

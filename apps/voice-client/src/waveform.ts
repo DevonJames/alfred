@@ -1,16 +1,25 @@
 /**
  * Live oscilloscope + spectral bars driven by Web Audio AnalyserNode
  * attached to Alfred's remote MediaStreamTrack (not a canned loop).
+ * Extra surfaces (Agenda, the shell meter) are the same paint.
  */
+
+type WaveCanvas = HTMLCanvasElement | OffscreenCanvas;
+
+interface Mirror {
+  id: string;
+  canvas: OffscreenCanvas;
+}
 
 export class LiveWaveform {
   private readonly canvas: HTMLCanvasElement;
   private readonly ctx: CanvasRenderingContext2D;
+  private readonly mirrors: Mirror[] = [];
   private audioCtx?: AudioContext;
   private analyser?: AnalyserNode;
   private source?: MediaStreamAudioSourceNode;
   private raf = 0;
-  private running = false;
+  private live = false;
   private timeData = new Uint8Array(0);
   private freqData = new Uint8Array(0);
   private smoothed = 0;
@@ -28,8 +37,25 @@ export class LiveWaveform {
     this.onLevel = handler;
   }
 
+  /** Same paint as Talk, on a canvas that lives in Agenda or the shell. */
+  setMirror(id: string, canvas: OffscreenCanvas): void {
+    const existing = this.mirrors.findIndex((mirror) => mirror.id === id);
+    if (existing >= 0) this.mirrors.splice(existing, 1);
+    this.mirrors.push({ id, canvas });
+    this.requestFrame();
+  }
+
+  resizeMirror(id: string, width: number, height: number): void {
+    const mirror = this.mirrors.find((item) => item.id === id);
+    if (!mirror || width < 1 || height < 1) return;
+    if (mirror.canvas.width !== width || mirror.canvas.height !== height) {
+      mirror.canvas.width = width;
+      mirror.canvas.height = height;
+    }
+  }
+
   async attach(track: MediaStreamTrack): Promise<void> {
-    this.detach();
+    this.releaseAudio();
     this.audioCtx = new AudioContext();
     if (this.audioCtx.state === "suspended") {
       await this.audioCtx.resume();
@@ -43,13 +69,19 @@ export class LiveWaveform {
     // Do not connect to destination — HTMLAudioElement already plays the track.
     this.timeData = new Uint8Array(this.analyser.fftSize);
     this.freqData = new Uint8Array(this.analyser.frequencyBinCount);
-    this.running = true;
-    this.loop();
+    this.live = true;
+    this.requestFrame();
   }
 
   detach(): void {
-    this.running = false;
-    cancelAnimationFrame(this.raf);
+    this.live = false;
+    this.releaseAudio();
+    this.paintAll(false);
+    if (this.mirrors.length) this.requestFrame();
+    else this.cancel();
+  }
+
+  private releaseAudio(): void {
     try {
       this.source?.disconnect();
     } catch {
@@ -64,59 +96,81 @@ export class LiveWaveform {
     this.source = undefined;
     this.analyser = undefined;
     this.audioCtx = undefined;
-    this.drawIdle();
+  }
+
+  private cancel(): void {
+    cancelAnimationFrame(this.raf);
+    this.raf = 0;
+  }
+
+  private requestFrame(): void {
+    if (this.raf) return;
+    this.raf = requestAnimationFrame(this.loop);
   }
 
   private loop = (): void => {
-    if (!this.running) return;
-    this.draw();
-    this.raf = requestAnimationFrame(this.loop);
+    this.raf = 0;
+    const analyser = this.live ? this.analyser : undefined;
+    if (analyser) {
+      analyser.getByteTimeDomainData(this.timeData);
+      analyser.getByteFrequencyData(this.freqData);
+      let sumSq = 0;
+      for (let i = 0; i < this.timeData.length; i++) {
+        const v = (this.timeData[i]! - 128) / 128;
+        sumSq += v * v;
+      }
+      const rms = Math.sqrt(sumSq / this.timeData.length);
+      this.smoothed = this.smoothed * 0.82 + rms * 0.18;
+      this.onLevel?.(this.smoothed);
+      this.phase += 0.02 + this.smoothed * 0.35;
+      this.paintAll(true);
+    } else {
+      this.paintAll(false);
+    }
+    if (this.live || this.mirrors.length) this.requestFrame();
   };
 
-  private drawIdle(): void {
-    const { width: w, height: h } = this.canvas;
-    const g = this.ctx;
-    g.clearRect(0, 0, w, h);
-    g.strokeStyle = "rgba(61, 255, 196, 0.25)";
-    g.lineWidth = 1.5;
-    g.beginPath();
-    g.moveTo(0, h / 2);
-    g.lineTo(w, h / 2);
-    g.stroke();
+  private paintAll(active: boolean): void {
+    this.paint(this.ctx, this.canvas.width, this.canvas.height, active);
+    for (let i = this.mirrors.length - 1; i >= 0; i--) {
+      const mirror = this.mirrors[i]!;
+      const g = mirror.canvas.getContext("2d");
+      if (!g) {
+        this.mirrors.splice(i, 1);
+        continue;
+      }
+      try {
+        this.paint(g, mirror.canvas.width, mirror.canvas.height, active);
+      } catch {
+        this.mirrors.splice(i, 1);
+      }
+    }
   }
 
-  private draw(): void {
-    const analyser = this.analyser;
-    if (!analyser) {
-      this.drawIdle();
+  private paint(
+    g: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D,
+    w: number,
+    h: number,
+    active: boolean,
+  ): void {
+    g.setTransform(1, 0, 0, 1, 0, 0);
+    g.clearRect(0, 0, w, h);
+    if (!active || !this.analyser) {
+      g.strokeStyle = "rgba(61, 255, 196, 0.25)";
+      g.lineWidth = 1.5;
+      g.beginPath();
+      g.moveTo(0, h / 2);
+      g.lineTo(w, h / 2);
+      g.stroke();
       return;
     }
 
-    analyser.getByteTimeDomainData(this.timeData);
-    analyser.getByteFrequencyData(this.freqData);
-
-    let sumSq = 0;
-    for (let i = 0; i < this.timeData.length; i++) {
-      const v = (this.timeData[i]! - 128) / 128;
-      sumSq += v * v;
-    }
-    const rms = Math.sqrt(sumSq / this.timeData.length);
-    this.smoothed = this.smoothed * 0.82 + rms * 0.18;
-    this.onLevel?.(this.smoothed);
-    this.phase += 0.02 + this.smoothed * 0.35;
-
-    const { width: w, height: h } = this.canvas;
-    const g = this.ctx;
-    g.clearRect(0, 0, w, h);
-
-    // Soft phosphor bloom under the wave
     const bloom = g.createRadialGradient(w / 2, h / 2, 20, w / 2, h / 2, w * 0.45);
     bloom.addColorStop(0, `rgba(61, 255, 196, ${0.04 + this.smoothed * 0.25})`);
     bloom.addColorStop(1, "rgba(61, 255, 196, 0)");
     g.fillStyle = bloom;
     g.fillRect(0, 0, w, h);
 
-    // Spectral bars (lower half mirror)
     const bars = 64;
     const barW = w / bars;
     for (let i = 0; i < bars; i++) {
@@ -131,7 +185,6 @@ export class LiveWaveform {
       g.fillRect(x + 1, h / 2, barW - 2, bh * 0.85);
     }
 
-    // Center oscilloscope
     g.lineWidth = 2.2;
     g.strokeStyle = `rgba(215, 246, 255, ${0.55 + this.smoothed})`;
     g.shadowColor = "rgba(61, 255, 196, 0.65)";
@@ -148,7 +201,6 @@ export class LiveWaveform {
     g.stroke();
     g.shadowBlur = 0;
 
-    // Secondary phase-shifted ghost trail
     g.strokeStyle = `rgba(61, 255, 196, ${0.2 + this.smoothed * 0.35})`;
     g.lineWidth = 1.2;
     g.beginPath();
@@ -164,7 +216,6 @@ export class LiveWaveform {
     }
     g.stroke();
 
-    // Crosshair
     g.strokeStyle = "rgba(111, 143, 163, 0.35)";
     g.lineWidth = 1;
     g.setLineDash([4, 6]);

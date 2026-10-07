@@ -1,0 +1,381 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Alfred // Context &amp; Action Gateway</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Syne:wght@700;800&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg: #0b0f14;
+        --fg: #e8eef5;
+        --muted: #8b9bb0;
+        --line: #1c2733;
+        --accent: #7ee0c3;
+        --mint: #3dffc4;
+        --warn: #e0c07e;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family: "IBM Plex Mono", ui-monospace, monospace;
+        background:
+          radial-gradient(1200px 600px at 20% -10%, #163049 0%, transparent 55%),
+          radial-gradient(900px 500px at 100% 20%, #1a2a22 0%, transparent 50%), var(--bg);
+        color: var(--fg);
+        padding: 2rem 1.25rem 3rem;
+      }
+      main {
+        width: min(46rem, 100%);
+        margin: 0 auto;
+      }
+      .brand {
+        font-family: Syne, sans-serif;
+        font-weight: 800;
+        font-size: clamp(1.6rem, 4vw, 2.1rem);
+        letter-spacing: 0.03em;
+        line-height: 1.05;
+        margin: 0 0 0.35rem;
+      }
+      .sub {
+        color: var(--muted);
+        font-size: 0.72rem;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        margin: 0 0 1.25rem;
+      }
+      section {
+        border: 1px solid var(--line);
+        background: rgba(12, 18, 26, 0.55);
+        padding: 1.1rem 1.15rem 0.4rem;
+        margin-bottom: 1rem;
+      }
+      h2 {
+        margin: 0;
+        font-size: 0.95rem;
+        letter-spacing: 0.02em;
+        font-weight: 600;
+      }
+      .source-type {
+        color: var(--muted);
+        font-size: 0.68rem;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        margin: 0.2rem 0 0.85rem;
+      }
+      .hint {
+        color: var(--muted);
+        font-size: 0.75rem;
+        line-height: 1.45;
+        margin: 0 0 1.25rem;
+      }
+      .row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 0.75rem;
+        align-items: center;
+        padding: 0.7rem 0;
+        border-top: 1px solid var(--line);
+      }
+      .name {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 0.55rem;
+        min-width: 0;
+      }
+      .skip {
+        flex: 1 0 100%;
+        display: flex;
+        align-items: center;
+        gap: 0.4rem;
+        margin-left: 1.25rem;
+        color: var(--muted);
+        font-size: 0.65rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        cursor: pointer;
+      }
+      .skip input {
+        accent-color: var(--mint);
+        margin: 0;
+      }
+      .swatch {
+        width: 0.7rem;
+        height: 0.7rem;
+        border-radius: 2px;
+        flex: none;
+        background: var(--muted);
+      }
+      .title {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .readonly {
+        color: var(--muted);
+        font-size: 0.65rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+      fieldset {
+        border: 1px solid var(--line);
+        margin: 0;
+        padding: 0;
+        display: flex;
+      }
+      legend {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip: rect(0 0 0 0);
+      }
+      fieldset label {
+        position: relative;
+        cursor: pointer;
+      }
+      fieldset input {
+        position: absolute;
+        opacity: 0;
+        inset: 0;
+      }
+      fieldset span {
+        display: block;
+        padding: 0.4rem 0.55rem;
+        font-size: 0.65rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+      fieldset label:has(input:checked) span {
+        color: var(--bg);
+        background: var(--mint);
+      }
+      fieldset label:has(input:disabled) {
+        cursor: default;
+      }
+      fieldset label:has(input:disabled) span {
+        opacity: 0.35;
+      }
+      #status {
+        font-size: 0.72rem;
+        color: var(--muted);
+        min-height: 1.2rem;
+      }
+      #status.ok {
+        color: var(--accent);
+      }
+      #status.err {
+        color: var(--warn);
+      }
+      .banner {
+        border: 1px solid rgba(224, 192, 126, 0.45);
+        color: var(--warn);
+        padding: 0.8rem 0.9rem;
+        font-size: 0.75rem;
+        line-height: 1.45;
+        margin-bottom: 1rem;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1 class="brand">Context &amp; Action Gateway</h1>
+      <p class="sub">Calendars on this Mac</p>
+      <p class="hint">
+        Each calendar starts at No Access. Read lets Alfred look up events. Write lets Alfred add,
+        move, and delete them. Skip overlaps leaves the calendar on the agenda, and its events do
+        not count when a reminder is placed into a time block. Accounts are the ones Calendar
+        already uses.
+      </p>
+      <p id="status">Loading…</p>
+      <div id="list"></div>
+    </main>
+    <script src="/alfred-base.js"></script>
+    <script src="/embed-bridge.js"></script>
+    <script>
+      const SOURCE_LABELS = {
+        local: "On this Mac",
+        exchange: "Exchange",
+        calDAV: "CalDAV",
+        mobileMe: "iCloud",
+        subscribed: "Subscribed",
+        birthdays: "Birthdays",
+      };
+
+      function api(path) {
+        return typeof alfredUrl === "function" ? alfredUrl(path) : path;
+      }
+
+      function setStatus(text, kind) {
+        const el = document.getElementById("status");
+        el.textContent = text || "";
+        el.className = kind || "";
+      }
+
+      function sourceLabel(type) {
+        return SOURCE_LABELS[type] || type || "";
+      }
+
+      let sources = [];
+      let saving = false;
+      let saveQueued = false;
+
+      function grantsPayload() {
+        const grants = [];
+        for (const source of sources) {
+          for (const calendar of source.calendars) {
+            grants.push({
+              id: calendar.id,
+              access: calendar.access,
+              title: calendar.title,
+              sourceIdentifier: calendar.sourceIdentifier,
+              sourceTitle: calendar.sourceTitle,
+              ignoreOverlaps: calendar.ignoreOverlaps === true,
+            });
+          }
+        }
+        return grants;
+      }
+
+      function render() {
+        const root = document.getElementById("list");
+        root.replaceChildren();
+        if (!sources.length) return;
+        for (const source of sources) {
+          const section = document.createElement("section");
+          const heading = document.createElement("h2");
+          heading.textContent = source.sourceTitle || "Calendars";
+          section.appendChild(heading);
+          const type = document.createElement("p");
+          type.className = "source-type";
+          type.textContent = sourceLabel(source.sourceType);
+          section.appendChild(type);
+          for (const calendar of source.calendars) {
+            section.appendChild(renderRow(calendar));
+          }
+          root.appendChild(section);
+        }
+      }
+
+      function renderRow(calendar) {
+        const row = document.createElement("div");
+        row.className = "row";
+        const name = document.createElement("div");
+        name.className = "name";
+        const swatch = document.createElement("span");
+        swatch.className = "swatch";
+        if (calendar.color) swatch.style.background = calendar.color;
+        const title = document.createElement("span");
+        title.className = "title";
+        title.textContent = calendar.title;
+        name.append(swatch, title);
+        if (!calendar.writeEnabled) {
+          const note = document.createElement("span");
+          note.className = "readonly";
+          note.textContent = "Read only";
+          name.appendChild(note);
+        }
+        const skip = document.createElement("label");
+        skip.className = "skip";
+        const box = document.createElement("input");
+        box.type = "checkbox";
+        box.checked = calendar.ignoreOverlaps === true;
+        box.title = "Events stay on the agenda and do not count as conflicts when placing a reminder.";
+        box.addEventListener("change", () => {
+          calendar.ignoreOverlaps = box.checked;
+          void save();
+        });
+        const skipText = document.createElement("span");
+        skipText.textContent = "Skip overlaps";
+        skip.append(box, skipText);
+        name.appendChild(skip);
+        const field = document.createElement("fieldset");
+        const legend = document.createElement("legend");
+        legend.textContent = calendar.title;
+        field.appendChild(legend);
+        for (const [value, label] of [
+          ["none", "No access"],
+          ["read", "Read"],
+          ["write", "Write"],
+        ]) {
+          const labelEl = document.createElement("label");
+          const input = document.createElement("input");
+          input.type = "radio";
+          input.name = `cal-${calendar.id}`;
+          input.value = value;
+          input.checked = calendar.access === value;
+          if (value === "write" && !calendar.writeEnabled) input.disabled = true;
+          input.addEventListener("change", () => {
+            if (!input.checked) return;
+            calendar.access = value;
+            void save();
+          });
+          const text = document.createElement("span");
+          text.textContent = label;
+          labelEl.append(input, text);
+          field.appendChild(labelEl);
+        }
+        row.append(name, field);
+        return row;
+      }
+
+      async function save() {
+        if (saving) {
+          saveQueued = true;
+          return;
+        }
+        saving = true;
+        setStatus("Saving…");
+        try {
+          const res = await fetch(api("/gateway/calendars"), {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ grants: grantsPayload() }),
+          });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || `Save failed (${res.status})`);
+          if (!saveQueued && Array.isArray(data.sources)) sources = data.sources;
+          if (!saveQueued) render();
+          setStatus(data.error || "Saved.", data.error ? "err" : "ok");
+        } catch (err) {
+          setStatus(err instanceof Error ? err.message : String(err), "err");
+        } finally {
+          saving = false;
+          if (saveQueued) {
+            saveQueued = false;
+            void save();
+          }
+        }
+      }
+
+      async function load() {
+        const res = await fetch(api("/gateway/calendars"));
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || `Failed to load (${res.status})`);
+        sources = Array.isArray(data.sources) ? data.sources : [];
+        render();
+        if (data.error) {
+          const banner = document.createElement("div");
+          banner.className = "banner";
+          banner.textContent = data.error;
+          document.getElementById("list").prepend(banner);
+          setStatus("");
+          return;
+        }
+        setStatus(sources.length ? "" : "No calendars were found on this Mac.");
+      }
+
+      load().catch((err) => setStatus(err instanceof Error ? err.message : String(err), "err"));
+    </script>
+  </body>
+</html>

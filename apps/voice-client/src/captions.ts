@@ -1,7 +1,8 @@
+import type { BriefingDisplay } from "./briefing-hud.js";
 import { markdownToHtml, stripMarkdown } from "./markdown.js";
 
 export type CaptionMessage =
-  | { type: "start"; text: string }
+  | { type: "start"; text: string; display?: BriefingDisplay }
   | { type: "reveal"; text: string }
   | { type: "end"; reason?: string };
 
@@ -192,10 +193,16 @@ export function parseCaptionPayload(data: Uint8Array): CaptionMessage | undefine
       type?: string;
       text?: string;
       reason?: string;
+      display?: BriefingDisplay;
+      layout?: string;
     };
     if (raw.channel && raw.channel !== "alfred.caption") return undefined;
     if (raw.type === "start" && typeof raw.text === "string") {
-      return { type: "start", text: raw.text };
+      const msg: CaptionMessage = { type: "start", text: raw.text };
+      if (raw.layout === "briefing" && raw.display && typeof raw.display === "object") {
+        msg.display = raw.display;
+      }
+      return msg;
     }
     if (raw.type === "reveal" && typeof raw.text === "string") {
       return { type: "reveal", text: raw.text };

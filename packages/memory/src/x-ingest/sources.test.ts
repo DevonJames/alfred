@@ -22,7 +22,7 @@ describe("x-ingest sources", () => {
     expect(added.archiveNote).toBe("Marketing Ingested");
     const sources = await loadXSources("t");
     expect(findXSource(sources, "marketing")?.note).toBe("Marketing");
-    const removed = await removeXSource("t", "Marketing");
+    const removed = await removeXSource("t", added.id);
     expect(removed?.note).toBe("Marketing");
     expect(await loadXSources("t")).toEqual([]);
   });

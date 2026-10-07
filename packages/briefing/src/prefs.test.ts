@@ -36,7 +36,9 @@ describe("briefing prefs file", () => {
       cryptoId: "ethereum",
       includeMetals: true,
       metalSymbol: "silver",
+      includeIngestedNotes: false,
       newsSources: ["NPR", "BBC News"],
+      agendaCalendarIds: ["work-cal"],
     });
     const loaded = await loadBriefingPrefs();
     expect(loaded.launchesMode).toBe("on");
@@ -45,6 +47,8 @@ describe("briefing prefs file", () => {
     expect(loaded.cryptoId).toBe("ethereum");
     expect(loaded.includeMetals).toBe(true);
     expect(loaded.metalSymbol).toBe("silver");
+    expect(loaded.includeIngestedNotes).toBe(false);
     expect(loaded.newsSources).toEqual(["NPR", "BBC News"]);
+    expect(loaded.agendaCalendarIds).toEqual(["work-cal"]);
   });
 });

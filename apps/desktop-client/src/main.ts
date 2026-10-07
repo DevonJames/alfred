@@ -20,14 +20,19 @@ import { fileURLToPath } from "node:url";
 import { startCloudConnect, stopCloudConnect } from "./lib/cloud-connect.js";
 import { endLiveConversation } from "./lib/livekit-session-end.js";
 import { attachSpeechEngine, closeSpeechEngine, isSpeechEngineStack } from "./lib/speech-engine.js";
+import { startMessageWatcher } from "./lib/message-commitments.js";
 import { startXIngestScheduler } from "./lib/x-ingest-schedule.js";
 import { sidecarHostname, sidecarPort, isSidecarMode } from "./lib/sidecar-mode.js";
 import { sidecarRuntimeReady, warmupSidecarMemory } from "./lib/text-session.js";
 import { apiMemoryRouter } from "./routes/api-memory.js";
 import { briefingRouter } from "./routes/briefing.js";
 import { briefingUiRouter } from "./routes/briefing-ui.js";
+import { agendaUiRouter } from "./routes/agenda-ui.js";
+import { gatewayUiRouter } from "./routes/gateway-ui.js";
+import { remindersUiRouter } from "./routes/reminders-ui.js";
 import { connectRouter } from "./routes/connect.js";
 import { conversationRouter } from "./routes/conversation.js";
+import { conversationsRouter } from "./routes/conversations.js";
 import { loadNoteJobs } from "./lib/notes/jobs.js";
 import { resumeInterruptedNoteJobs } from "./lib/notes/service.js";
 import { resolveFfmpeg, resolveFfprobe } from "./lib/notes/audio-chunks.js";
@@ -64,12 +69,15 @@ const statusPayload = {
   pair: "/pair/request",
   sessionToken: "/api/session/token",
   conversationTurn: "/api/conversation/turn",
+  conversations: "/api/conversations",
   memoryApi: "/api/memory",
   memoryIngest: "/memory/ingest",
   memoryGraph: "/memory/graph",
   briefing: "/api/briefing",
   briefingPrefs: "/briefing",
   notes: "/notes",
+  gateway: "/gateway",
+  agenda: "/agenda",
   notesApi: "/api/notes",
   memoryDue: "/api/memory/due",
   token: "/api/token",
@@ -143,12 +151,16 @@ app.route("/api", tokenRouter);
 
 app.route("/api/session", sessionRouter);
 app.route("/api/conversation", conversationRouter);
+app.route("/api/conversations", conversationsRouter);
 app.route("/api/memory", apiMemoryRouter);
 app.route("/api/notes", apiNotesRouter);
 app.route("/api", briefingRouter);
 
 // Local Daily Brief preferences UI (public, like ingest/claim).
 app.route("/briefing", briefingUiRouter);
+app.route("/gateway", gatewayUiRouter);
+app.route("/agenda", agendaUiRouter);
+app.route("/reminders", remindersUiRouter);
 app.route("/notes", notesUiRouter);
 
 // Local browser UIs (ingest/graph) stay public; iOS uses authenticated /api/memory.
@@ -186,6 +198,9 @@ const server = serve({ fetch: app.fetch, port, hostname }, (info) => {
   console.log(`  Briefing:      http://127.0.0.1:${info.port}/api/briefing`);
   console.log(`  Brief prefs:   http://127.0.0.1:${info.port}/briefing`);
   console.log(`  Notes:         http://127.0.0.1:${info.port}/notes`);
+  console.log(`  Gateway:       http://127.0.0.1:${info.port}/gateway`);
+  console.log(`  Agenda:        http://127.0.0.1:${info.port}/agenda`);
+  console.log(`  Reminders:     http://127.0.0.1:${info.port}/reminders`);
   console.log(`  Cloud: ${process.env.ALFRD_CLOUD_URL ?? "https://api.alfrd.net"}`);
   console.log(`  Relay: ${process.env.ALFRD_RELAY_URL ?? "wss://api.alfrd.net"}`);
   console.log(`  Name:  ${process.env.DESKTOP_CLIENT_NAME ?? "Alfred"}`);
@@ -235,6 +250,7 @@ if (!sidecar) {
 }
 
 const stopXIngest = startXIngestScheduler();
+startMessageWatcher();
 void loadNoteJobs()
   .then(() => resumeInterruptedNoteJobs())
   .catch((err) => console.error("[notes] resume failed:", err));

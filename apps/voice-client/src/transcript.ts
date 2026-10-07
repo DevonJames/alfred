@@ -18,6 +18,21 @@ export class TranscriptThread {
     this.render();
   }
 
+  /** Replace the thread with a stored conversation (history resume). */
+  load(messages: Array<{ id?: string; role: "user" | "assistant"; text: string }>): void {
+    this.messages = messages
+      .map((m, i) => ({
+        id: m.id?.trim() || `hist_${i + 1}`,
+        role: m.role,
+        text: m.text.trim(),
+        streaming: false,
+      }))
+      .filter((m) => m.text);
+    this.seq = this.messages.length;
+    this.assistantId = undefined;
+    this.render();
+  }
+
   addLocalUser(text: string): void {
     const trimmed = text.trim();
     if (!trimmed) return;
@@ -69,6 +84,13 @@ export class TranscriptThread {
     }
     const current = this.currentAssistant();
     if (current) current.streaming = false;
+    this.assistantId = undefined;
+    this.render();
+  }
+
+  /** End an in-flight assistant bubble without wiping history (Stop uplink). */
+  endStreaming(): void {
+    for (const m of this.messages) m.streaming = false;
     this.assistantId = undefined;
     this.render();
   }

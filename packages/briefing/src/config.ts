@@ -17,7 +17,10 @@ export interface BriefingConfig {
   indexSymbol: "sp500" | "dow";
   includeMetals: boolean;
   metalSymbol: "gold" | "silver";
+  /** Notes → memory ingest digest (X / YouTube saves) in the spoken briefing. */
+  includeIngestedNotes: boolean;
   newsSources: string[];
+  agendaCalendarIds: string[];
   llmGreeting: boolean;
   /** on = always; off = never; request = only when user asks / ?launches=1 */
   launchesMode: LaunchesMode;
@@ -83,12 +86,15 @@ export function loadBriefingConfig(overrides: Partial<BriefingConfig> = {}): Bri
     indexSymbol: overrides.indexSymbol ?? indexSymbol,
     includeMetals: overrides.includeMetals ?? envFlag("BRIEFING_INCLUDE_METALS", false),
     metalSymbol: overrides.metalSymbol ?? metalSymbol,
+    includeIngestedNotes:
+      overrides.includeIngestedNotes ?? envFlag("BRIEFING_INCLUDE_INGESTED_NOTES", true),
     newsSources:
       overrides.newsSources ??
       newsRaw
         .split(",")
         .map((s) => s.trim())
         .filter(Boolean),
+    agendaCalendarIds: overrides.agendaCalendarIds ?? [],
     llmGreeting: overrides.llmGreeting ?? envFlag("BRIEFING_LLM_GREETING", true),
     launchesMode:
       overrides.launchesMode ??

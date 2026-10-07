@@ -3,8 +3,12 @@ export function isSidecarMode(): boolean {
 }
 
 export function sidecarPort(fallback = 3000): number {
+  if (isSidecarMode()) {
+    const explicit = process.env.ALFRED_SIDECAR_PORT?.trim();
+    return explicit ? Number(explicit) : 3100;
+  }
   if (process.env.PORT) return Number(process.env.PORT);
-  return isSidecarMode() ? 3100 : fallback;
+  return fallback;
 }
 
 export function sidecarHostname(): string {

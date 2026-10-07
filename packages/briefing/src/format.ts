@@ -1,3 +1,4 @@
+import { formatAgendaMarkdown, formatAgendaSpeech } from "./agenda.js";
 import type { BriefingData } from "./types.js";
 import { formatLaunchesMarkdown, formatLaunchesSpeech } from "./launches.js";
 import {
@@ -5,7 +6,7 @@ import {
   formatMarketsSpeechFromQuotes,
 } from "./markets.js";
 import { formatNewsMarkdown, formatNewsSpeech } from "./news.js";
-import { formatRemindersMarkdown, formatRemindersSpeech } from "./reminders.js";
+import { formatRemindersMarkdown, formatRemindersSpeech, formatTaskMarkdown, formatTaskSpeech } from "./reminders.js";
 import {
   closingLine,
   sanitizeForSpeech,
@@ -47,6 +48,15 @@ export function formatBriefingForSpeech(
   if (data.weather) parts.push(formatWeatherSpeech(data.weather));
   else if (data.weatherText) parts.push(data.weatherText);
 
+  const agenda = data.agendaText ?? (data.agenda ? formatAgendaSpeech(data.agenda, timezone) : null);
+  if (agenda) parts.push(agenda);
+
+  // Personal follow-ups right after the agenda, before markets / news.
+  const rem = data.taskReminders?.length
+    ? formatTaskSpeech(data.taskReminders)
+    : formatRemindersSpeech(data.reminders) || data.remindersText;
+  if (rem) parts.push(rem);
+
   const markets = formatMarketsSpeechFromQuotes({
     crypto: data.markets.crypto,
     cryptoId: data.markets.cryptoId,
@@ -72,23 +82,25 @@ export function formatBriefingForSpeech(
   const xIngest = data.xIngestText || data.xIngest?.speech;
   if (xIngest) parts.push(xIngest);
 
-  // Reminders last before sign-off so personal follow-ups land after the rundown.
-  const rem = formatRemindersSpeech(data.reminders) || data.remindersText;
-  if (rem) parts.push(rem);
-
   parts.push(closingLine(now, timezone));
 
   return sanitizeForSpeech(parts.join(" "));
 }
 
-export function formatBriefingAsMarkdown(data: BriefingData): string {
+export function formatBriefingAsMarkdown(
+  data: BriefingData,
+  opts?: { timezone?: string },
+): string {
+  const timezone = opts?.timezone ?? "America/Los_Angeles";
   const sections: string[] = [`# Daily Briefing — ${data.date}`, "", data.greeting];
   if (data.weather) sections.push("", formatWeatherMarkdown(data.weather));
+  if (data.agenda) sections.push("", formatAgendaMarkdown(data.agenda, timezone));
+  if (data.taskReminders?.length) sections.push("", formatTaskMarkdown(data.taskReminders));
+  else if (data.reminders.length) sections.push("", formatRemindersMarkdown(data.reminders));
   if (data.markets.lines.length) sections.push("", formatMarketsMarkdown(data.markets.lines));
   if (data.launches.length) sections.push("", formatLaunchesMarkdown(data.launches));
   if (data.news.length) sections.push("", formatNewsMarkdown(data.news));
   if (data.xIngest?.items.length) sections.push("", formatXIngestMarkdown({ items: data.xIngest.items }));
-  if (data.reminders.length) sections.push("", formatRemindersMarkdown(data.reminders));
   sections.push("", `_Generated ${data.generated}_`);
   return sections.join("\n");
 }

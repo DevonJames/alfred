@@ -11,7 +11,7 @@ import { isTimedString, type TimedString } from "@livekit/agents";
 
 export type UiTranscriptPublisher = {
   publishUser(text: string, kind: "partial" | "final"): void;
-  beginCaption(text?: string): void;
+  beginCaption(text?: string, opts?: { layout?: "briefing"; display?: unknown }): void;
   revealCaption(text: string): void;
   endCaption(reason?: string): void;
   resetAssistant(): void;
@@ -80,11 +80,17 @@ export function createRoomUiTranscriptPublisher(getRoom: () => Room | undefined)
       publish("alfred.user", { type: kind, text: trimmed });
     },
 
-    beginCaption(text = "") {
+    beginCaption(text = "", opts) {
       captionStarted = true;
       lastReveal = text;
       lastRevealAt = Date.now();
-      publish("alfred.caption", { type: "start", text });
+      publish("alfred.caption", {
+        type: "start",
+        text,
+        ...(opts?.layout === "briefing" && opts.display
+          ? { layout: "briefing", display: opts.display }
+          : {}),
+      });
     },
 
     revealCaption(text) {

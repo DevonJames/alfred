@@ -1,7 +1,10 @@
 import type { DueReminder } from "@alfred/memory";
+import type { BriefingDisplay } from "./display.js";
+import type { TaskReminder } from "./reminders.js";
 import type { LaunchInfo } from "./launches.js";
 import type { MarketQuote } from "./markets.js";
 import type { NewsHeadline } from "./news.js";
+import type { BriefingAgendaEvent } from "./agenda.js";
 import type { WeatherData } from "./weather.js";
 
 export interface XIngestBriefingItem {
@@ -44,7 +47,12 @@ export interface BriefingData {
   newsText: string | null;
   xIngest: XIngestBriefing | null;
   xIngestText: string | null;
+  /** Today's events from calendars chosen in Briefing settings. Omitted when Agenda is not configured. */
+  agenda?: BriefingAgendaEvent[];
+  agendaText?: string | null;
   reminders: DueReminder[];
+  /** Apple Reminders due today or still open from an earlier day. Replaces memory reminders when set. */
+  taskReminders?: TaskReminder[];
   remindersText: string | null;
   generated: string;
 }
@@ -53,5 +61,7 @@ export interface BriefingPayload {
   briefing: BriefingData;
   speech: string;
   markdown: string;
+  /** Structured screen layout for the voice HUD (not spoken text). */
+  display: BriefingDisplay;
   generated: string;
 }

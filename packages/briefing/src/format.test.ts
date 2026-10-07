@@ -99,8 +99,24 @@ describe("formatBriefingForSpeech", () => {
     // 2026-08-10T16:00:00Z = 9:00 am Pacific
     expect(speech).toContain("It is Monday, August 10 at 9:00 am.");
     expect(speech).toMatch(/Today, clear sky, high 75, low 60/);
+    const withAgenda = formatBriefingForSpeech(
+      {
+        ...sample(),
+        agendaText: "On your agenda today: USPTO from noon to 6 15 pm.",
+      },
+      {
+        now: new Date("2026-08-10T16:00:00.000Z"),
+        timezone: "America/Los_Angeles",
+      },
+    );
+    expect(withAgenda).toContain("On your agenda today: USPTO from noon to 6 15 pm.");
     expect(speech).toMatch(/Tomorrow, partly cloudy/);
     expect(speech).toContain("Call Sarah");
+    // Reminders sit after agenda / weather and before markets.
+    const remAt = speech.indexOf("Call Sarah");
+    const btcAt = speech.search(/Bitcoin is up/i);
+    expect(remAt).toBeGreaterThan(-1);
+    expect(btcAt).toBeGreaterThan(remAt);
     expect(speech).toMatch(/Bitcoin is up 1\.2 percent/);
     expect(speech).toContain("thousand dollars");
     expect(speech).toContain("SpaceX");

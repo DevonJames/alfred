@@ -863,7 +863,7 @@ export class SessionOrchestrator {
               {
                 name: "delegate_task",
                 description:
-                  "Delegate an external action such as household calendar/camera/approvals, ingesting X.com links, coding, or email.",
+                  "Delegate an external action. Use category calendar for this Mac's calendars, and put the user's own wording in taskDescription, including the clock time and calendar name. If they answer a question about the time or calendar, call this again with that answer and the original request. Use category household for camera or approvals. Other categories cover ingest, coding, and email.",
                 parameters: {
                   type: "object",
                   properties: {

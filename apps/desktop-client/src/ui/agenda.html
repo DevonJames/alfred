@@ -1,0 +1,2120 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Alfred // agenda</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Syne:wght@700;800&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg: #071018;
+        --fg: #e8eef5;
+        --muted: #8b9bb0;
+        --line: #1c2733;
+        --mint: #3dffc4;
+        --accent: #7ee0c3;
+        --warn: #e0c07e;
+      }
+      * { box-sizing: border-box; }
+      html, body { height: 100%; }
+      body {
+        margin: 0;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+        font-family: "IBM Plex Mono", ui-monospace, monospace;
+        background:
+          radial-gradient(900px 420px at 10% -10%, #163049 0%, transparent 55%),
+          var(--bg);
+        color: var(--fg);
+        padding: 0.9rem 1rem 0.75rem;
+      }
+      header {
+        display: flex;
+        align-items: flex-end;
+        gap: 1rem;
+        flex-wrap: wrap;
+        margin-bottom: 0.75rem;
+      }
+      .clock {
+        font-family: Syne, sans-serif;
+        font-weight: 800;
+        font-size: 2.4rem;
+        line-height: 0.9;
+        letter-spacing: -0.03em;
+      }
+      .clock span { font-size: 1rem; margin-left: 0.15rem; color: var(--muted); }
+      .date {
+        color: var(--fg);
+        font-size: 0.95rem;
+        line-height: 1.25;
+        padding-bottom: 0.15rem;
+      }
+      .date small { display: block; color: var(--muted); font-size: 0.68rem; letter-spacing: 0.08em; text-transform: uppercase; }
+      .modes, .unified {
+        display: flex;
+        align-items: center;
+        gap: 0.35rem;
+        margin-left: auto;
+      }
+      .modes { margin-left: 0.5rem; gap: 0.55rem; }
+      .pager { display: flex; align-items: stretch; }
+      button.nav {
+        appearance: none;
+        border: 1px solid var(--line);
+        background: transparent;
+        color: var(--muted);
+        font-family: inherit;
+        font-size: 1.05rem;
+        line-height: 1;
+        padding: 0 0.45rem;
+        cursor: pointer;
+      }
+      button.nav:hover, button.nav:focus-visible { color: var(--fg); }
+      .pager .nav:first-child { border-right: 0; }
+      .pager .nav:last-child { border-left: 0; }
+      button.seg, a.seg, .unified button {
+        appearance: none;
+        border: 1px solid var(--line);
+        background: transparent;
+        color: var(--muted);
+        font-family: inherit;
+        font-size: 0.68rem;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        padding: 0.45rem 0.7rem;
+        cursor: pointer;
+      }
+      button.seg.on, .unified button.on {
+        color: #04140f;
+        background: var(--mint);
+        border-color: var(--mint);
+      }
+      .stage { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+      .board {
+        flex: 1;
+        min-height: 0;
+        display: flex;
+        gap: 0.75rem;
+        overflow-x: auto;
+        overflow-y: hidden;
+        padding-bottom: 0.35rem;
+      }
+      .pane {
+        flex: 0 0 calc((100% - 2.25rem) / 4);
+        min-width: 15.5rem;
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+        border: 1px solid var(--line);
+        background: rgba(8, 14, 22, 0.72);
+        min-height: 0;
+      }
+      .pane.is-unified { flex: 1 1 auto; min-width: 100%; align-items: stretch; }
+      .pane header {
+        display: block;
+        margin: 0;
+        padding: 0.75rem 0.8rem 0.55rem;
+        border-top: 3px solid var(--accent);
+        border-bottom: 1px solid var(--line);
+      }
+      .pane h2 { margin: 0; font-size: 0.95rem; font-weight: 600; }
+      .pane .meta { color: var(--muted); font-size: 0.68rem; margin-top: 0.2rem; }
+      .events { flex: 1; min-height: 0; overflow: auto; padding: 0.35rem 0.8rem 0.9rem; }
+      .empty { color: var(--muted); font-size: 0.78rem; padding: 0.8rem 0; }
+      .day-label {
+        margin: 0.7rem 0 0.25rem;
+        color: var(--accent);
+        font-size: 0.65rem;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+      }
+      .event {
+        display: grid;
+        grid-template-columns: auto 1fr auto;
+        gap: 0.45rem;
+        align-items: start;
+        padding: 0.45rem 0;
+        border-bottom: 1px solid rgba(28, 39, 51, 0.8);
+      }
+      .event .actions {
+        display: flex;
+        gap: 0.1rem;
+        opacity: 0;
+        pointer-events: none;
+      }
+      .event:hover .actions,
+      .event:focus-within .actions,
+      .event.editing .actions {
+        opacity: 1;
+        pointer-events: auto;
+      }
+      .event .icon {
+        width: 1.5rem;
+        height: 1.5rem;
+        margin-top: 0.1rem;
+        padding: 0;
+        border: 0;
+        background: transparent;
+        color: var(--muted);
+        cursor: pointer;
+      }
+      .event .icon:hover,
+      .event .icon:focus-visible { color: var(--accent); }
+      .event .trash:hover,
+      .event .trash:focus-visible { color: #e08a7e; }
+      .edit-form {
+        display: flex;
+        flex-direction: column;
+        gap: 0.35rem;
+      }
+      .edit-form input,
+      .edit-form select {
+        width: 100%;
+        background: #0c141c;
+        color: var(--fg);
+        border: 1px solid var(--line);
+        font-family: inherit;
+        font-size: 0.78rem;
+        padding: 0.3rem 0.4rem;
+      }
+      .edit-form .times { display: flex; gap: 0.3rem; }
+      .edit-form .times input { width: 6.2rem; }
+      .edit-form .edit-actions { display: flex; gap: 0.3rem; }
+      .edit-form button {
+        appearance: none;
+        border: 1px solid var(--line);
+        background: transparent;
+        color: var(--fg);
+        font-family: inherit;
+        font-size: 0.62rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        padding: 0.35rem 0.45rem;
+        cursor: pointer;
+      }
+      .edit-form button.save { color: #04140f; background: var(--mint); border-color: var(--mint); }
+      .gap { position: relative; height: 0; }
+      .gap.open { height: auto; margin: 0.35rem 0 0.55rem; }
+      .gap-hit {
+        position: absolute;
+        left: 0;
+        right: 2.6rem;
+        top: -0.45rem;
+        height: 0.9rem;
+        z-index: 2;
+        opacity: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0 0.4rem;
+        border: 1px dashed rgba(126, 224, 195, 0.6);
+        background: rgba(6, 18, 14, 0.94);
+        color: var(--mint);
+        font-family: inherit;
+        font-size: 0.62rem;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        cursor: pointer;
+      }
+      .gap:hover .gap-hit,
+      .gap:focus-within .gap-hit { opacity: 1; }
+      .events > .gap:first-child .gap-hit { top: -0.3rem; height: 0.75rem; }
+      .gap.open .gap-hit { display: none; }
+      .gap.is-empty { height: auto; }
+      .gap.is-empty .gap-hit {
+        position: static;
+        right: auto;
+        top: auto;
+        height: 0;
+        margin: 0;
+        padding: 0;
+        border-width: 0;
+        overflow: hidden;
+        opacity: 0;
+      }
+      .gap.is-empty:hover .gap-hit,
+      .gap.is-empty:focus-within .gap-hit {
+        height: auto;
+        margin-top: 0.35rem;
+        padding: 0.28rem 0.45rem;
+        border-width: 1px;
+        overflow: visible;
+        opacity: 1;
+      }
+      .dot { width: 0.55rem; height: 0.55rem; margin-top: 0.3rem; border-radius: 2px; }
+      .when { color: var(--muted); font-size: 0.68rem; }
+      .title { font-size: 0.82rem; }
+      .where { color: var(--muted); font-size: 0.68rem; }
+      .banner, .hint {
+        color: var(--muted);
+        font-size: 0.75rem;
+        line-height: 1.45;
+        margin: 0 0 0.6rem;
+      }
+      .banner a { color: var(--accent); }
+      .dock {
+        border-top: 1px solid var(--line);
+        padding-top: 0.65rem;
+        display: grid;
+        gap: 0.45rem;
+      }
+      .reply {
+        min-height: 2.4rem;
+        max-height: 9rem;
+        overflow: auto;
+        display: flex;
+        flex-direction: column;
+        gap: 0.35rem;
+        color: #d5e4ea;
+        font-size: 0.78rem;
+        line-height: 1.4;
+      }
+      .reply.empty { color: var(--muted); display: block; }
+      .reply .who { margin: 0; white-space: pre-wrap; }
+      .reply .who.user { color: #ffe2b0; }
+      .reply .who.assistant { color: #d5e4ea; }
+      .reply strong { font-weight: 650; color: #f4fbf8; }
+      .reply em { font-style: italic; }
+      .reply code {
+        font-family: inherit;
+        color: var(--mint);
+      }
+      .reply .md-h { display: inline; }
+      .reply .md-li { color: var(--mint); }
+      form { display: flex; gap: 0.45rem; }
+      textarea {
+        flex: 1;
+        min-height: 2.6rem;
+        max-height: 8rem;
+        resize: vertical;
+        background: #0c141c;
+        color: var(--fg);
+        border: 1px solid var(--line);
+        font-family: inherit;
+        font-size: 0.85rem;
+        line-height: 1.35;
+        padding: 0.65rem 0.75rem;
+      }
+      form button {
+        appearance: none;
+        border: 1px solid var(--line);
+        background: transparent;
+        color: var(--fg);
+        font-family: inherit;
+        font-size: 0.68rem;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        padding: 0 0.8rem;
+        cursor: pointer;
+      }
+      form button.hot { color: #04140f; background: var(--mint); border-color: var(--mint); }
+      form button.listen { border-color: var(--warn); color: var(--warn); }
+      .voicebar {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 0.55rem;
+        align-items: center;
+      }
+      #voice-wave {
+        width: 100%;
+        height: 72px;
+        display: block;
+        background: rgba(8, 14, 22, 0.72);
+        border: 1px solid rgba(61, 255, 196, 0.28);
+      }
+      .voice-actions { display: flex; gap: 0.35rem; }
+      .voice-actions button {
+        appearance: none;
+        border: 1px solid var(--mint);
+        background: transparent;
+        color: var(--mint);
+        font-family: inherit;
+        font-size: 0.68rem;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        padding: 0.55rem 0.7rem;
+        cursor: pointer;
+      }
+      .voice-actions button:disabled { opacity: 0.35; cursor: not-allowed; }
+      .voice-actions button.stop,
+      .voice-actions button.muted,
+      .voice-actions button.active { border-color: #e08a7e; color: #e08a7e; }
+      .voice-actions button#voice-shhh { border-color: rgba(255, 179, 71, 0.7); color: #ffb347; }
+      .voice-actions button#voice-shhh.active { border-color: #e08a7e; color: #e08a7e; }
+      .pane.day header { padding: 0; }
+      .pane.day.is-selected {
+        box-shadow: inset 0 0 0 2px var(--mint);
+      }
+      .pane.day.is-selected header {
+        border-top-color: var(--mint);
+        background: rgba(61, 255, 196, 0.16);
+      }
+      .day-label.is-selected { color: var(--mint); background: rgba(61, 255, 196, 0.12); }
+      button.day-pick {
+        appearance: none;
+        border: 0;
+        background: transparent;
+        color: inherit;
+        font: inherit;
+        letter-spacing: inherit;
+        text-transform: inherit;
+        cursor: pointer;
+        padding: 0;
+      }
+      .pane.day button.day-pick {
+        display: block;
+        width: 100%;
+        text-align: left;
+        padding: 0.75rem 0.8rem 0.55rem;
+      }
+      .day-name { display: block; font-size: 0.95rem; font-weight: 600; }
+      .time-block {
+        margin: 0.45rem 0 0.7rem;
+        border: 1px solid rgba(61, 255, 196, 0.28);
+        border-left: 3px solid var(--mint);
+        background: rgba(61, 255, 196, 0.045);
+      }
+      .time-block-name {
+        display: flex;
+        justify-content: space-between;
+        gap: 0.4rem;
+        padding: 0.35rem 0.5rem 0.28rem;
+        color: var(--accent);
+        font-size: 0.62rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+      .time-block-name span:last-child { color: var(--muted); letter-spacing: 0.04em; }
+      .time-block-span { position: relative; margin: 0 0.35rem 0.4rem; }
+      .time-block-tick {
+        position: absolute;
+        left: 0;
+        right: 0;
+        border-top: 1px solid rgba(126, 224, 195, 0.16);
+        color: rgba(139, 155, 176, 0.85);
+        font-size: 0.58rem;
+        line-height: 1;
+        padding-top: 0.12rem;
+        pointer-events: none;
+        z-index: 0;
+      }
+      .time-block-span .event.in-block {
+        position: absolute;
+        z-index: 2;
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0.18rem 0.3rem;
+        overflow: hidden;
+        border: 1px solid rgba(28, 39, 51, 0.95);
+        background: rgba(8, 14, 22, 0.92);
+      }
+      .time-block-span .event.in-block .title { font-size: 0.75rem; line-height: 1.15; }
+      .time-block-span .event.in-block .when,
+      .time-block-span .event.in-block .where { font-size: 0.62rem; }
+      .time-block-span .event.in-block.editing {
+        height: auto !important;
+        min-height: 11rem;
+        overflow: visible;
+        z-index: 5;
+      }
+      .time-block-span .gap.in-block {
+        position: absolute;
+        left: 0;
+        right: 0;
+        z-index: 1;
+      }
+      .time-block-span .gap.in-block .gap-hit {
+        inset: 0.15rem;
+        top: 0.15rem;
+        right: 0.15rem;
+        height: auto;
+      }
+      .time-block-span .gap.in-block.open {
+        z-index: 5;
+        height: auto !important;
+        min-height: 9rem;
+        background: #0d1520;
+      }
+      .tray { position: relative; display: flex; gap: 0.35rem; align-items: center; }
+      .tray a.seg { text-decoration: none; display: inline-flex; align-items: center; }
+      #reminders-panel {
+        position: absolute;
+        top: calc(100% + 0.4rem);
+        right: 0;
+        width: min(24rem, 80vw);
+        max-height: min(70vh, 32rem);
+        overflow: auto;
+        z-index: 6;
+        border: 1px solid var(--line);
+        background: #0d1520;
+        padding: 0.75rem 0.8rem 0.9rem;
+        box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+      }
+      #reminders-panel h2 { margin: 0 0 0.45rem; font-size: 0.85rem; }
+      #reminders-panel .place-day { display: flex; gap: 0.4rem; align-items: center; margin-bottom: 0.6rem; }
+      #reminders-panel .place-day span { color: var(--muted); font-size: 0.68rem; letter-spacing: 0.08em; text-transform: uppercase; }
+      .reminder {
+        display: flex;
+        justify-content: space-between;
+        gap: 0.5rem;
+        align-items: center;
+        padding: 0.4rem 0;
+        border-top: 1px solid var(--line);
+      }
+      .reminder button, #place-form button, #place-choice button, #reminders-panel select, #reminders-panel input {
+        font: inherit;
+        color: var(--fg);
+        background: #101820;
+        border: 1px solid var(--line);
+        padding: 0.3rem 0.45rem;
+      }
+      #place-form {
+        display: flex;
+        flex-direction: column;
+        gap: 0.45rem;
+        align-items: stretch;
+        margin-top: 0.35rem;
+        padding: 0.55rem 0 0.7rem;
+        border-top: 1px solid var(--line);
+      }
+      #place-choice {
+        margin: 0 0 0.35rem;
+        padding: 0.15rem 0 0.7rem;
+        border-bottom: 1px solid var(--line);
+      }
+      #place-choice p { margin: 0.35rem 0 0; }
+      #place-form[hidden], #place-choice[hidden], #place-custom-label[hidden], #reminders-panel[hidden] {
+        display: none !important;
+      }
+      #place-form label, #place-choice p { color: var(--muted); font-size: 0.72rem; }
+      .place-actions { display: flex; gap: 0.4rem; flex-wrap: wrap; margin-top: 0.55rem; }
+      button.primary { color: #042018; background: var(--mint); border-color: var(--mint); cursor: pointer; }
+      #status { color: var(--muted); font-size: 0.68rem; min-height: 1rem; }
+      #status.err { color: var(--warn); }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div>
+        <div class="clock" id="clock">–<span></span></div>
+      </div>
+      <div class="date" id="date">Loading…<small id="range"></small></div>
+      <div class="modes">
+        <div class="pager">
+          <button type="button" class="nav" id="prev-day" aria-label="Previous day" title="Previous day">‹</button>
+          <button type="button" class="seg on" id="view-today" data-view="today">Today</button>
+          <button type="button" class="nav" id="next-day" aria-label="Next day" title="Next day">›</button>
+        </div>
+        <div class="pager">
+          <button type="button" class="nav" id="prev-week" aria-label="Previous week" title="Previous week">‹</button>
+          <button type="button" class="seg" id="view-week" data-view="week">Week</button>
+          <button type="button" class="nav" id="next-week" aria-label="Next week" title="Next week">›</button>
+        </div>
+      </div>
+      <div class="unified">
+        <button type="button" id="unified">Unified calendar</button>
+      </div>
+      <div class="tray">
+        <button type="button" class="seg" id="reminders-toggle">Reminders</button>
+        <a class="seg" id="blocks-link" href="/agenda/settings">Blocks</a>
+        <div id="reminders-panel" hidden>
+          <h2>Reminders</h2>
+          <p class="hint" id="place-hint">Click a day in the agenda to choose where a reminder goes.</p>
+          <form id="place-form" hidden>
+            <p id="place-title"></p>
+            <label>Duration <select id="place-duration">
+              <option value="15">15 min</option>
+              <option value="30" selected>30 min</option>
+              <option value="60">1 hour</option>
+              <option value="90">1.5 hrs</option>
+              <option value="120">2 hrs</option>
+              <option value="240">4 hrs</option>
+              <option value="custom">Custom</option>
+            </select></label>
+            <label id="place-custom-label" hidden>Minutes <input id="place-custom" type="number" min="5" max="720" value="45" /></label>
+            <label>Time block <select id="place-block"></select></label>
+            <p class="hint" id="place-room"></p>
+            <div class="place-actions">
+              <button type="submit" class="primary">Place</button>
+              <button type="button" id="place-cancel">Cancel</button>
+            </div>
+          </form>
+          <div id="place-choice" hidden></div>
+          <div id="reminder-list"></div>
+        </div>
+      </div>
+    </header>
+    <div class="stage">
+      <p class="hint" id="hint"></p>
+      <div class="board" id="board"></div>
+    </div>
+    <div class="dock">
+      <div class="voicebar">
+        <canvas id="voice-wave" width="900" height="72" aria-label="Alfred's voice"></canvas>
+        <div class="voice-actions">
+          <button type="button" id="voice-start">Start</button>
+          <button type="button" id="voice-shhh" disabled title="Stop Alfred speaking without ending the session">Shhh</button>
+          <button type="button" id="voice-mute" disabled title="Mute your microphone; conversation stays open">Mute</button>
+        </div>
+      </div>
+      <div class="reply empty" id="reply">Alfred’s reply shows here.</div>
+      <form id="ask-form">
+        <textarea id="ask" rows="1" placeholder="Or type, if you’d rather not talk…"></textarea>
+        <button type="submit" class="hot">Send</button>
+      </form>
+      <div id="status"></div>
+    </div>
+    <script src="/alfred-base.js"></script>
+    <script src="/embed-bridge.js"></script>
+    <script>
+      function api(path) {
+        return typeof alfredUrl === "function" ? alfredUrl(path) : path;
+      }
+
+      const viewKey = "alfred.agenda.view";
+      let view = "today";
+      let dayDate = "";
+      let weekDate = "";
+      let unified = false;
+      let board = null;
+      let blocks = [];
+      let reminders = [];
+      let selectedDay = "";
+      let placing = null;
+
+      function readViewState() {
+        try {
+          const raw = JSON.parse(localStorage.getItem(viewKey) || "null");
+          if (!raw || typeof raw !== "object") return;
+          if (raw.view === "week" || raw.view === "today") view = raw.view;
+          if (typeof raw.unified === "boolean") unified = raw.unified;
+          if (typeof raw.dayDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(raw.dayDate)) dayDate = raw.dayDate;
+          if (typeof raw.weekDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(raw.weekDate)) weekDate = raw.weekDate;
+        } catch {
+          /* keep the defaults */
+        }
+      }
+
+      function saveViewState() {
+        try {
+          localStorage.setItem(viewKey, JSON.stringify({ view, unified, dayDate, weekDate }));
+        } catch {
+          /* private mode */
+        }
+      }
+
+      readViewState();
+      let sending = false;
+      let holdUi = false;
+      const seenDay = { key: "" };
+
+      function escapeHtml(text) {
+        return text
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/["]/g, "&quot;")
+          .replace(/[']/g, "&#39;");
+      }
+
+      function closeIncompleteMarkdown(text) {
+        let s = text;
+        const ticks = (s.match(/[`]/g) ?? []).length;
+        if (ticks % 2 === 1) s += "`";
+        const boldStars = (s.match(/\*\*/g) ?? []).length;
+        if (boldStars % 2 === 1) s += "**";
+        const singles = (s.replace(/\*\*/g, "").match(/\*/g) ?? []).length;
+        if (singles % 2 === 1) s += "*";
+        return s;
+      }
+
+      function markdownToHtml(text) {
+        if (!text) return "";
+        let s = escapeHtml(closeIncompleteMarkdown(text));
+        s = s.replace(/`{3}([\s\S]*?)`{3}/g, (_m, body) => `<code class="md-block">${body.trim()}</code>`);
+        s = s.replace(/`([^`]+)`{1}/g, "<code>$1</code>");
+        s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+        s = s.replace(/__([^_]+)__/g, "<strong>$1</strong>");
+        s = s.replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, "$1<em>$2</em>");
+        s = s.replace(/(^|[^_])_([^_\n]+)_(?!_)/g, "$1<em>$2</em>");
+        s = s.replace(/^#{1,6}\s+(.+)$/gm, '<strong class="md-h">$1</strong>');
+        s = s.replace(/\r\n/g, "\n").replace(/\n/g, "<br>");
+        s = s.replace(/(^|<br>)\s*[-*•]\s+/g, '$1<span class="md-li">• </span>');
+        s = s.replace(/(^|<br>)\s*(\d+)\.\s+/g, '$1<span class="md-li">$2. </span>');
+        return s;
+      }
+
+      const turns = [];
+      let voicedThrough = "";
+      let latestSpeech = "";
+      let listenTimer = 0;
+      let answerTimer = 0;
+
+      function paintThread() {
+        const reply = document.getElementById("reply");
+        if (!turns.length) {
+          reply.classList.add("empty");
+          reply.textContent = "Alfred’s reply shows here.";
+          return;
+        }
+        reply.classList.remove("empty");
+        reply.replaceChildren();
+        for (const turn of turns) {
+          const line = document.createElement("p");
+          line.className = `who ${turn.role}`;
+          if (turn.role === "assistant") line.innerHTML = markdownToHtml(turn.text);
+          else line.textContent = turn.text;
+          reply.appendChild(line);
+        }
+        reply.scrollTop = reply.scrollHeight;
+      }
+
+      function pushTurn(role, text, final) {
+        const trimmed = (text || "").trim();
+        if (!trimmed) return;
+        const last = turns[turns.length - 1];
+        if (last && last.role === role && (!last.final || last.text === trimmed)) {
+          last.text = trimmed;
+          last.final = Boolean(final || last.final);
+        } else {
+          turns.push({ role, text: trimmed, final: Boolean(final) });
+        }
+        if (turns.length > 16) turns.splice(0, turns.length - 16);
+        paintThread();
+      }
+
+      function unsentSpeech(full) {
+        const text = (full || "").trim();
+        if (!text) return "";
+        const heard = voicedThrough.trim();
+        if (heard && text.toLowerCase().startsWith(heard.toLowerCase())) return text.slice(heard.length).trim();
+        if (heard && heard.toLowerCase().startsWith(text.toLowerCase())) return "";
+        return text;
+      }
+
+      function showReply(text) {
+        pushTurn("assistant", text, true);
+      }
+
+      function setStatus(text, kind) {
+        const el = document.getElementById("status");
+        el.textContent = text || "";
+        el.className = kind || "";
+      }
+
+      function relativeDayLabel(offset) {
+        if (offset === 0) return "Today";
+        if (offset === -1) return "Yesterday";
+        if (offset === 1) return "Tomorrow";
+        if (offset < 0) return `${-offset} days ago`;
+        return `In ${offset} days`;
+      }
+
+      function isoOffset(focus, today) {
+        if (!focus || !today) return 0;
+        const start = Date.parse(`${focus}T00:00:00Z`);
+        const end = Date.parse(`${today}T00:00:00Z`);
+        return Math.round((start - end) / 86400000);
+      }
+
+      function shiftIso(iso, days) {
+        const [year, month, day] = iso.split("-").map(Number);
+        const next = new Date(Date.UTC(year, month - 1, day + days));
+        const mm = String(next.getUTCMonth() + 1).padStart(2, "0");
+        const dd = String(next.getUTCDate()).padStart(2, "0");
+        return `${next.getUTCFullYear()}-${mm}-${dd}`;
+      }
+
+      function paintModes() {
+        const offset = isoOffset(dayDate, board && board.todayDate);
+        const label = relativeDayLabel(offset);
+        const todayBtn = document.getElementById("view-today");
+        todayBtn.textContent = label;
+        todayBtn.title = view === "today" && offset !== 0 ? "Back to today" : label;
+        const weekBtn = document.getElementById("view-week");
+        const otherWeek = Boolean(weekDate && board && board.todayDate && weekDate !== board.todayDate);
+        weekBtn.title = view === "week" && otherWeek ? "This week" : "Week";
+        todayBtn.classList.toggle("on", view === "today");
+        weekBtn.classList.toggle("on", view === "week");
+      }
+
+      function emptyCopy() {
+        if (view === "week") return board && board.dayOffset !== 0 ? "Nothing that week" : "Nothing this week";
+        const label = (board && board.focusLabel ? board.focusLabel : "Today").toLowerCase();
+        if (label === "today" || label === "yesterday" || label === "tomorrow") return `Nothing ${label}`;
+        return "Nothing that day";
+      }
+
+      function move(which, direction) {
+        const base = (which === "week" ? weekDate : dayDate) || (board && board.todayDate);
+        if (!base) return;
+        if (which === "week") {
+          weekDate = shiftIso(base, direction * 7);
+          view = "week";
+        } else {
+          dayDate = shiftIso(base, direction);
+          view = "today";
+        }
+        void load().catch((err) => setStatus(err.message, "err"));
+      }
+
+      function clockParts(timeZone) {
+        const parts = new Intl.DateTimeFormat("en-US", {
+          timeZone: timeZone || undefined,
+          hour: "numeric",
+          minute: "2-digit",
+          hourCycle: "h12",
+          weekday: "long",
+          month: "long",
+          day: "numeric",
+          year: "numeric",
+        }).formatToParts(new Date());
+        const bag = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+        return bag;
+      }
+
+      function paintClock() {
+        const zone = board?.timeZone;
+        const bag = clockParts(zone);
+        const clock = document.getElementById("clock");
+        clock.firstChild.textContent = `${bag.hour}:${bag.minute}`;
+        clock.querySelector("span").textContent = (bag.dayPeriod || "").toLowerCase();
+        const date = document.getElementById("date");
+        if (view === "today" && board?.dateLabel) {
+          date.firstChild.textContent = board.dateLabel.replace(/,/g, "");
+        } else {
+          date.firstChild.textContent = `${bag.weekday} ${bag.month} ${bag.day}`;
+        }
+        const key = `${bag.year}-${bag.month}-${bag.day}`;
+        if (seenDay.key && seenDay.key !== key) void load();
+        seenDay.key = key;
+      }
+
+      function clockLabel(iso, timeZone) {
+        return new Intl.DateTimeFormat("en-US", {
+          timeZone,
+          hour: "numeric",
+          minute: "2-digit",
+        }).format(new Date(iso));
+      }
+
+      function whenLabel(event, timeZone) {
+        if (event.allDay) return "All day";
+        const start = clockLabel(event.start, timeZone);
+        if (!event.end) return start;
+        const end = clockLabel(event.end, timeZone);
+        return start === end ? start : `${start}–${end}`;
+      }
+
+      function dayLabel(iso, timeZone) {
+        return new Intl.DateTimeFormat("en-US", {
+          timeZone,
+          weekday: "short",
+          month: "short",
+          day: "numeric",
+        }).format(new Date(iso));
+      }
+
+      function dayKey(iso, timeZone) {
+        return new Intl.DateTimeFormat("en-CA", {
+          timeZone,
+          year: "numeric",
+          month: "2-digit",
+          day: "2-digit",
+        }).format(new Date(iso));
+      }
+
+      function eventNode(event, timeZone, showCalendar) {
+        const row = document.createElement("div");
+        row.className = "event";
+        const dot = document.createElement("span");
+        dot.className = "dot";
+        dot.style.background = event.color || "#7ee0c3";
+        const body = document.createElement("div");
+        const when = document.createElement("div");
+        when.className = "when";
+        when.textContent = showCalendar
+          ? `${whenLabel(event, timeZone)} · ${event.calendarTitle}`
+          : whenLabel(event, timeZone);
+        const title = document.createElement("div");
+        title.className = "title";
+        title.textContent = event.title;
+        body.append(when, title);
+        if (event.location) {
+          const where = document.createElement("div");
+          where.className = "where";
+          where.textContent = event.location;
+          body.appendChild(where);
+        }
+        row.append(dot, body);
+        if (event.writable && event.id) {
+          const actions = document.createElement("div");
+          actions.className = "actions";
+          const edit = document.createElement("button");
+          edit.type = "button";
+          edit.className = "icon edit";
+          edit.title = "Edit";
+          edit.setAttribute("aria-label", `Edit ${event.title}`);
+          edit.innerHTML =
+            '<svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z" /></svg>';
+          edit.addEventListener("click", () => beginEdit(event, row, body));
+          const trash = document.createElement("button");
+          trash.type = "button";
+          trash.className = "icon trash";
+          trash.title = "Delete";
+          trash.setAttribute("aria-label", `Delete ${event.title}`);
+          trash.innerHTML =
+            '<svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16" /><path d="M9 7V5h6v2" /><path d="M8 7l1 13h6l1-13" /><path d="M10 11v6" /><path d="M14 11v6" /></svg>';
+          trash.addEventListener("click", () => {
+            void removeEvent(event, trash);
+          });
+          actions.append(edit, trash);
+          row.appendChild(actions);
+        }
+        return row;
+      }
+
+      function localMinutes(iso, timeZone) {
+        const parts = new Intl.DateTimeFormat("en-GB", {
+          timeZone,
+          hour: "2-digit",
+          minute: "2-digit",
+          hourCycle: "h23",
+        }).formatToParts(new Date(iso));
+        const bag = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+        const hour = bag.hour === "24" ? 0 : Number(bag.hour);
+        return hour * 60 + Number(bag.minute);
+      }
+
+      function toHHMM(mins) {
+        const clamped = Math.max(0, Math.min(23 * 60 + 59, mins));
+        return `${String(Math.floor(clamped / 60)).padStart(2, "0")}:${String(clamped % 60).padStart(2, "0")}`;
+      }
+
+      function clockFromMinutes(mins) {
+        const clamped = Math.max(0, Math.min(23 * 60 + 59, mins));
+        let hour = Math.floor(clamped / 60);
+        const minute = String(clamped % 60).padStart(2, "0");
+        const period = hour >= 12 ? "PM" : "AM";
+        hour = hour % 12 || 12;
+        return `${hour}:${minute} ${period}`;
+      }
+
+      function endMinutes(event, timeZone, dayIso) {
+        if (dayKey(event.end, timeZone) !== dayIso) return 24 * 60;
+        const end = localMinutes(event.end, timeZone);
+        return end === 0 ? 24 * 60 : end;
+      }
+
+      function dayInserts(events, timeZone, dayIso) {
+        const timed = events
+          .filter((event) => !event.allDay && dayKey(event.start, timeZone) === dayIso)
+          .sort((a, b) => a.start.localeCompare(b.start));
+        if (!timed.length) return [{ date: dayIso, start: "09:00", end: "09:30", label: "Add", empty: true }];
+        const gaps = [];
+        const first = localMinutes(timed[0].start, timeZone);
+        if (first >= 15) {
+          gaps.push({
+            date: dayIso,
+            start: toHHMM(Math.max(0, first - 30)),
+            end: toHHMM(first),
+            label: `Before ${clockFromMinutes(first)}`,
+          });
+        }
+        let cursor = endMinutes(timed[0], timeZone, dayIso);
+        for (let i = 1; i < timed.length; i += 1) {
+          const next = localMinutes(timed[i].start, timeZone);
+          if (next - cursor >= 15) {
+            gaps.push({
+              date: dayIso,
+              start: toHHMM(cursor),
+              end: toHHMM(Math.min(next, cursor + 30)),
+              label: `${clockFromMinutes(cursor)}–${clockFromMinutes(next)}`,
+            });
+          }
+          cursor = Math.max(cursor, endMinutes(timed[i], timeZone, dayIso));
+        }
+        if (cursor <= 24 * 60 - 15) {
+          gaps.push({
+            date: dayIso,
+            start: toHHMM(cursor),
+            end: toHHMM(Math.min(24 * 60 - 1, cursor + 30)),
+            label: `After ${clockFromMinutes(Math.min(cursor, 23 * 60 + 59))}`,
+          });
+        }
+        return gaps;
+      }
+
+      function gapNode(gap, target) {
+        const row = document.createElement("div");
+        row.className = "gap" + (gap.empty ? " is-empty" : "");
+        if (gap.empty) {
+          const note = document.createElement("p");
+          note.className = "empty";
+          note.textContent = gap.emptyText || "Nothing";
+          row.appendChild(note);
+        }
+        if (!target) return row;
+        const hit = document.createElement("button");
+        hit.type = "button";
+        hit.className = "gap-hit";
+        hit.tabIndex = -1;
+        hit.textContent = gap.empty ? "Add" : `Add · ${gap.label}`;
+        hit.addEventListener("click", () => openInsert(row, gap, target));
+        row.appendChild(hit);
+        return row;
+      }
+
+      function emptyDay(target, date, text) {
+        if (!target || !date) {
+          const note = document.createElement("p");
+          note.className = "empty";
+          note.textContent = text;
+          return note;
+        }
+        return gapNode({ date, start: "09:00", end: "09:30", label: "Add", empty: true, emptyText: text }, target);
+      }
+
+      function clockMinutes(hhmm) {
+        const [hour, minute] = String(hhmm || "0:0").split(":").map(Number);
+        return (hour || 0) * 60 + (minute || 0);
+      }
+
+      function blockRuns(block, iso) {
+        const weekday = new Date(`${iso}T12:00:00Z`).getUTCDay();
+        if (block.repeat === "weekdays") return weekday >= 1 && weekday <= 5;
+        if (block.repeat === "weekends") return weekday === 0 || weekday === 6;
+        if (block.repeat === "custom") return (block.days || []).includes(weekday);
+        return true;
+      }
+
+      function blocksFor(iso) {
+        return blocks
+          .filter((block) => blockRuns(block, iso))
+          .slice()
+          .sort((a, b) => clockMinutes(a.start) - clockMinutes(b.start));
+      }
+
+      const BLOCK_PX = 1.75;
+
+      function blockAt(startMin, endMin, dayBlocks) {
+        let chosen = null;
+        let best = 0;
+        for (const block of dayBlocks) {
+          const start = clockMinutes(block.start);
+          const end = clockMinutes(block.end);
+          const overlap = Math.min(endMin, end) - Math.max(startMin, start);
+          if (overlap > best) {
+            best = overlap;
+            chosen = block;
+          }
+        }
+        return chosen;
+      }
+
+      function blockNode(block, events, timeZone, showCalendar, target, dayIso) {
+        const start = clockMinutes(block.start);
+        const end = clockMinutes(block.end);
+        const section = document.createElement("section");
+        section.className = "time-block";
+        const label = document.createElement("div");
+        label.className = "time-block-name";
+        const name = document.createElement("span");
+        name.textContent = block.name;
+        const hours = document.createElement("span");
+        hours.textContent = `${clockFromMinutes(start)} – ${clockFromMinutes(end)}`;
+        label.append(name, hours);
+        const span = document.createElement("div");
+        span.className = "time-block-span";
+        span.style.height = `${Math.max(48, Math.round((end - start) * BLOCK_PX))}px`;
+        for (let minute = Math.ceil((start + 1) / 60) * 60; minute < end; minute += 60) {
+          const tick = document.createElement("div");
+          tick.className = "time-block-tick";
+          tick.style.top = `${(minute - start) * BLOCK_PX}px`;
+          tick.textContent = clockFromMinutes(minute);
+          span.appendChild(tick);
+        }
+        const intervals = events
+          .map((event) => ({
+            event,
+            start: Math.max(start, localMinutes(event.start, timeZone)),
+            end: Math.min(end, endMinutes(event, timeZone, dayIso)),
+          }))
+          .filter((interval) => interval.end > interval.start)
+          .sort((a, b) => a.start - b.start || a.end - b.end);
+        const laneEnds = [];
+        const laneOf = intervals.map((interval) => {
+          let lane = laneEnds.findIndex((until) => until <= interval.start);
+          if (lane < 0) {
+            lane = laneEnds.length;
+            laneEnds.push(interval.end);
+          } else laneEnds[lane] = interval.end;
+          return lane;
+        });
+        const overlaps = (a, b) => a.start < b.end && b.start < a.end;
+        intervals.forEach((interval, index) => {
+          const active = new Set([laneOf[index]]);
+          intervals.forEach((other, otherIndex) => {
+            if (otherIndex !== index && overlaps(interval, other)) active.add(laneOf[otherIndex]);
+          });
+          const columns = [...active].sort((a, b) => a - b);
+          const laneCount = columns.length;
+          const column = columns.indexOf(laneOf[index]);
+          const node = eventNode(interval.event, timeZone, showCalendar);
+          node.classList.add("in-block");
+          node.style.top = `${(interval.start - start) * BLOCK_PX}px`;
+          node.style.height = `${Math.max(24, (interval.end - interval.start) * BLOCK_PX)}px`;
+          node.style.left = `calc(${(column / laneCount) * 100}% + 1px)`;
+          node.style.width = `calc(${100 / laneCount}% - 3px)`;
+          span.appendChild(node);
+        });
+        if (target) {
+          const merged = [];
+          for (const interval of intervals) {
+            const last = merged[merged.length - 1];
+            if (last && interval.start <= last.end) last.end = Math.max(last.end, interval.end);
+            else merged.push({ start: interval.start, end: interval.end });
+          }
+          let cursor = start;
+          const free = [];
+          for (const interval of merged) {
+            if (interval.start - cursor >= 15) free.push([cursor, interval.start]);
+            cursor = Math.max(cursor, interval.end);
+          }
+          if (end - cursor >= 15) free.push([cursor, end]);
+          for (const [freeStart, freeEnd] of free) {
+            const gap = gapNode(
+              {
+                date: dayIso,
+                start: toHHMM(freeStart),
+                end: toHHMM(Math.min(freeEnd, freeStart + 30)),
+                label: `${clockFromMinutes(freeStart)}–${clockFromMinutes(freeEnd)}`,
+              },
+              target,
+            );
+            gap.classList.add("in-block");
+            gap.style.top = `${(freeStart - start) * BLOCK_PX}px`;
+            gap.style.height = `${(freeEnd - freeStart) * BLOCK_PX}px`;
+            span.appendChild(gap);
+          }
+        }
+        section.append(label, span);
+        return section;
+      }
+
+      function renderListDay(parent, timed, timeZone, showCalendar, target, dayIso) {
+        if (!target) {
+          for (const event of timed) parent.appendChild(eventNode(event, timeZone, showCalendar));
+          return;
+        }
+        if (!timed.length) {
+          parent.appendChild(gapNode({ date: dayIso, start: "09:00", end: "09:30", label: "Add" }, target));
+          return;
+        }
+        const gaps = dayInserts(timed, timeZone, dayIso);
+        const before = gaps.find((gap) => gap.label.startsWith("Before"));
+        const after = gaps.find((gap) => gap.label.startsWith("After"));
+        const middles = gaps.filter((gap) => !gap.label.startsWith("Before") && !gap.label.startsWith("After"));
+        if (before) parent.appendChild(gapNode(before, target));
+        let middle = 0;
+        timed.forEach((event, index) => {
+          parent.appendChild(eventNode(event, timeZone, showCalendar));
+          const next = timed[index + 1];
+          if (!next) return;
+          const free = localMinutes(next.start, timeZone) - endMinutes(event, timeZone, dayIso);
+          if (free >= 15 && middles[middle]) {
+            parent.appendChild(gapNode(middles[middle], target));
+            middle += 1;
+          }
+        });
+        if (after) parent.appendChild(gapNode(after, target));
+      }
+
+      function renderDay(parent, events, timeZone, showCalendar, target, dayIso) {
+        const allDay = events.filter((event) => event.allDay);
+        for (const event of allDay) parent.appendChild(eventNode(event, timeZone, showCalendar));
+        const timed = events
+          .filter((event) => !event.allDay)
+          .sort((a, b) => a.start.localeCompare(b.start));
+        const dayBlocks = showCalendar ? blocksFor(dayIso) : [];
+        if (!dayBlocks.length) {
+          renderListDay(parent, timed, timeZone, showCalendar, target, dayIso);
+          return;
+        }
+        const grouped = new Map();
+        const outside = [];
+        for (const event of timed) {
+          const block = blockAt(localMinutes(event.start, timeZone), endMinutes(event, timeZone, dayIso), dayBlocks);
+          if (!block) {
+            outside.push(event);
+            continue;
+          }
+          const list = grouped.get(block.id) || [];
+          list.push(event);
+          grouped.set(block.id, list);
+        }
+        const sequence = [
+          ...dayBlocks.map((block) => ({ kind: "block", at: clockMinutes(block.start), block })),
+          ...outside.map((event) => ({ kind: "event", at: localMinutes(event.start, timeZone), event })),
+        ].sort((a, b) => a.at - b.at || (a.kind === "block" ? -1 : 1));
+        const seam = (fromMin, toMin) => {
+          if (!target || toMin - fromMin < 15) return;
+          parent.appendChild(
+            gapNode(
+              {
+                date: dayIso,
+                start: toHHMM(fromMin),
+                end: toHHMM(Math.min(toMin, fromMin + 30)),
+                label: `${clockFromMinutes(fromMin)}–${clockFromMinutes(toMin)}`,
+              },
+              target,
+            ),
+          );
+        };
+        if (sequence.length && sequence[0].at >= 15) seam(Math.max(0, sequence[0].at - 30), sequence[0].at);
+        let lastEnd = null;
+        for (const item of sequence) {
+          if (lastEnd != null) seam(lastEnd, item.at);
+          if (item.kind === "block") {
+            parent.appendChild(blockNode(item.block, grouped.get(item.block.id) || [], timeZone, showCalendar, target, dayIso));
+            const blockEnd = clockMinutes(item.block.end);
+            lastEnd = lastEnd == null ? blockEnd : Math.max(lastEnd, blockEnd);
+            continue;
+          }
+          parent.appendChild(eventNode(item.event, timeZone, showCalendar));
+          const eventEnd = endMinutes(item.event, timeZone, dayIso);
+          lastEnd = lastEnd == null ? eventEnd : Math.max(lastEnd, eventEnd);
+        }
+        if (lastEnd != null && lastEnd <= 24 * 60 - 15) seam(lastEnd, Math.min(24 * 60, lastEnd + 30));
+      }
+
+      function renderEvents(parent, events, timeZone, showCalendar, target) {
+        if (!events.length) {
+          const date = view === "week" ? weekDate || board.focusDate : board.focusDate;
+          if (showCalendar && date && blocksFor(date).length) {
+            renderDay(parent, [], timeZone, showCalendar, target, date);
+            return;
+          }
+          parent.appendChild(emptyDay(target, date, emptyCopy()));
+          return;
+        }
+        if (view === "today") {
+          renderDay(parent, events, timeZone, showCalendar, target, board.focusDate);
+          return;
+        }
+        const groups = new Map();
+        for (const event of events) {
+          const key = dayKey(event.start, timeZone);
+          const list = groups.get(key) ?? [];
+          list.push(event);
+          groups.set(key, list);
+        }
+        for (const [key, dayEvents] of groups) {
+          const label = document.createElement("div");
+          label.className = "day-label" + (key === selectedDay ? " is-selected" : "");
+          const pick = document.createElement("button");
+          pick.type = "button";
+          pick.className = "day-pick";
+          pick.textContent = dayLabel(dayEvents[0].start, timeZone) + (key === selectedDay ? " · Selected" : "");
+          pick.addEventListener("click", () => selectDay(key));
+          label.appendChild(pick);
+          parent.appendChild(label);
+          renderDay(parent, dayEvents, timeZone, showCalendar, target, key);
+        }
+      }
+
+      function dayTags(iso) {
+        const tags = [];
+        if (iso === board.todayDate) tags.push("Today");
+        if (iso === selectedDay) tags.push("Selected");
+        return tags;
+      }
+
+      function dayHead(iso, title, detail) {
+        const head = document.createElement("header");
+        const pick = document.createElement("button");
+        pick.type = "button";
+        pick.className = "day-pick";
+        pick.setAttribute("aria-pressed", iso === selectedDay ? "true" : "false");
+        const name = document.createElement("span");
+        name.className = "day-name";
+        name.textContent = title;
+        const sub = document.createElement("div");
+        sub.className = "meta";
+        sub.textContent = [detail, ...dayTags(iso)].filter(Boolean).join(" · ");
+        pick.append(name, sub);
+        pick.addEventListener("click", () => selectDay(iso));
+        head.appendChild(pick);
+        return head;
+      }
+
+      function pane(title, meta, color, events, showCalendar, target, dayIso) {
+        const section = document.createElement("section");
+        section.className = "pane" + (unified ? " is-unified" : "");
+        let head;
+        if (dayIso) {
+          section.classList.add("day");
+          if (dayIso === board.todayDate) section.classList.add("is-today");
+          if (dayIso === selectedDay) section.classList.add("is-selected");
+          head = dayHead(dayIso, title, meta);
+        } else {
+          head = document.createElement("header");
+          head.style.borderTopColor = color;
+          const h2 = document.createElement("h2");
+          h2.textContent = title;
+          const sub = document.createElement("div");
+          sub.className = "meta";
+          sub.textContent = meta;
+          head.append(h2, sub);
+        }
+        const list = document.createElement("div");
+        list.className = "events";
+        renderEvents(list, events, board.timeZone, showCalendar, target);
+        section.append(head, list);
+        return section;
+      }
+
+      function calendarDayLabel(iso) {
+        const [year, month, day] = iso.split("-").map(Number);
+        return new Intl.DateTimeFormat("en-US", {
+          timeZone: "UTC",
+          weekday: "short",
+          month: "short",
+          day: "numeric",
+        }).format(new Date(Date.UTC(year, month - 1, day, 12)));
+      }
+
+      function alignWeekToToday() {
+        if (view !== "week" || !unified) return;
+        const root = document.getElementById("board");
+        const today = root.querySelector(".pane.day.is-today");
+        if (!today) return;
+        const delta = today.getBoundingClientRect().left - root.getBoundingClientRect().left;
+        if (Math.abs(delta) < 1) return;
+        root.scrollLeft += delta;
+      }
+
+      function renderUnifiedWeek(root, events) {
+        const start = dayKey(board.start, board.timeZone);
+        const groups = new Map();
+        for (let i = 0; i < 7; i++) groups.set(shiftIso(start, i), []);
+        for (const event of events) {
+          const list = groups.get(dayKey(event.start, board.timeZone));
+          if (list) list.push(event);
+        }
+        for (const [iso, dayEvents] of groups) {
+          const section = document.createElement("section");
+          section.className = "pane day" + (iso === board.todayDate ? " is-today" : "") + (iso === selectedDay ? " is-selected" : "");
+          const count = dayEvents.length;
+          const head = dayHead(iso, calendarDayLabel(iso), count === 1 ? "1 event" : `${count} events`);
+          const list = document.createElement("div");
+          list.className = "events";
+          const target = (board.calendars || []).some((calendar) => calendar.access === "write") ? "choose" : null;
+          if (!dayEvents.length && !blocksFor(iso).length) list.appendChild(emptyDay(target, iso, "Nothing"));
+          else renderDay(list, dayEvents, board.timeZone, true, target, iso);
+          section.append(head, list);
+          root.appendChild(section);
+        }
+      }
+
+      function render() {
+        const root = document.getElementById("board");
+        const hint = document.getElementById("hint");
+        root.replaceChildren();
+        document.getElementById("range").textContent =
+          board?.view === "week" ? board.rangeLabel : "";
+        document.getElementById("unified").classList.toggle("on", unified);
+        paintModes();
+        if (!board) return;
+        if (board.error) {
+          hint.textContent = board.error;
+          return;
+        }
+        const calendars = board.calendars || [];
+        if (!calendars.length) {
+          hint.innerHTML = "";
+          hint.textContent = "No calendars are open. Set Read or Write on ";
+          const link = document.createElement("a");
+          link.href = api("/gateway");
+          link.textContent = "Context & Action Gateway";
+          hint.appendChild(link);
+          hint.append(".");
+          return;
+        }
+        hint.textContent = calendars.length > 4 ? "Scroll sideways for the rest of the calendars." : "";
+        if (unified) {
+          const events = calendars
+            .flatMap((calendar) =>
+              calendar.events.map((event) => ({
+                ...event,
+                color: calendar.color,
+                calendarTitle: calendar.title,
+                writable: calendar.access === "write",
+              })),
+            )
+            .sort((a, b) => a.start.localeCompare(b.start));
+          if (view === "week") {
+            hint.textContent = "Scroll sideways for the rest of the week.";
+            renderUnifiedWeek(root, events);
+            requestAnimationFrame(alignWeekToToday);
+            return;
+          }
+          const target = calendars.some((calendar) => calendar.access === "write") ? "choose" : null;
+          root.appendChild(
+            pane(
+              calendarDayLabel(board.focusDate),
+              `${calendars.length} calendars`,
+              "#7ee0c3",
+              events,
+              true,
+              target,
+              board.focusDate,
+            ),
+          );
+          return;
+        }
+        for (const calendar of calendars) {
+          const count = calendar.events.length;
+          const noun = count === 1 ? "event" : "events";
+          root.appendChild(
+            pane(
+              calendar.title,
+              `${calendar.sourceTitle} · ${count} ${noun}`,
+              calendar.color,
+              calendar.events.map((event) => ({
+                ...event,
+                color: calendar.color,
+                calendarTitle: calendar.title,
+                writable: calendar.access === "write",
+              })),
+              false,
+              calendar.access === "write" ? calendar.id : null,
+            ),
+          );
+        }
+      }
+
+      function localTimeValue(iso, timeZone) {
+        const parts = new Intl.DateTimeFormat("en-GB", {
+          timeZone,
+          hour: "2-digit",
+          minute: "2-digit",
+          hourCycle: "h23",
+        }).formatToParts(new Date(iso));
+        const bag = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+        const hour = bag.hour === "24" ? "00" : bag.hour;
+        return `${hour}:${bag.minute}`;
+      }
+
+      function beginEdit(event, row, body) {
+        row.classList.add("editing");
+        const form = document.createElement("form");
+        form.className = "edit-form";
+        const title = document.createElement("input");
+        title.type = "text";
+        title.value = event.title;
+        title.setAttribute("aria-label", "Title");
+        const times = document.createElement("div");
+        times.className = "times";
+        const start = document.createElement("input");
+        start.type = "time";
+        start.value = localTimeValue(event.start, board.timeZone);
+        start.setAttribute("aria-label", "Start");
+        const end = document.createElement("input");
+        end.type = "time";
+        end.value = localTimeValue(event.end, board.timeZone);
+        end.setAttribute("aria-label", "End");
+        times.append(start, end);
+        const calendar = document.createElement("select");
+        calendar.setAttribute("aria-label", "Calendar");
+        const writable = (board.calendars || []).filter((item) => item.access === "write");
+        const choices = writable.some((item) => item.id === event.calendarId)
+          ? writable
+          : [{ id: event.calendarId, title: event.calendarTitle || "Calendar", sourceTitle: "" }, ...writable];
+        for (const item of choices) {
+          const option = document.createElement("option");
+          option.value = item.id;
+          option.textContent = item.sourceTitle ? `${item.title} · ${item.sourceTitle}` : item.title;
+          if (item.id === event.calendarId) option.selected = true;
+          calendar.appendChild(option);
+        }
+        const buttons = document.createElement("div");
+        buttons.className = "edit-actions";
+        const save = document.createElement("button");
+        save.type = "submit";
+        save.className = "save";
+        save.textContent = "Save";
+        const cancel = document.createElement("button");
+        cancel.type = "button";
+        cancel.textContent = "Cancel";
+        cancel.addEventListener("click", () => render());
+        buttons.append(save, cancel);
+        form.append(title, times, calendar, buttons);
+        form.addEventListener("submit", (submitEvent) => {
+          submitEvent.preventDefault();
+          void saveEdit(event, title.value, start.value, end.value, calendar.value, save);
+        });
+        body.replaceChildren(form);
+        title.focus();
+        title.select();
+      }
+
+      function openInsert(row, gap, target) {
+        row.classList.add("open");
+        const form = document.createElement("form");
+        form.className = "edit-form";
+        const title = document.createElement("input");
+        title.type = "text";
+        title.placeholder = "New event";
+        title.setAttribute("aria-label", "Title");
+        const times = document.createElement("div");
+        times.className = "times";
+        const start = document.createElement("input");
+        start.type = "time";
+        start.value = gap.start;
+        start.setAttribute("aria-label", "Start");
+        const end = document.createElement("input");
+        end.type = "time";
+        end.value = gap.end;
+        end.setAttribute("aria-label", "End");
+        times.append(start, end);
+        let calendar = null;
+        if (target === "choose") {
+          calendar = document.createElement("select");
+          calendar.setAttribute("aria-label", "Calendar");
+          for (const item of (board.calendars || []).filter((entry) => entry.access === "write")) {
+            const option = document.createElement("option");
+            option.value = item.id;
+            option.textContent = item.sourceTitle ? `${item.title} · ${item.sourceTitle}` : item.title;
+            calendar.appendChild(option);
+          }
+        }
+        const buttons = document.createElement("div");
+        buttons.className = "edit-actions";
+        const save = document.createElement("button");
+        save.type = "submit";
+        save.className = "save";
+        save.textContent = "Add";
+        const cancel = document.createElement("button");
+        cancel.type = "button";
+        cancel.textContent = "Cancel";
+        cancel.addEventListener("click", () => render());
+        buttons.append(save, cancel);
+        form.append(title, times);
+        if (calendar) form.appendChild(calendar);
+        form.appendChild(buttons);
+        form.addEventListener("submit", (submitEvent) => {
+          submitEvent.preventDefault();
+          void createInGap(gap, title.value, start.value, end.value, calendar ? calendar.value : target, save);
+        });
+        row.replaceChildren(form);
+        title.focus();
+      }
+
+      async function createInGap(gap, title, start, end, calendarId, button) {
+        const trimmed = title.trim();
+        if (!trimmed || !start || !end || !calendarId) {
+          setStatus("An event needs a title, a start, and an end.", "err");
+          return;
+        }
+        button.disabled = true;
+        setStatus(`Adding ${trimmed}…`);
+        try {
+          const res = await fetch(api("/agenda/event/create"), {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ calendarId, title: trimmed, start, end, date: gap.date }),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(data.error || `Add failed (${res.status})`);
+          setStatus(`Added ${trimmed}.`);
+          await load();
+        } catch (err) {
+          button.disabled = false;
+          setStatus(err instanceof Error ? err.message : String(err), "err");
+        }
+      }
+
+      async function saveEdit(event, title, start, end, calendarId, button) {
+        const trimmed = title.trim();
+        if (!trimmed || !start || !end) {
+          setStatus("An event needs a title, a start, and an end.", "err");
+          return;
+        }
+        button.disabled = true;
+        const moved = calendarId && calendarId !== event.calendarId;
+        setStatus(moved ? `Moving ${trimmed}…` : `Saving ${trimmed}…`);
+        try {
+          const res = await fetch(api("/agenda/event/update"), {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ id: event.id, title: trimmed, start, end, anchor: event.start, calendarId }),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(data.error || `Save failed (${res.status})`);
+          const destination = data.event && data.event.calendarTitle;
+          setStatus(moved && destination ? `Moved ${trimmed} to ${destination}.` : `Updated ${trimmed}.`);
+          await load();
+        } catch (err) {
+          button.disabled = false;
+          setStatus(err instanceof Error ? err.message : String(err), "err");
+        }
+      }
+
+      async function removeEvent(event, button) {
+        if (button.disabled) return;
+        button.disabled = true;
+        setStatus(`Deleting ${event.title}…`);
+        try {
+          const res = await fetch(api("/agenda/event/delete"), {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ id: event.id }),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(data.error || `Delete failed (${res.status})`);
+          setStatus(`Deleted ${event.title}.`);
+          await load();
+        } catch (err) {
+          button.disabled = false;
+          setStatus(err instanceof Error ? err.message : String(err), "err");
+        }
+      }
+
+      async function load() {
+        const params = new URLSearchParams({ view });
+        const date = view === "week" ? weekDate : dayDate;
+        if (date) params.set("date", date);
+        const res = await fetch(api(`/agenda/board?${params}`));
+        board = await res.json();
+        if (!res.ok) throw new Error(board.error || `Failed to load (${res.status})`);
+        const blockRes = await fetch(api("/agenda/blocks"));
+        const blockBody = await blockRes.json().catch(() => ({}));
+        blocks = blockBody.blocks || [];
+        if (view === "week") weekDate = board.focusDate || weekDate;
+        else dayDate = board.focusDate || dayDate;
+        saveViewState();
+        paintClock();
+        render();
+        syncEar();
+      }
+
+      function syncEar() {
+        const date = view === "week" ? weekDate : dayDate;
+        void fetch(api("/agenda/ear"), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ active: true, view, unified, date: date || undefined }),
+        });
+      }
+
+      async function send(text, keepDraft) {
+        const trimmed = text.trim();
+        if (!trimmed || sending) return;
+        clearTimeout(listenTimer);
+        sending = true;
+        setStatus("Alfred is answering…");
+        pushTurn("user", trimmed, true);
+        try {
+          const res = await fetch(api("/agenda/say"), {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ text: trimmed, view, unified, date: view === "week" ? weekDate : dayDate }),
+          });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || `Send failed (${res.status})`);
+          const said = data.assistantText || "";
+          showReply(said || "Alfred didn’t say anything.");
+          if (!keepDraft) document.getElementById("ask").value = "";
+          setStatus("");
+          if (said) void speakThroughAlfred(trimmed, said);
+          void load();
+        } catch (err) {
+          pushTurn("assistant", err instanceof Error ? err.message : String(err), true);
+          setStatus("", "err");
+        } finally {
+          sending = false;
+        }
+      }
+
+      function submitSpoken(text) {
+        const trimmed = text.trim();
+        if (!trimmed || sending) return;
+        clearTimeout(listenTimer);
+        voicedThrough = latestSpeech.trim() || trimmed;
+        if (window.parent === window) {
+          void send(trimmed, true);
+          return;
+        }
+        sending = true;
+        pushTurn("user", trimmed, true);
+        setStatus("Alfred is answering…");
+        clearTimeout(answerTimer);
+        answerTimer = setTimeout(() => {
+          sending = false;
+        }, 20000);
+        window.parent.postMessage({ channel: "alfred.shell", type: "ask", text: trimmed }, location.origin);
+      }
+
+      function armListening(full) {
+        latestSpeech = full || "";
+        const pending = unsentSpeech(latestSpeech);
+        if (pending) pushTurn("user", pending, false);
+        clearTimeout(listenTimer);
+        if (!pending || sending) return;
+        listenTimer = setTimeout(() => {
+          const say = unsentSpeech(latestSpeech);
+          if (say) submitSpoken(say);
+        }, 1600);
+      }
+
+      document.getElementById("prev-day").addEventListener("click", () => move("day", -1));
+      document.getElementById("next-day").addEventListener("click", () => move("day", 1));
+      document.getElementById("prev-week").addEventListener("click", () => move("week", -1));
+      document.getElementById("next-week").addEventListener("click", () => move("week", 1));
+      document.getElementById("view-today").addEventListener("click", () => {
+        if (view === "today" && board?.todayDate && isoOffset(dayDate, board.todayDate) !== 0) {
+          dayDate = board.todayDate;
+        } else {
+          view = "today";
+        }
+        void load().catch((err) => setStatus(err.message, "err"));
+      });
+      document.getElementById("view-week").addEventListener("click", () => {
+        if (view === "week" && board?.todayDate && weekDate && weekDate !== board.todayDate) {
+          weekDate = board.todayDate;
+        } else {
+          view = "week";
+        }
+        void load().catch((err) => setStatus(err.message, "err"));
+      });
+      document.getElementById("unified").addEventListener("click", () => {
+        unified = !unified;
+        saveViewState();
+        render();
+        syncEar();
+      });
+      document.getElementById("ask-form").addEventListener("submit", (event) => {
+        event.preventDefault();
+        void send(document.getElementById("ask").value);
+      });
+      document.getElementById("ask").addEventListener("keydown", (event) => {
+        if (event.key !== "Enter" || event.shiftKey || event.isComposing) return;
+        event.preventDefault();
+        void send(document.getElementById("ask").value);
+      });
+
+      async function speakThroughAlfred(userText, reply) {
+        window.speechSynthesis?.cancel();
+        holdUi = true;
+        if (window.parent === window) {
+          holdUi = false;
+          setStatus("Open Agenda inside Alfred so the reply uses his voice.");
+          return;
+        }
+        const res = await fetch(api("/agenda/voice"), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text: reply }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          holdUi = false;
+          setStatus(data.error || "Alfred's voice isn't running.", "err");
+          return;
+        }
+        window.parent.postMessage({ channel: "alfred.shell", type: "ask", text: userText }, location.origin);
+      }
+
+      function voiceCmd(cmd) {
+        if (window.parent === window) {
+          setStatus("Open Agenda inside Alfred so this uses his voice.");
+          return;
+        }
+        window.parent.postMessage({ channel: "alfred.shell", type: "voice-cmd", cmd }, location.origin);
+      }
+
+      function paintVoice(data) {
+        const start = document.getElementById("voice-start");
+        const shhh = document.getElementById("voice-shhh");
+        const mute = document.getElementById("voice-mute");
+        const linked = Boolean(data.linked);
+        start.textContent = linked ? "Stop" : "Start";
+        start.classList.toggle("stop", linked);
+        start.setAttribute("aria-pressed", String(linked));
+        shhh.disabled = !linked;
+        shhh.classList.toggle("active", Boolean(data.speaking));
+        mute.disabled = !linked;
+        mute.textContent = data.muted ? "Unmute" : "Mute";
+        mute.classList.toggle("muted", Boolean(data.muted));
+        mute.setAttribute("aria-pressed", String(Boolean(data.muted)));
+      }
+
+      document.getElementById("voice-start").addEventListener("click", () => {
+        void syncEar();
+        voiceCmd("toggle");
+      });
+      document.getElementById("voice-shhh").addEventListener("click", () => voiceCmd("shhh"));
+      document.getElementById("voice-mute").addEventListener("click", () => voiceCmd("mute"));
+
+      let waveHanded = false;
+      function handWave() {
+        if (window.parent === window) return;
+        const canvas = document.getElementById("voice-wave");
+        const rect = canvas.getBoundingClientRect();
+        const dpr = window.devicePixelRatio || 1;
+        const width = Math.max(1, Math.floor((rect.width || 640) * dpr));
+        const height = Math.max(1, Math.floor((rect.height || 72) * dpr));
+        if (!waveHanded && typeof canvas.transferControlToOffscreen === "function") {
+          const off = canvas.transferControlToOffscreen();
+          waveHanded = true;
+          window.parent.postMessage(
+            { channel: "alfred.shell", type: "wave-surface", id: "agenda", canvas: off, width, height },
+            location.origin,
+            [off],
+          );
+          return;
+        }
+        window.parent.postMessage(
+          { channel: "alfred.shell", type: "wave-size", id: "agenda", width, height },
+          location.origin,
+        );
+      }
+
+      window.addEventListener("message", (event) => {
+        if (event.origin !== location.origin) return;
+        const data = event.data;
+        if (!data || data.channel !== "alfred.shell") return;
+        if (data.type === "visible") {
+          syncEar();
+          handWave();
+          return;
+        }
+        if (data.type === "voice") {
+          paintVoice(data);
+          return;
+        }
+        if (data.type === "listen-failed" || data.type === "ask-failed") {
+          holdUi = false;
+          sending = false;
+          setStatus(data.error || "Alfred's voice didn't start.", "err");
+          if (data.type === "ask-failed") {
+            void fetch(api("/agenda/voice"), {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ text: "" }),
+            });
+          }
+          return;
+        }
+        if (data.type !== "turn") return;
+        if (holdUi) {
+          if (data.role === "assistant" && data.final) {
+            holdUi = false;
+            sending = false;
+          }
+          return;
+        }
+        if (data.role === "user") {
+          if (data.final) {
+            clearTimeout(listenTimer);
+            voicedThrough = (latestSpeech || data.text || "").trim();
+            pushTurn("user", data.text || "", true);
+            if (!sending) setStatus("Alfred is answering…");
+            return;
+          }
+          armListening(data.text || "");
+          return;
+        }
+        if (data.role === "assistant" && data.text) {
+          pushTurn("assistant", data.text, Boolean(data.final));
+          if (data.final) {
+            sending = false;
+            clearTimeout(answerTimer);
+            setStatus("");
+            void load();
+            if (unsentSpeech(latestSpeech)) armListening(latestSpeech);
+          }
+        }
+      });
+
+      window.addEventListener("pagehide", () => {
+        void fetch(api("/agenda/ear"), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ active: false }),
+          keepalive: true,
+        });
+      });
+      window.addEventListener("pageshow", () => syncEar());
+
+      document.getElementById("blocks-link").href = api("/agenda/settings");
+      const remindersPanel = document.getElementById("reminders-panel");
+
+      function paintPlaceHint() {
+        document.getElementById("place-hint").textContent = selectedDay
+          ? `Placing on ${calendarDayLabel(selectedDay)}.`
+          : "Click a day in the agenda to choose where a reminder goes.";
+      }
+
+      function selectDay(iso) {
+        selectedDay = iso || "";
+        paintPlaceHint();
+        fillBlocks();
+        render();
+      }
+
+      function paintReminders() {
+        const root = document.getElementById("reminder-list");
+        root.replaceChildren();
+        if (!reminders.length) {
+          const empty = document.createElement("p");
+          empty.className = "hint";
+          empty.textContent = "No open reminders on the lists Alfred can read.";
+          root.appendChild(empty);
+          return;
+        }
+        for (const reminder of reminders) {
+          const row = document.createElement("div");
+          row.className = "reminder";
+          const copy = document.createElement("div");
+          const title = document.createElement("div");
+          title.textContent = reminder.title;
+          const meta = document.createElement("div");
+          meta.className = "hint";
+          meta.textContent = [reminder.listTitle, reminder.due].filter(Boolean).join(" · ");
+          copy.append(title, meta);
+          const button = document.createElement("button");
+          button.type = "button";
+          button.textContent = "Place";
+          button.addEventListener("click", () => openPlace(reminder));
+          row.append(copy, button);
+          root.appendChild(row);
+        }
+      }
+
+      function dayEvents(iso) {
+        if (!board || !iso) return [];
+        return (board.calendars || [])
+          .filter((calendar) => !calendar.ignoreOverlaps)
+          .flatMap((calendar) => calendar.events || [])
+          .filter((event) => {
+            if (event.allDay) return false;
+            return dayKey(event.start, board.timeZone) <= iso && dayKey(event.end, board.timeZone) >= iso;
+          });
+      }
+
+      function openStretches(block, iso) {
+        const start = clockMinutes(block.start);
+        const end = clockMinutes(block.end);
+        const intervals = dayEvents(iso)
+          .map((event) => ({
+            start: Math.max(start, dayKey(event.start, board.timeZone) < iso ? start : localMinutes(event.start, board.timeZone)),
+            end: Math.min(end, endMinutes(event, board.timeZone, iso)),
+          }))
+          .filter((interval) => interval.end > interval.start)
+          .sort((a, b) => a.start - b.start || a.end - b.end);
+        const merged = [];
+        for (const interval of intervals) {
+          const last = merged[merged.length - 1];
+          if (last && interval.start <= last.end) last.end = Math.max(last.end, interval.end);
+          else merged.push({ start: interval.start, end: interval.end });
+        }
+        const gaps = [];
+        let cursor = start;
+        for (const interval of merged) {
+          if (interval.start > cursor) gaps.push({ start: cursor, minutes: interval.start - cursor });
+          cursor = Math.max(cursor, interval.end);
+        }
+        if (end > cursor) gaps.push({ start: cursor, minutes: end - cursor });
+        return gaps;
+      }
+
+      function chosenDuration() {
+        const picked = document.getElementById("place-duration").value;
+        return picked === "custom" ? Number(document.getElementById("place-custom").value) : Number(picked);
+      }
+
+      function paintRoom() {
+        const note = document.getElementById("place-room");
+        const block = blocks.find((item) => item.id === document.getElementById("place-block").value);
+        if (!note) return;
+        if (!block || !selectedDay || !board) {
+          note.textContent = "";
+          return;
+        }
+        const duration = chosenDuration();
+        const gaps = openStretches(block, selectedDay);
+        const fit = gaps.find((gap) => gap.minutes >= duration);
+        const first = gaps[0];
+        if (fit) note.textContent = `${fit.minutes} minutes open at ${clockFromMinutes(fit.start)}.`;
+        else if (first) {
+          note.textContent = `${duration} minutes runs past the ${first.minutes} minutes open at ${clockFromMinutes(first.start)}.`;
+        } else note.textContent = `${block.name} is full on this day.`;
+      }
+
+      function fillBlocks() {
+        const select = document.getElementById("place-block");
+        const previous = select.value;
+        select.replaceChildren();
+        const applicable = selectedDay ? blocks.filter((block) => blockRuns(block, selectedDay)) : blocks;
+        const shown = applicable.length ? applicable : blocks;
+        for (const block of shown) {
+          const option = document.createElement("option");
+          option.value = block.id;
+          option.textContent = `${block.name} · ${clockFromMinutes(clockMinutes(block.start))}`;
+          select.appendChild(option);
+        }
+        if (!shown.length) {
+          const option = document.createElement("option");
+          option.textContent = "No time blocks";
+          select.appendChild(option);
+          select.disabled = true;
+        } else {
+          select.disabled = false;
+          if ([...select.options].some((option) => option.value === previous)) select.value = previous;
+        }
+        paintRoom();
+      }
+
+      function closePlace() {
+        placing = null;
+        document.getElementById("place-form").hidden = true;
+        document.getElementById("place-choice").hidden = true;
+      }
+
+      function openPlace(reminder) {
+        placing = reminder;
+        document.getElementById("place-title").textContent = reminder.title;
+        document.getElementById("place-form").hidden = false;
+        document.getElementById("place-choice").hidden = true;
+        fillBlocks();
+        remindersPanel.scrollTop = 0;
+      }
+
+      function showChoice(body) {
+        const box = document.getElementById("place-choice");
+        box.hidden = false;
+        box.replaceChildren();
+        const message = document.createElement("p");
+        message.textContent = body.message || "This block is full.";
+        box.appendChild(message);
+        if (body.choice || body.next) {
+          const actions = document.createElement("div");
+          actions.className = "place-actions";
+          if (body.choice === "overlap") {
+            const overlap = document.createElement("button");
+            overlap.type = "button";
+            overlap.textContent = body.overlapTitle ? `Overlap ${body.overlapTitle}` : "Overlap";
+            overlap.addEventListener("click", () => submitPlace("overlap"));
+            actions.appendChild(overlap);
+          }
+          if (body.next) {
+            const next = document.createElement("button");
+            next.type = "button";
+            next.className = "primary";
+            next.textContent = `Use ${body.next.label} at ${body.next.start}`;
+            next.addEventListener("click", () => submitPlace("next"));
+            actions.appendChild(next);
+          }
+          const cancel = document.createElement("button");
+          cancel.type = "button";
+          cancel.textContent = "Cancel";
+          cancel.addEventListener("click", () => {
+            box.hidden = true;
+          });
+          actions.appendChild(cancel);
+          box.appendChild(actions);
+        }
+        remindersPanel.scrollTop = 0;
+      }
+
+      async function submitPlace(choice) {
+        if (!placing) return;
+        const picked = document.getElementById("place-duration").value;
+        const duration = picked === "custom" ? Number(document.getElementById("place-custom").value) : Number(picked);
+        setStatus("Placing…");
+        const res = await fetch(api("/agenda/place"), {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            reminderId: placing.id,
+            blockId: document.getElementById("place-block").value,
+            durationMinutes: duration,
+            date: selectedDay || null,
+            choice: choice || undefined,
+          }),
+        });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          const message = body.error || "Could not place it";
+          setStatus(message, "err");
+          showChoice({ message });
+          return;
+        }
+        if (body.ok) {
+          const title = placing.title;
+          if (body.date) {
+            if (view === "week") weekDate = body.date;
+            else dayDate = body.date;
+            selectedDay = body.date;
+            paintPlaceHint();
+          }
+          closePlace();
+          setStatus(`Placed ${title} on ${body.label} at ${body.start}.`);
+          showChoice({ message: `Placed ${title} on ${body.label} at ${body.start}.` });
+          await load();
+          return;
+        }
+        setStatus("");
+        showChoice(body);
+      }
+
+      async function loadReminders() {
+        const res = await fetch(api("/agenda/reminders"));
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          reminders = [];
+          const root = document.getElementById("reminder-list");
+          root.replaceChildren();
+          const note = document.createElement("p");
+          note.className = "hint";
+          note.textContent = body.error || "Restart Alfred, then open Reminders again.";
+          root.appendChild(note);
+          return;
+        }
+        reminders = body.reminders || [];
+        if (body.error) setStatus(body.error, "err");
+        paintReminders();
+      }
+
+      document.getElementById("reminders-toggle").addEventListener("click", () => {
+        remindersPanel.hidden = !remindersPanel.hidden;
+        if (!remindersPanel.hidden) void loadReminders();
+      });
+      document.getElementById("place-duration").addEventListener("change", () => {
+        document.getElementById("place-custom-label").hidden = document.getElementById("place-duration").value !== "custom";
+        paintRoom();
+      });
+      document.getElementById("place-custom").addEventListener("input", paintRoom);
+      document.getElementById("place-block").addEventListener("change", paintRoom);
+      document.getElementById("place-cancel").addEventListener("click", closePlace);
+      document.getElementById("place-form").addEventListener("submit", (event) => {
+        event.preventDefault();
+        void submitPlace(null);
+      });
+      paintPlaceHint();
+
+      setInterval(paintClock, 1000);
+      window.addEventListener("resize", () => handWave());
+      requestAnimationFrame(() => handWave());
+      load().catch((err) => setStatus(err instanceof Error ? err.message : String(err), "err"));
+    </script>
+  </body>
+</html>

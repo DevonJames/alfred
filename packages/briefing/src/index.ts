@@ -1,3 +1,4 @@
+export { formatAgendaMarkdown, formatAgendaSpeech, type BriefingAgendaEvent, type BriefingAgendaSlice } from "./agenda.js";
 export { loadBriefingConfig, type BriefingConfig, type LaunchesMode } from "./config.js";
 export {
   BriefingController,
@@ -7,6 +8,7 @@ export {
   createBriefingController,
   type BriefingTurnDecision,
 } from "./controller.js";
+export { formatRemindersMarkdown, formatRemindersSpeech, formatTaskSpeech, loadDueReminders, type TaskReminder } from "./reminders.js";
 export {
   CRYPTO_OPTIONS,
   LAUNCH_SITE_OPTIONS,
@@ -26,6 +28,13 @@ export {
   type SummarizeNewsArticleOpts,
 } from "./news-lookup.js";
 export {
+  parseDuckDuckGoHtml,
+  researchNewsWithOpenAiWebSearch,
+  searchNewsWeb,
+  unwrapDuckDuckGoUrl,
+  type NewsSearchHit,
+} from "./news-search.js";
+export {
   lookupLiveCryptoPrice,
   lookupLiveMetalsPrice,
 } from "./markets-lookup.js";
@@ -44,6 +53,13 @@ export {
 } from "./day.js";
 export { BriefingCache } from "./cache.js";
 export { generateBriefing } from "./generate.js";
+export {
+  formatBriefingForDisplay,
+  isBriefingDisplay,
+  type BriefingDisplay,
+  type BriefingDisplayLine,
+  type BriefingDisplaySection,
+} from "./display.js";
 export { formatBriefingAsMarkdown, formatBriefingForSpeech } from "./format.js";
 export { detectBriefingIntent, wantsLaunches, type BriefingIntentKind } from "./intent.js";
 export { BriefingStateStore, isSoftOfferEligible, type BriefingOfferState } from "./state.js";
