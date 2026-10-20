@@ -429,6 +429,10 @@
       .detail-label-row label {
         margin-bottom: 0;
       }
+      .detail-label-row span {
+        display: flex;
+        gap: 0.35rem;
+      }
       .detail-expand {
         border: 1px solid var(--line);
         background: transparent;
@@ -874,6 +878,8 @@
         <p class="meta" id="detail-overlay-name"></p>
         <textarea id="detail-overlay-text"></textarea>
         <div class="detail-overlay-actions">
+          <button type="button" id="detail-overlay-copy">Copy</button>
+          <button type="button" id="detail-overlay-download">Download</button>
           <button type="button" id="detail-overlay-save">Save changes</button>
           <button type="button" class="ghost" id="detail-overlay-done">Done</button>
         </div>

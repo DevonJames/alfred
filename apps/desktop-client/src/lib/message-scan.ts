@@ -16,6 +16,8 @@ export interface IncomingMessage {
   chatName: string | null;
   participantCount: number;
   sentAt: string | null;
+  /** The received copy of a note the user sent to one of their own addresses. */
+  selfNote?: boolean;
 }
 
 const APPLE_EPOCH_MS = Date.UTC(2001, 0, 1);
@@ -78,6 +80,9 @@ export function messagePlainText(text: unknown, body: unknown): string {
 }
 
 export function commitmentPrompt(message: IncomingMessage): string {
+  if (message.selfNote) {
+    return `This is a note the user sent to themself.\n\nUser:\n${message.text.slice(0, 500)}`;
+  }
   if (!message.fromMe) return requestPrompt(message);
   const others =
     message.participantCount === 1 ? "1 other person" : `${message.participantCount} other people`;
@@ -187,9 +192,9 @@ export function looksLikeRequest(text: string): boolean {
 }
 
 /** Outgoing promises, or incoming account requests that are not campaigns. */
-export function shouldDraftMessage(message: { fromMe: boolean; text: string }): boolean {
+export function shouldDraftMessage(message: { fromMe: boolean; selfNote?: boolean; text: string }): boolean {
   if (!message.text.trim()) return false;
-  if (message.fromMe) return looksLikeCommitment(message.text) || looksLikeFollowUp(message.text);
+  if (message.fromMe || message.selfNote) return looksLikeCommitment(message.text) || looksLikeFollowUp(message.text);
   if (looksLikeSolicitation(message.text)) return false;
   return looksLikeRequest(message.text);
 }
@@ -362,9 +367,47 @@ const INCOMING_SQL = `SELECT m.ROWID AS id, m.text AS text, m.attributedBody AS 
     SELECT j.chat_id FROM chat_message_join j WHERE j.message_id = m.ROWID ORDER BY j.chat_id LIMIT 1
   )
   WHERE m.ROWID > ? AND m.is_from_me = 0
+    AND (m.associated_message_type IS NULL OR m.associated_message_type = 0)
     AND ((m.text IS NOT NULL AND m.text != '') OR m.attributedBody IS NOT NULL)
   ORDER BY m.ROWID ASC
   LIMIT ?`;
+
+/** Addresses this Mac sends from. A direct chat with one of them is a note to yourself. */
+function ownSenderIds(db: SqliteDatabase): string[] {
+  const rows = db
+    .prepare(
+      `SELECT DISTINCT destination_caller_id AS id FROM message
+       WHERE is_from_me = 1 AND destination_caller_id IS NOT NULL AND destination_caller_id != ''`,
+    )
+    .all() as Array<{ id?: string }>;
+  return rows.map((row) => row.id).filter((id): id is string => Boolean(id));
+}
+
+/**
+ * The received copy of a note the user sent to themself.
+ * Messages keeps that copy as incoming, so the sent-message scan never sees it.
+ */
+export function readNewSelfNotes(afterId: number, limit = 80): IncomingMessage[] | null {
+  const db = openMessagesDb();
+  if (!db) return null;
+  try {
+    const own = ownSenderIds(db);
+    if (!own.length) return [];
+    const placeholders = own.map(() => "?").join(", ");
+    const sql = INCOMING_SQL.replace(
+      "WHERE m.ROWID > ? AND m.is_from_me = 0",
+      `WHERE m.ROWID > ? AND m.is_from_me = 0 AND h.id IN (${placeholders})`,
+    );
+    const rows = db.prepare(sql).all(afterId, ...own, limit) as Array<Record<string, unknown>>;
+    return rows.map((row) => {
+      const message = mapMessageRow(row, true);
+      if (!message.isGroup) message.selfNote = true;
+      return message;
+    });
+  } finally {
+    db.close();
+  }
+}
 
 /** Messages other people sent after the cursor. */
 export function readNewIncomingMessages(afterId: number, limit = 80): IncomingMessage[] | null {

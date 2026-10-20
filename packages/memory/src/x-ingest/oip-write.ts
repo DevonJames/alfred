@@ -35,6 +35,26 @@ function xProvenance(opts: {
   };
 }
 
+function publishedDay(iso?: string | null): string | undefined {
+  if (!iso) return undefined;
+  const day = iso.slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(day) ? day : iso;
+}
+
+/** Title, description, and publish date lead the transcript so retrieval has the video's context. */
+function youtubeMemoryText(capture: XCapture, searchBits = ""): string {
+  const published = publishedDay(capture.publishedAt ?? capture.posts[0]?.publishedAt);
+  const context = [
+    capture.headline ? `Title: ${capture.headline}` : "",
+    capture.author ? `Channel: ${capture.author}` : "",
+    published ? `Published: ${published}` : "",
+    capture.description ? `Description:\n${capture.description}` : "",
+  ].filter(Boolean);
+  return [context.join("\n"), capture.text ? `Transcript:\n${capture.text}` : "", searchBits]
+    .filter(Boolean)
+    .join("\n\n");
+}
+
 export function captureContentHash(capture: XCapture): string {
   return hashBytes(
     JSON.stringify({
@@ -191,19 +211,18 @@ export async function writeXCaptureToOip(opts: {
       : "SocialMediaPosting";
   const noteLabel = noteNames.length ? noteNames.join(", ") : "";
   const searchBits = isVideo
-    ? ["youtube", "YouTube", "video", capture.author, capture.description, noteLabel, "note"]
-        .filter(Boolean)
-        .join(" ")
+    ? ["youtube", "YouTube", "video", capture.author, noteLabel, "note"].filter(Boolean).join(" ")
     : ["x.com", "twitter", "X", capture.authorHandle, noteLabel, "note"].filter(Boolean).join(" ");
-  const bodyText = [
-    capture.text,
-    capture.description && isVideo ? capture.description : "",
-    capture.quoted ? `Quoted: ${capture.quoted.text}` : "",
-    capture.linkedPage ? `Linked: ${capture.linkedPage.title}\n${capture.linkedPage.text}` : "",
-    searchBits,
-  ]
-    .filter(Boolean)
-    .join("\n\n");
+  const bodyText = isVideo
+    ? youtubeMemoryText(capture, searchBits)
+    : [
+        capture.text,
+        capture.quoted ? `Quoted: ${capture.quoted.text}` : "",
+        capture.linkedPage ? `Linked: ${capture.linkedPage.title}\n${capture.linkedPage.text}` : "",
+        searchBits,
+      ]
+        .filter(Boolean)
+        .join("\n\n");
 
   const duration = isoDuration(capture.durationSeconds);
   const postingBody = {

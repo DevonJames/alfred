@@ -363,6 +363,30 @@ func setDue(_ request: HelperRequest) -> Never {
   emit(ReminderResult(reminder: reminderOut(item)))
 }
 
+func setTitle(_ request: HelperRequest) -> Never {
+  let policy = loadPolicy(request.policyPath)
+  guard let reminderId = request.reminderId, !reminderId.isEmpty else {
+    fail("bad_request", "Changing a name needs the reminder id.")
+  }
+  let title = request.title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+  if title.isEmpty {
+    fail("bad_request", "A reminder needs a name.")
+  }
+  guard let item = store.calendarItem(withIdentifier: reminderId) as? EKReminder else {
+    fail("not_found", "That reminder is no longer on this Mac.")
+  }
+  if !canWrite(item.calendar, policy: policy) {
+    fail("list_denied", "That reminder list is not writable.")
+  }
+  item.title = title
+  do {
+    try store.save(item, commit: true)
+  } catch {
+    fail("save_failed", error.localizedDescription)
+  }
+  emit(ReminderResult(reminder: reminderOut(item)))
+}
+
 func complete(_ request: HelperRequest) -> Never {
   let policy = loadPolicy(request.policyPath)
   guard let reminderId = request.reminderId, !reminderId.isEmpty else {
@@ -395,6 +419,7 @@ case "lists": catalog()
 case "items": items(request)
 case "create": create(request)
 case "due": setDue(request)
+case "title": setTitle(request)
 case "complete": complete(request)
 default: fail("bad_op", "Unknown reminders op \(request.op).")
 }

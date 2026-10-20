@@ -37,6 +37,9 @@ describe("briefing prefs file", () => {
       includeMetals: true,
       metalSymbol: "silver",
       includeIngestedNotes: false,
+      includeMedicineMorning: true,
+      includeMedicineMidday: true,
+      includeMedicineEvening: true,
       newsSources: ["NPR", "BBC News"],
       agendaCalendarIds: ["work-cal"],
     });
@@ -48,6 +51,9 @@ describe("briefing prefs file", () => {
     expect(loaded.includeMetals).toBe(true);
     expect(loaded.metalSymbol).toBe("silver");
     expect(loaded.includeIngestedNotes).toBe(false);
+    expect(loaded.includeMedicineMorning).toBe(true);
+    expect(loaded.includeMedicineMidday).toBe(false);
+    expect(loaded.includeMedicineEvening).toBe(false);
     expect(loaded.newsSources).toEqual(["NPR", "BBC News"]);
     expect(loaded.agendaCalendarIds).toEqual(["work-cal"]);
   });

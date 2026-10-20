@@ -5,16 +5,24 @@
 
 import { Hono } from "hono";
 import {
+  formatFitnessFocusPrompt,
+  loadCurrentFitnessDayPlan,
+  readFitnessFocus,
+  speakFitnessPlan,
+} from "@alfred/briefing";
+import {
   cancelTextSession,
   conversationSessionKey,
   getTextSession,
   resetTextSession,
   setHomeDeviceToken,
 } from "../lib/text-session.js";
+import { formatTalkFocusSystem, readTalkFocus } from "@alfred/memory";
 import { requireSidecarOrDevice } from "../middleware/sidecar-or-device.js";
 import { isSidecarMode } from "../lib/sidecar-mode.js";
+import type { DeviceRecord } from "../lib/device-store.js";
 
-export const conversationRouter = new Hono();
+export const conversationRouter = new Hono<{ Variables: { device?: DeviceRecord } }>();
 
 conversationRouter.use("*", requireSidecarOrDevice);
 
@@ -44,6 +52,31 @@ function extrasToString(extras: TurnBody["systemExtras"]): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+async function fitnessTurnContext(
+  device: { id?: string; deviceType?: string | null } | undefined,
+  clientExtras: string | undefined,
+): Promise<string | undefined> {
+  const blocks: string[] = [];
+  if (device?.id && device.deviceType?.startsWith("fitnessally")) {
+    const focus = await readFitnessFocus(device.id);
+    if (focus) blocks.push(formatFitnessFocusPrompt(focus.card));
+  }
+  const timezone =
+    process.env.BRIEFING_TIMEZONE?.trim() || Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const now = new Date();
+  const plan = await loadCurrentFitnessDayPlan(now, timezone);
+  const spoken = speakFitnessPlan(plan, now, timezone);
+  if (!spoken.startsWith("I don't")) {
+    blocks.push(
+      `Today's FitnessAlly plan. Use this only when the user asks what they are eating or training. Do not invent meals or workouts. ${spoken}`,
+    );
+  }
+  if (clientExtras) blocks.push(clientExtras);
+  const talkFocus = await readTalkFocus();
+  if (talkFocus) blocks.push(formatTalkFocusSystem(talkFocus));
+  return blocks.length ? blocks.join("\n\n") : undefined;
 }
 
 function sessionParts(body: TurnBody) {
@@ -80,7 +113,7 @@ conversationRouter.post("/turn", async (c) => {
   }
 
   const parts = sessionParts(body);
-  const extraSystem = extrasToString(body.systemExtras);
+  const extraSystem = await fitnessTurnContext(c.get("device"), extrasToString(body.systemExtras));
   const imageDataUrls = [
     ...(body.imageDataUrls ?? []),
     ...(body.imageDataUrl ? [body.imageDataUrl] : []),

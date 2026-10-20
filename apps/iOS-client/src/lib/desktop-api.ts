@@ -9,14 +9,30 @@
  * survives the Mac changing networks without the user doing anything.
  */
 import { ApiError, describeFailure } from "./cloud-api";
+import { renewStoredLink } from "./cloud-identity";
 import { desktopContext, useConnection } from "./connection";
 import { isPathFailure, rediscover } from "./discovery";
 import type {
   AskAnswer,
   AudioNote,
   AudioNoteJob,
+  AudioNotePhoto,
   NoteUploadSession,
   ConversationTurn,
+  AgendaBoard,
+  AgendaCalendarEvent,
+  AgendaTimeBlock,
+  BriefingPayload,
+  FitnessDayPlan,
+  MedicineItem,
+  MedicineLogMode,
+  MedicinePeriod,
+  MedicineSchedule,
+  OpenAppleReminder,
+  BriefingPrefs,
+  BriefingPrefsCatalog,
+  ConversationRecord,
+  ConversationSummary,
   DesktopSettings,
   ForgetScope,
   Memory,
@@ -100,9 +116,17 @@ async function call<T>(path: string, options: Options = {}): Promise<T> {
       // that would be wrong, and would make the user re-pair for no reason.
       const fromRelayHub = code === "unauthorized" && context.baseUrl.includes("/proxy/");
       if (fromRelayHub) {
+        if (retry) {
+          try {
+            const renewed = await renewStoredLink();
+            if (renewed) return call<T>(path, { ...options, retry: false });
+          } catch {
+            /* fall through to the re-link message */
+          }
+        }
         throw new ApiError(
           "cloud_unauthorized",
-          "Your alfrd.net session has expired. Sign in again to reach your Mac through the relay.",
+          "Your link to the Mac expired. Enter the claim secret from the Mac to renew it.",
           401
         );
       }
@@ -829,6 +853,38 @@ export function getNoteAudioMeta(id: string) {
   }>(`/api/notes/${encodeURIComponent(id)}/audio/meta`).then((body) => body.audio);
 }
 
+export function uploadNotePhoto(
+  noteId: string,
+  opts: { image: string; filename: string; mimeType: string; offsetSeconds: number; capturedAt?: string },
+) {
+  return call<{ photo: AudioNotePhoto }>(`/api/notes/${encodeURIComponent(noteId)}/photos`, {
+    method: "POST",
+    body: opts,
+  }).then((body) => body.photo);
+}
+
+export function getNotePhotoMeta(noteId: string, photoId: string) {
+  return call<{
+    photo: {
+      filename: string;
+      mimeType: string;
+      byteLength: number;
+      totalChunks: number;
+      chunkSize: number;
+    };
+  }>(`/api/notes/${encodeURIComponent(noteId)}/photos/${encodeURIComponent(photoId)}/meta`).then(
+    (body) => body.photo,
+  );
+}
+
+export function getNotePhotoChunk(noteId: string, photoId: string, index: number) {
+  return call<{
+    chunk: { index: number; data: string; totalChunks: number; byteLength: number };
+  }>(
+    `/api/notes/${encodeURIComponent(noteId)}/photos/${encodeURIComponent(photoId)}/chunks/${index}`,
+  ).then((body) => body.chunk);
+}
+
 export function getNoteAudioChunk(id: string, index: number) {
   return call<{
     chunk: { index: number; data: string; totalChunks: number; byteLength: number };
@@ -914,6 +970,220 @@ export function publishPublic(memoryId: string) {
 // ---------------------------------------------------------------------------
 // Settings (§12.4)
 // ---------------------------------------------------------------------------
+
+/** GET /api/briefing — full Daily Brief (weather, agenda, markets, …). */
+export function getBriefing(opts?: { refresh?: boolean; launches?: boolean }) {
+  return call<BriefingPayload>("/api/briefing", {
+    query: {
+      refresh: opts?.refresh ? "1" : undefined,
+      launches: opts?.launches ? "1" : undefined,
+    },
+  });
+}
+
+export function getBriefingPrefs() {
+  return call<{ prefs: BriefingPrefs; catalog: BriefingPrefsCatalog }>("/api/briefing/prefs");
+}
+
+export function putBriefingPrefs(patch: Partial<BriefingPrefs>) {
+  return call<{ prefs: BriefingPrefs; saved: boolean }>("/api/briefing/prefs", {
+    method: "PUT",
+    body: patch,
+  });
+}
+
+export function getAgendaBoard(opts?: { view?: "today" | "week"; date?: string }) {
+  return call<AgendaBoard>("/api/agenda/board", {
+    query: {
+      view: opts?.view ?? "today",
+      date: opts?.date,
+    },
+  });
+}
+
+export function listAgendaCalendars() {
+  return call<{
+    calendars: Array<{
+      id: string;
+      title: string;
+      sourceTitle: string;
+      access: "none" | "read" | "write";
+      color?: string;
+    }>;
+  }>("/api/agenda/calendars");
+}
+
+export function createAgendaEvent(input: {
+  calendarId: string;
+  title: string;
+  start: string;
+  end: string;
+  date: string;
+}) {
+  return call<{ ok: boolean; event: AgendaCalendarEvent }>("/api/agenda/event", {
+    method: "POST",
+    body: input,
+  });
+}
+
+export function updateAgendaEvent(
+  id: string,
+  input: { title: string; start: string; end: string; anchor: string; calendarId?: string }
+) {
+  return call<{ ok: boolean; event: AgendaCalendarEvent }>(
+    `/api/agenda/event/${encodeURIComponent(id)}`,
+    { method: "PATCH", body: input }
+  );
+}
+
+export function deleteAgendaEvent(id: string) {
+  return call<{ ok: boolean }>(`/api/agenda/event/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
+}
+
+export function getAgendaBlocks(date?: string) {
+  return call<{ date: string; blocks: AgendaTimeBlock[] }>("/api/agenda/blocks", {
+    query: { date },
+  });
+}
+
+export function listOpenAppleReminders() {
+  return call<{ reminders: OpenAppleReminder[]; error?: string }>("/api/agenda/open-reminders");
+}
+
+export function placeReminderInBlock(input: {
+  reminderId: string;
+  blockId: string;
+  durationMinutes: number;
+  date?: string;
+  choice?: "overlap" | "next";
+}) {
+  return call<{
+    ok: boolean;
+    event?: AgendaCalendarEvent;
+    date?: string;
+    start?: string;
+    end?: string;
+    label?: string;
+    choice?: string;
+    message?: string;
+    next?: { date: string; start: string; end: string; label: string } | null;
+    error?: string;
+  }>("/api/agenda/place", { method: "POST", body: input });
+}
+
+export function getFitnessDayPlan() {
+  return call<{ plan: FitnessDayPlan | null }>("/api/fitness/day-plan");
+}
+
+export function getMedicineSchedule() {
+  return call<MedicineSchedule>("/api/medicine/schedule");
+}
+
+export function medicineImageUrl(imageId: string): string | null {
+  return assetUrl(`/api/medicine/images/${encodeURIComponent(imageId)}`);
+}
+
+export function analyzeMedicine(input: {
+  plan: string;
+  files: { uri: string; name: string; mimeType: string }[];
+}) {
+  const form = new FormData();
+  if (input.plan.trim()) form.append("plan", input.plan.trim());
+  for (const file of input.files) {
+    form.append(
+      "images",
+      { uri: file.uri, name: file.name, type: file.mimeType } as unknown as Blob
+    );
+  }
+  return call<MedicineSchedule>("/api/medicine/analyze", { method: "POST", form });
+}
+
+export function logMedicine(input: {
+  mode: MedicineLogMode;
+  period?: MedicinePeriod;
+  ids?: string[];
+  names?: string[];
+}) {
+  return call<{ speech: string; dayKey: string; items: MedicineItem[] }>("/api/medicine/log", {
+    method: "POST",
+    body: input,
+  });
+}
+
+export function patchMedicineItem(
+  id: string,
+  patch: Partial<{
+    name: string;
+    quantity: string;
+    instruction: string;
+    period: MedicinePeriod;
+    days: "daily" | number[];
+  }>
+) {
+  return call<MedicineSchedule>(`/api/medicine/items/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    body: patch,
+  });
+}
+
+export function deleteMedicineItem(id: string) {
+  return call<MedicineSchedule>(`/api/medicine/items/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
+}
+
+export function getFitnessFocus() {
+  return call<{ card: Record<string, unknown> | null; updatedAt?: string }>("/api/fitness/focus");
+}
+
+export function updateGraphNode(
+  id: string,
+  patch: {
+    name?: string;
+    text?: string;
+    summary?: string;
+    email?: string | null;
+    telephone?: string | null;
+    birthDate?: string | null;
+  }
+) {
+  return call<MemoryGraphNodeDetail>("/api/memory/graph/node/update", {
+    method: "POST",
+    body: { id, ...patch },
+  });
+}
+
+export function setTalkFocusFromGraph(id: string) {
+  return call<{ ok: boolean; did: string; name: string; type: string }>("/api/memory/graph/talk", {
+    method: "POST",
+    body: { id },
+  });
+}
+
+export function listConversations() {
+  return call<{ conversations: ConversationSummary[]; activeId: string | null }>(
+    "/api/conversations"
+  );
+}
+
+export function getConversation(id: string) {
+  return call<{ conversation: ConversationRecord }>(
+    `/api/conversations/${encodeURIComponent(id)}`
+  );
+}
+
+export function setActiveConversation(id: string) {
+  return call<{ conversation: ConversationRecord }>("/api/conversations/active", {
+    method: "PUT",
+    body: { id },
+  });
+}
+
+export function prepareNewConversation() {
+  return call<{ ok: boolean }>("/api/conversations/new", { method: "POST" });
+}
 
 export function getSettings() {
   return call<{ settings: DesktopSettings }>("/api/settings");

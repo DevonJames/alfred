@@ -11,8 +11,8 @@ import { activeProfileId, oipForProfile } from "../oip-memory.js";
 import { probeAudioDurationSeconds } from "./audio-chunks.js";
 import { resolveFolderNoteNames } from "./filename-meta.js";
 import { createNoteJob, getNoteJob, updateNoteJob } from "./jobs.js";
-import { getAudioNote, listAudioNotes, readAudioNoteBytes } from "./service.js";
-import { summarizeAudioNote } from "./summarization.js";
+import { getAudioNote, listAudioNotes, readAudioNoteBytes, waitForNotePhotoAnalyses } from "./service.js";
+import { formatPhotoContext, summarizeAudioNote } from "./summarization.js";
 import { transcribeAudioNote } from "./stt.js";
 import type { NoteWorkItem } from "./queue.js";
 
@@ -152,11 +152,14 @@ async function execute(
     }
 
     partialTranscript = transcribed.text;
+    updateNoteJob(jobId, { progress: 72, message: "Reading stills" });
+    const withPhotos = (await waitForNotePhotoAnalyses(noteId, 90_000, profileId)) ?? existing;
     updateNoteJob(jobId, { progress: 75, message: "Summarizing" });
     const metadata = await summarizeAudioNote({
       text: transcribed.text,
       noteType: item.template,
       participants: item.attendees,
+      photoContext: formatPhotoContext(withPhotos?.photos ?? []),
     });
 
     let title = item.title?.trim() || metadata.summary.slice(0, 80) || undefined;

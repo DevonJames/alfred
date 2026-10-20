@@ -19,6 +19,8 @@ export interface BriefingConfig {
   metalSymbol: "gold" | "silver";
   /** Notes → memory ingest digest (X / YouTube saves) in the spoken briefing. */
   includeIngestedNotes: boolean;
+  /** Speak untaken morning medicine. Mid-day and evening briefings are not built yet. */
+  includeMedicineMorning: boolean;
   newsSources: string[];
   agendaCalendarIds: string[];
   llmGreeting: boolean;
@@ -88,6 +90,8 @@ export function loadBriefingConfig(overrides: Partial<BriefingConfig> = {}): Bri
     metalSymbol: overrides.metalSymbol ?? metalSymbol,
     includeIngestedNotes:
       overrides.includeIngestedNotes ?? envFlag("BRIEFING_INCLUDE_INGESTED_NOTES", true),
+    includeMedicineMorning:
+      overrides.includeMedicineMorning ?? envFlag("BRIEFING_INCLUDE_MEDICINE_MORNING", false),
     newsSources:
       overrides.newsSources ??
       newsRaw

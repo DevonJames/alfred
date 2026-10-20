@@ -16,6 +16,8 @@ export type UiTranscriptPublisher = {
   endCaption(reason?: string): void;
   resetAssistant(): void;
   publishExpression(event: ExpressionEvent): void;
+  /** Drop a structured card hold so the next spoken turn can caption normally. */
+  releaseStructured(): void;
   /** Tee an agent transcription stream: pass-through chunks + parallel HUD updates. */
   teeTranscription(
     text: AsyncIterable<string | TimedString>,
@@ -34,6 +36,8 @@ export function createRoomUiTranscriptPublisher(getRoom: () => Room | undefined)
   let captionStarted = false;
   let lastReveal = "";
   let lastRevealAt = 0;
+  /** Structured briefing/headline card. Spoken word captions must not replace it. */
+  let structuredHold = false;
 
   const publish = (
     channel: "alfred.caption" | "alfred.user" | typeof EXPRESSION_TOPIC,
@@ -81,20 +85,21 @@ export function createRoomUiTranscriptPublisher(getRoom: () => Room | undefined)
     },
 
     beginCaption(text = "", opts) {
+      const structured = opts?.layout === "briefing" && Boolean(opts.display);
+      if (!structured && structuredHold) return;
+      if (structured) structuredHold = true;
       captionStarted = true;
       lastReveal = text;
       lastRevealAt = Date.now();
       publish("alfred.caption", {
         type: "start",
         text,
-        ...(opts?.layout === "briefing" && opts.display
-          ? { layout: "briefing", display: opts.display }
-          : {}),
+        ...(structured ? { layout: "briefing", display: opts?.display } : {}),
       });
     },
 
     revealCaption(text) {
-      if (!text) return;
+      if (!text || structuredHold) return;
       if (!captionStarted) {
         captionStarted = true;
         publish("alfred.caption", { type: "start", text: "" });
@@ -110,12 +115,21 @@ export function createRoomUiTranscriptPublisher(getRoom: () => Room | undefined)
     },
 
     endCaption(reason = "complete") {
+      if (structuredHold) return;
       if (!captionStarted && !lastReveal) return;
       captionStarted = false;
       publish("alfred.caption", { type: "end", reason });
     },
 
     resetAssistant() {
+      if (structuredHold) return;
+      captionStarted = false;
+      lastReveal = "";
+      lastRevealAt = 0;
+    },
+
+    releaseStructured() {
+      structuredHold = false;
       captionStarted = false;
       lastReveal = "";
       lastRevealAt = 0;
@@ -130,7 +144,7 @@ export function createRoomUiTranscriptPublisher(getRoom: () => Room | undefined)
       let started = false;
       for await (const chunk of text) {
         const piece = chunkText(chunk);
-        if (piece) {
+        if (piece && !structuredHold) {
           if (!started) {
             started = true;
             captionStarted = true;
@@ -147,7 +161,7 @@ export function createRoomUiTranscriptPublisher(getRoom: () => Room | undefined)
         }
         yield chunk;
       }
-      if (started) {
+      if (started && !structuredHold) {
         if (acc && acc !== lastReveal) {
           lastReveal = acc;
           publish("alfred.caption", { type: "reveal", text: acc });

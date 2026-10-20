@@ -1,4 +1,58 @@
 export { formatAgendaMarkdown, formatAgendaSpeech, type BriefingAgendaEvent, type BriefingAgendaSlice } from "./agenda.js";
+export {
+  fitnessPlanIsCurrent,
+  formatFitnessMarkdown,
+  formatFitnessSpeech,
+  speakFitnessPlan,
+  type FitnessDayPlan,
+  type FitnessMeal,
+  type FitnessWorkout,
+} from "./fitness.js";
+export {
+  applyMedicineLog,
+  attachDraftImages,
+  formatMedicineMarkdown,
+  formatMedicineSpeech,
+  isMedicineLogMode,
+  isMedicinePeriod,
+  medicineDisplayLines,
+  mergeMedicineItems,
+  mergeSummary,
+  parseMedicineDrafts,
+  untakenMorningItems,
+  type MedicineDays,
+  type MedicineDraft,
+  type MedicineItem,
+  type MedicineItemPatch,
+  type MedicineLogMode,
+  type MedicineLogRequest,
+  type MedicinePeriod,
+  type MedicineScheduleViewItem,
+} from "./medicine.js";
+export {
+  MedicineStoreError,
+  deleteMedicineItem,
+  loadUntakenMorningMedicine,
+  medicineScheduleView,
+  readMedicineImage,
+  readMedicineSchedule,
+  saveMedicineImage,
+  saveMedicineSchedule,
+  storeMedicineLog,
+  updateMedicineItem,
+} from "./medicine-store.js";
+export {
+  clearFitnessDayPlan,
+  clearFitnessFocus,
+  FitnessStoreError,
+  formatFitnessFocusPrompt,
+  loadCurrentFitnessDayPlan,
+  readFitnessDayPlan,
+  readFitnessFocus,
+  readNewestFitnessFocus,
+  saveFitnessDayPlan,
+  saveFitnessFocus,
+} from "./fitness-store.js";
 export { loadBriefingConfig, type BriefingConfig, type LaunchesMode } from "./config.js";
 export {
   BriefingController,
@@ -20,7 +74,13 @@ export {
   saveBriefingPrefs,
   type BriefingPrefs,
 } from "./prefs.js";
-export { NEWS_SOURCE_OPTIONS, RSS_URLS, normalizeNewsHeadlines, type NewsHeadline } from "./news.js";
+export {
+  NEWS_SOURCE_OPTIONS,
+  RSS_URLS,
+  fetchNewsHeadlines,
+  normalizeNewsHeadlines,
+  type NewsHeadline,
+} from "./news.js";
 export {
   lookupLiveNewsHeadlines,
   summarizeNewsArticle,
@@ -55,11 +115,33 @@ export { BriefingCache } from "./cache.js";
 export { generateBriefing } from "./generate.js";
 export {
   formatBriefingForDisplay,
+  formatNewsForDisplay,
   isBriefingDisplay,
   type BriefingDisplay,
   type BriefingDisplayLine,
   type BriefingDisplaySection,
 } from "./display.js";
+export {
+  buildHeadlineOffer,
+  HEADLINE_OFFER_FALLBACK,
+  postProcessHeadlineOffer,
+} from "./headline-offer.js";
+export {
+  applyModuleSettings,
+  assertPublicHttpsUrl,
+  briefingModulesDir,
+  createBriefingModuleFromAsk,
+  listBriefingModules,
+  looksLikeAddBriefingModule,
+  parseBriefingModule,
+  rocketLaunchesModule,
+  runEnabledBriefingModules,
+  saveBriefingModule,
+  setBriefingModuleEnabled,
+  type BriefingModule,
+  type BriefingModuleResult,
+  type BriefingModuleSetting,
+} from "./modules.js";
 export { formatBriefingAsMarkdown, formatBriefingForSpeech } from "./format.js";
 export { detectBriefingIntent, wantsLaunches, type BriefingIntentKind } from "./intent.js";
 export { BriefingStateStore, isSoftOfferEligible, type BriefingOfferState } from "./state.js";

@@ -12,6 +12,8 @@ export * from "./knowledge-export-schema.js";
 export * from "./knowledge-ingest.js";
 export * from "./link-discovery.js";
 export * from "./document-ingest.js";
+export * from "./graph-report.js";
+export * from "./talk-focus.js";
 export * from "./audio-note-ingest.js";
 export * from "./embeddings/index.js";
 export * from "./photo-analyze.js";

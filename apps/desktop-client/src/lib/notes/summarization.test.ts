@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseNoteSummary, splitTranscriptForSummary } from "./summarization.js";
+import { formatPhotoContext, parseNoteSummary, splitTranscriptForSummary } from "./summarization.js";
 
 describe("parseNoteSummary", () => {
   it("extracts alfred-home metadata from a JSON blob", () => {
@@ -30,5 +30,23 @@ Here you go:
     expect(parts.length).toBeGreaterThan(1);
     expect(parts.join(" ").includes("Alpha")).toBe(true);
     expect(parts.join(" ").includes("Beta")).toBe(true);
+  });
+
+  it("formats still OCR so summarization can use slide text", () => {
+    const context = formatPhotoContext([
+      {
+        offsetSeconds: 94,
+        analysisStatus: "completed",
+        analysis: {
+          summary: "A pricing slide",
+          fullText: "Q3 pricing change ships Friday",
+          documentType: "screenshot",
+          names: ["Devon"],
+        },
+      },
+    ]);
+    expect(context).toContain("1:34");
+    expect(context).toContain("Q3 pricing change ships Friday");
+    expect(context).toContain("Devon");
   });
 });

@@ -1,20 +1,24 @@
 import { open, readFile, stat } from "node:fs/promises";
 import {
+  analyzePhoto,
+  attachAudioNotePhoto,
   audioMimeFromFilename,
   audioNoteFromEpisode,
   beginAudioNote,
   completeAudioNote,
   ingestAudioNote,
   isAudioNoteEpisode,
+  updateAudioNotePhoto,
   updateAudioNoteProgress,
   type AudioNoteMetadata,
+  type AudioNotePhoto,
   type AudioNoteTemplate,
   type TaggedHash,
 } from "@alfred/memory";
 import { activeProfileId, oipForProfile } from "../oip-memory.js";
 import { probeAudioDurationSeconds } from "./audio-chunks.js";
 import { createNoteJob, latestJobForNote, listNoteJobs, updateNoteJob, type NoteJob } from "./jobs.js";
-import { summarizeAudioNote } from "./summarization.js";
+import { formatPhotoContext, summarizeAudioNote } from "./summarization.js";
 import { transcribeAudioNote } from "./stt.js";
 
 export interface NoteAttendee {
@@ -42,6 +46,11 @@ export interface AudioNoteDto {
   updatedAt: string;
   jobId?: string;
   job?: NoteJob | null;
+  photos: AudioNotePhotoDto[];
+}
+
+export interface AudioNotePhotoDto extends AudioNotePhoto {
+  url: string;
 }
 
 function attendeesFromForm(raw: unknown): string[] {
@@ -105,6 +114,10 @@ function toDto(
     updatedAt: note.updatedAt,
     jobId: opts?.jobId ?? job?.id,
     job,
+    photos: note.photos.map((photo) => ({
+      ...photo,
+      url: `/api/notes/${encodeURIComponent(note.id)}/photos/${encodeURIComponent(photo.id)}`,
+    })),
   };
 }
 
@@ -221,11 +234,13 @@ async function summarizeFromTranscript(opts: {
   transcript: string;
   template: AudioNoteTemplate;
   attendees: string[];
+  photos?: AudioNotePhoto[];
 }): Promise<AudioNoteMetadata> {
   const metadata = await summarizeAudioNote({
     text: opts.transcript,
     noteType: opts.template,
     participants: opts.attendees,
+    photoContext: formatPhotoContext(opts.photos ?? []),
   });
   if (!metadata.attendees.length && opts.attendees.length) {
     metadata.attendees = opts.attendees;
@@ -365,6 +380,7 @@ export async function retryNoteDetails(id: string, profileId?: string): Promise<
     transcript: current.transcript,
     template: current.template,
     attendees: current.attendees.map((a) => a.name),
+    photos: current.photos,
   });
   await completeAudioNote({
     episodeId: id,
@@ -408,4 +424,202 @@ export async function retryNoteTranscript(id: string, profileId?: string): Promi
     profileId,
   });
   return job;
+}
+
+export async function waitForNotePhotoAnalyses(
+  id: string,
+  timeoutMs = 90_000,
+  profileId?: string,
+): Promise<AudioNoteDto | null> {
+  const deadline = Date.now() + timeoutMs;
+  let current = await getAudioNote(id, profileId);
+  while (current) {
+    const pending = current.photos.some((photo) => photo.analysisStatus === "pending");
+    if (!pending) return current;
+    if (Date.now() >= deadline) return current;
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    current = await getAudioNote(id, profileId);
+  }
+  return current;
+}
+
+function toPhotoAnalysis(analysis: Awaited<ReturnType<typeof analyzePhoto>>) {
+  return {
+    summary: analysis.summary,
+    fullText: analysis.fullText,
+    handwrittenNotes: analysis.handwrittenNotes,
+    names: analysis.names,
+    dates: analysis.dates,
+    places: analysis.places,
+    objects: analysis.objects,
+    documentType: analysis.documentType,
+    backend: analysis.backend,
+    model: analysis.model,
+  };
+}
+
+async function analyzeAttachedNotePhoto(opts: {
+  noteId: string;
+  photoId: string;
+  filename: string;
+  bytes: Buffer;
+  mimeType?: string;
+  profileId?: string;
+}): Promise<void> {
+  try {
+    const analysis = await analyzePhoto({
+      filename: opts.filename,
+      bytes: opts.bytes,
+      mimeType: opts.mimeType,
+    });
+    await updateAudioNotePhoto({
+      episodeId: opts.noteId,
+      photoId: opts.photoId,
+      analysis: toPhotoAnalysis(analysis),
+      analysisStatus: "completed",
+      profileId: activeProfileId(opts.profileId),
+    });
+    const current = await getAudioNote(opts.noteId, opts.profileId);
+    if (current?.processingStatus === "completed" && current.transcript.trim()) {
+      await retryNoteDetails(opts.noteId, opts.profileId).catch((err) => {
+        console.error("[notes] photo re-summarize failed:", err);
+      });
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    await updateAudioNotePhoto({
+      episodeId: opts.noteId,
+      photoId: opts.photoId,
+      analysisStatus: "failed",
+      analysisError: message,
+      profileId: activeProfileId(opts.profileId),
+    }).catch(() => undefined);
+  }
+}
+
+export async function attachNotePhoto(opts: {
+  noteId: string;
+  bytes: Buffer;
+  filename: string;
+  mimeType?: string;
+  offsetSeconds: number;
+  capturedAt?: string;
+  profileId?: string;
+}): Promise<AudioNotePhotoDto> {
+  const current = await getAudioNote(opts.noteId, opts.profileId);
+  if (!current) throw new Error("Note not found");
+  if (opts.bytes.length === 0) throw new Error("image is required");
+  if (opts.bytes.length > 8 * 1024 * 1024) throw new Error("image is larger than 8 MB");
+
+  const photo = await attachAudioNotePhoto({
+    episodeId: opts.noteId,
+    filename: opts.filename,
+    bytes: opts.bytes,
+    mimeType: opts.mimeType,
+    offsetSeconds: opts.offsetSeconds,
+    capturedAt: opts.capturedAt,
+    analysisStatus: "pending",
+    profileId: activeProfileId(opts.profileId),
+  });
+
+  void analyzeAttachedNotePhoto({
+    noteId: opts.noteId,
+    photoId: photo.id,
+    filename: opts.filename,
+    bytes: opts.bytes,
+    mimeType: opts.mimeType,
+    profileId: opts.profileId,
+  });
+
+  const next = await getAudioNote(opts.noteId, opts.profileId);
+  const dto = next?.photos.find((item) => item.id === photo.id);
+  if (!dto) {
+    return {
+      ...photo,
+      url: `/api/notes/${encodeURIComponent(opts.noteId)}/photos/${encodeURIComponent(photo.id)}`,
+    };
+  }
+  return dto;
+}
+
+export async function locateNotePhoto(
+  noteId: string,
+  photoId: string,
+  profileId?: string,
+): Promise<{ path: string; mimeType: string; filename: string; byteLength: number } | null> {
+  const note = await getAudioNote(noteId, profileId);
+  const photo = note?.photos.find((item) => item.id === photoId || item.artifactId === photoId);
+  if (!photo) return null;
+  const memory = oipForProfile(profileId);
+  const artifact = await memory.resolveRef(photo.artifactId);
+  if (!artifact?.contentHash) return null;
+  const absolute = await memory.artifacts.findAbsolute(artifact.contentHash as TaggedHash);
+  if (!absolute) return null;
+  const info = await stat(absolute);
+  return {
+    path: absolute,
+    mimeType: photo.mimeType || artifact.mimeType || "image/jpeg",
+    filename: photo.filename || artifact.originalFilename || "note-still.jpg",
+    byteLength: info.size,
+  };
+}
+
+export async function readNotePhotoBytes(
+  noteId: string,
+  photoId: string,
+  profileId?: string,
+): Promise<{ bytes: Buffer; mimeType: string; filename: string } | null> {
+  const file = await locateNotePhoto(noteId, photoId, profileId);
+  if (!file) return null;
+  return {
+    bytes: await readFile(file.path),
+    mimeType: file.mimeType,
+    filename: file.filename,
+  };
+}
+
+export async function getNotePhotoMeta(
+  noteId: string,
+  photoId: string,
+  chunkSize: number,
+  profileId?: string,
+): Promise<{ filename: string; mimeType: string; byteLength: number; totalChunks: number } | null> {
+  const file = await locateNotePhoto(noteId, photoId, profileId);
+  if (!file) return null;
+  return {
+    filename: file.filename,
+    mimeType: file.mimeType,
+    byteLength: file.byteLength,
+    totalChunks: Math.max(1, Math.ceil(file.byteLength / chunkSize)),
+  };
+}
+
+export async function getNotePhotoChunk(
+  noteId: string,
+  photoId: string,
+  index: number,
+  chunkSize: number,
+  profileId?: string,
+): Promise<{ index: number; data: string; totalChunks: number; byteLength: number } | null> {
+  const file = await locateNotePhoto(noteId, photoId, profileId);
+  if (!file) return null;
+  const totalChunks = Math.max(1, Math.ceil(file.byteLength / chunkSize));
+  if (!Number.isInteger(index) || index < 0 || index >= totalChunks) {
+    throw new Error("Invalid chunk index");
+  }
+  const start = index * chunkSize;
+  const length = Math.min(chunkSize, file.byteLength - start);
+  const handle = await open(file.path, "r");
+  try {
+    const bytes = Buffer.alloc(length);
+    const read = await handle.read(bytes, 0, length, start);
+    return {
+      index,
+      data: bytes.subarray(0, read.bytesRead).toString("base64"),
+      totalChunks,
+      byteLength: file.byteLength,
+    };
+  } finally {
+    await handle.close();
+  }
 }

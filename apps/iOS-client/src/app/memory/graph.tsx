@@ -2,11 +2,13 @@
  * Full-screen memory constellation.
  * Pinch / pan / tap a node; open the Mac-backed detail sheet.
  */
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { router, useLocalSearchParams } from "expo-router";
 import {
   ArrowLeft,
+  MessageSquare,
   Orbit,
+  Pencil,
   RefreshCw,
   Search,
   X,
@@ -14,6 +16,7 @@ import {
 import { useMemo, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   LayoutChangeEvent,
   Pressable,
   ScrollView,
@@ -38,6 +41,8 @@ import {
   desktopErrorMessage,
   fetchMemoryGraph,
   fetchMemoryGraphNode,
+  setTalkFocusFromGraph,
+  updateGraphNode,
 } from "@/lib/desktop-api";
 import { filterGraph, typeColor } from "@/lib/memory-graph-sim";
 
@@ -51,6 +56,7 @@ const TYPE_FILTERS = [
 
 export default function MemoryGraphScreen() {
   const insets = useSafeAreaInsets();
+  const queryClient = useQueryClient();
   const mode = useConnection((s) => s.mode);
   const offline = mode === "offline";
   const params = useLocalSearchParams<{ q?: string; qB?: string }>();
@@ -95,6 +101,30 @@ export default function MemoryGraphScreen() {
     queryKey: ["memory", "graph", "node", focusId],
     queryFn: () => fetchMemoryGraphNode(focusId!),
     enabled: !!focusId && !offline,
+  });
+
+  const talkFocus = useMutation({
+    mutationFn: (id: string) => setTalkFocusFromGraph(id),
+    onSuccess: () => {
+      router.push("/(tabs)/talk");
+    },
+    onError: (err) => {
+      Alert.alert("Couldn't focus Talk", desktopErrorMessage(err, "Try again when the Mac is up."));
+    },
+  });
+
+  const renameNode = useMutation({
+    mutationFn: (input: { id: string; name: string }) =>
+      updateGraphNode(input.id, { name: input.name }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["memory", "graph"] });
+      if (focusId) {
+        void queryClient.invalidateQueries({ queryKey: ["memory", "graph", "node", focusId] });
+      }
+    },
+    onError: (err) => {
+      Alert.alert("Couldn't rename", desktopErrorMessage(err, "The Mac refused that edit."));
+    },
   });
 
   const onLayout = (e: LayoutChangeEvent) => {
@@ -384,20 +414,86 @@ export default function MemoryGraphScreen() {
             </>
           ) : null}
 
-          <Pressable
-            testID="graph-open-memory"
-            onPress={() => {
-              const openId =
-                (typeof detail.data?.revision?.id === "string" && detail.data.revision.id) ||
-                detail.data?.index?.logical_id ||
-                detail.data?.index?.id ||
-                focusId;
-              router.push({ pathname: "/memory/[id]", params: { id: openId } });
-            }}
-            style={styles.openBtn}
-          >
-            <Text style={styles.openBtnText}>Open memory</Text>
-          </Pressable>
+          <View style={styles.sheetActions}>
+            <Pressable
+              testID="graph-talk-focus"
+              disabled={talkFocus.isPending || !focusId}
+              onPress={() => focusId && talkFocus.mutate(focusId)}
+              style={[styles.openBtn, styles.sheetActionBtn]}
+            >
+              <MessageSquare color={BRASS} size={15} />
+              <Text style={styles.openBtnText}>
+                {talkFocus.isPending ? "Opening…" : "Talk about this"}
+              </Text>
+            </Pressable>
+            <Pressable
+              testID="graph-rename"
+              disabled={renameNode.isPending || !focusId}
+              onPress={() => {
+                const current =
+                  detail.data?.index?.name || detail.data?.revision?.name || "";
+                const prompt = (
+                  Alert as unknown as {
+                    prompt?: (
+                      title: string,
+                      message?: string,
+                      buttons?: Array<{
+                        text: string;
+                        style?: "cancel" | "default" | "destructive";
+                        onPress?: (value?: string) => void;
+                      }>,
+                      type?: string,
+                      defaultValue?: string
+                    ) => void;
+                  }
+                ).prompt;
+                if (typeof prompt === "function" && focusId) {
+                  prompt(
+                    "Rename",
+                    "Update the name on this graph node.",
+                    [
+                      { text: "Cancel", style: "cancel" },
+                      {
+                        text: "Save",
+                        onPress: (value?: string) => {
+                          const name = (value ?? "").trim();
+                          if (!name || !focusId) return;
+                          renameNode.mutate({ id: focusId, name });
+                        },
+                      },
+                    ],
+                    "plain-text",
+                    current
+                  );
+                  return;
+                }
+                const openId =
+                  (typeof detail.data?.revision?.id === "string" && detail.data.revision.id) ||
+                  detail.data?.index?.logical_id ||
+                  detail.data?.index?.id ||
+                  focusId;
+                router.push({ pathname: "/memory/[id]", params: { id: openId } });
+              }}
+              style={[styles.openBtn, styles.sheetActionBtn, styles.sheetActionGhost]}
+            >
+              <Pencil color={MUTED} size={15} />
+              <Text style={[styles.openBtnText, { color: MUTED }]}>Rename</Text>
+            </Pressable>
+            <Pressable
+              testID="graph-open-memory"
+              onPress={() => {
+                const openId =
+                  (typeof detail.data?.revision?.id === "string" && detail.data.revision.id) ||
+                  detail.data?.index?.logical_id ||
+                  detail.data?.index?.id ||
+                  focusId;
+                router.push({ pathname: "/memory/[id]", params: { id: openId } });
+              }}
+              style={[styles.openBtn, styles.sheetActionBtn, styles.sheetActionGhost]}
+            >
+              <Text style={[styles.openBtnText, { color: MUTED }]}>Open memory</Text>
+            </Pressable>
+          </View>
         </View>
       ) : (
         <Text style={[styles.hint, { paddingBottom: insets.bottom + 8 }]}>
@@ -602,6 +698,19 @@ const styles = StyleSheet.create({
     marginTop: 4,
     fontSize: 13,
     color: BONE,
+  },
+  sheetActions: {
+    marginTop: 8,
+    gap: 8,
+  },
+  sheetActionBtn: {
+    flexDirection: "row",
+    gap: 8,
+  },
+  sheetActionGhost: {
+    backgroundColor: "transparent",
+    borderWidth: 1,
+    borderColor: LINE,
   },
   openBtn: {
     marginTop: 4,

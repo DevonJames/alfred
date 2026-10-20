@@ -11,6 +11,8 @@
  * POST /memory/graph/node/delete — delete a record (id in body)
  * POST /memory/graph/node/set-self — mark a Person as the profile self (id in body)
  * POST /memory/graph/clean-index — merge duplicate entities (SSE progress + result)
+ * POST /memory/graph/report — briefing from currently shown graph nodes (SSE)
+ * POST /memory/graph/talk — pin selected node as Talk context, then open Talk
  * GET  /memory/graph/embeddings — cached 3D embedding-space positions
  * POST /memory/graph/embeddings/rebuild — OpenAI embed + PCA (SSE progress + result)
  */
@@ -23,6 +25,7 @@ import { streamSSE } from "hono/streaming";
 import {
   cleanMemoryIndex,
   deleteMemoryRecord,
+  generateGraphViewReport,
   loadMemoryEmbeddings,
   loadMemoryGraph,
   loadMemoryRecordDetail,
@@ -30,6 +33,7 @@ import {
   readMemoryArtifactBytes,
   rebuildMemoryEmbeddings,
   setMemorySelf,
+  setTalkFocusFromNode,
   updateMemoryRecord,
 } from "../lib/memory-graph.js";
 
@@ -93,7 +97,7 @@ memoryGraphRouter.get("/artifact/:id", async (c) => {
     const file = await readMemoryArtifactBytes(id);
     if (!file) return c.json({ error: "not_found", message: `No file artifact ${id}` }, 404);
     const safeName = file.filename.replace(/[\r\n"]/g, "");
-    return c.body(file.bytes, 200, {
+    return c.body(Uint8Array.from(file.bytes), 200, {
       "Content-Type": file.mimeType,
       "Content-Disposition": `inline; filename="${safeName}"`,
       "Cache-Control": "private, max-age=3600",
@@ -188,6 +192,84 @@ memoryGraphRouter.post("/node/set-self", async (c) => {
     const status = /Only Person|Not an Entity|Missing revision/i.test(message) ? 400 : 500;
     return c.json({ error: "set_self_failed", message }, status);
   }
+});
+
+memoryGraphRouter.post("/talk", async (c) => {
+  try {
+    const body = await c.req.json<{ id?: string }>();
+    const id = typeof body.id === "string" ? body.id.trim() : "";
+    if (!id) return c.json({ error: "missing_id", message: "id is required" }, 400);
+    const focus = await setTalkFocusFromNode(id);
+    if (!focus) return c.json({ error: "not_found", message: `No record ${id}` }, 404);
+    return c.json({
+      ok: true,
+      did: focus.did,
+      name: focus.name,
+      type: focus.type,
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return c.json({ error: "talk_focus_failed", message }, 500);
+  }
+});
+
+memoryGraphRouter.post("/report", async (c) => {
+  let body: {
+    nodeIds?: unknown;
+    prompt?: unknown;
+    title?: unknown;
+    view?: { from?: unknown; to?: unknown; date?: unknown };
+  };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid_json", message: "JSON body is required" }, 400);
+  }
+  const nodeIds = Array.isArray(body.nodeIds)
+    ? [...new Set(body.nodeIds.filter((id): id is string => typeof id === "string" && !!id.trim()))]
+    : [];
+  if (!nodeIds.length) {
+    return c.json({ error: "missing_nodes", message: "Select memories in the current graph view first." }, 400);
+  }
+  if (nodeIds.length > 5000) {
+    return c.json(
+      { error: "too_many_nodes", message: "Narrow the graph search — this view has too many memories for one report." },
+      400,
+    );
+  }
+  const prompt = typeof body.prompt === "string" ? body.prompt : "";
+  const title = typeof body.title === "string" ? body.title : "";
+  const view = {
+    from: typeof body.view?.from === "string" ? body.view.from : "",
+    to: typeof body.view?.to === "string" ? body.view.to : "",
+    date: typeof body.view?.date === "string" ? body.view.date : "",
+  };
+  return streamSSE(c, async (stream) => {
+    try {
+      const result = await generateGraphViewReport({
+        nodeIds,
+        prompt,
+        title,
+        view,
+        onProgress: async (progress) => {
+          await stream.writeSSE({
+            event: "progress",
+            data: JSON.stringify(progress),
+          });
+        },
+      });
+      await stream.writeSSE({
+        event: "done",
+        data: JSON.stringify(result),
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      await stream.writeSSE({
+        event: "error",
+        data: JSON.stringify({ error: "graph_report_failed", message }),
+      });
+    }
+  });
 });
 
 memoryGraphRouter.post("/clean-index", (c) => {

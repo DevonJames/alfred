@@ -78,6 +78,9 @@
         gap: 0.55rem;
         margin-bottom: 0.75rem;
       }
+      .row .opt {
+        width: 100%;
+      }
       .label {
         color: var(--muted);
         font-size: 0.65rem;
@@ -128,7 +131,8 @@
         accent-color: var(--mint);
       }
       select,
-      input[type="text"] {
+      input[type="text"],
+      textarea {
         width: 100%;
         max-width: 18rem;
         border: 1px solid var(--line);
@@ -137,6 +141,12 @@
         font: inherit;
         font-size: 0.85rem;
         padding: 0.55rem 0.65rem;
+      }
+      textarea {
+        max-width: none;
+        min-height: 4.5rem;
+        resize: vertical;
+        line-height: 1.4;
       }
       select:disabled,
       .disabled {
@@ -210,6 +220,7 @@
       <h1 class="brand">Daily Brief</h1>
       <p class="sub">Preferences</p>
 
+      <!-- Built-in rocket launches are parked. Restore this section to turn them back on.
       <section>
         <h2>Rocket launches</h2>
         <p class="hint">
@@ -220,6 +231,24 @@
         <div class="seg" id="launches-mode" role="group" aria-label="Launches mode"></div>
         <div class="label" style="margin-top: 1rem">Sites</div>
         <div class="check-grid" id="launch-sites"></div>
+      </section>
+      -->
+
+      <section>
+        <h2>Added modules</h2>
+        <p class="hint">
+          Describe a section to add. Alfred designs it and saves it here, then reads it into the
+          next brief.
+        </p>
+        <textarea
+          id="module-request"
+          rows="3"
+          placeholder="Add upcoming rocket launches from Vandenberg"
+        ></textarea>
+        <div class="row" style="margin-top: 0.6rem">
+          <button type="button" class="save" id="add-module">Add module</button>
+        </div>
+        <div id="modules"></div>
       </section>
 
       <section>
@@ -279,6 +308,28 @@
       </section>
 
       <section>
+        <h2>Medicine</h2>
+        <p class="hint">
+          Morning items from Settings → Medicine can be spoken in this daily briefing. Mid-day and
+          evening stay off until those briefings exist.
+        </p>
+        <div class="row">
+          <label class="opt">
+            <input type="checkbox" id="include-medicine-morning" />
+            Include morning medicine in the briefing
+          </label>
+          <label class="opt disabled">
+            <input type="checkbox" id="include-medicine-midday" disabled />
+            Include mid-day medicine in the briefing
+          </label>
+          <label class="opt disabled">
+            <input type="checkbox" id="include-medicine-evening" disabled />
+            Include evening medicine in the briefing
+          </label>
+        </div>
+      </section>
+
+      <section>
         <h2>Soft offer</h2>
         <p class="hint">
           Alfred asks “Would you like the daily briefing now?” once per briefing day (cascade,
@@ -302,6 +353,8 @@
       let catalog = null;
       /** @type {any} */
       let prefs = null;
+      /** @type {any[]} */
+      let modules = [];
 
       function setStatus(msg, kind) {
         const el = document.getElementById("status");
@@ -357,24 +410,56 @@
           .classList.toggle("disabled", !document.getElementById("include-metals").checked);
       }
 
-      function paint() {
-        renderSeg(
-          "launches-mode",
-          catalog.launchesModes,
-          prefs.launchesMode,
-          (id) => {
-            prefs.launchesMode = id;
-            for (const btn of document.querySelectorAll("#launches-mode button")) {
-              btn.classList.toggle("active", btn.dataset.id === id);
-            }
-          },
-        );
+      function paintModules() {
+        const el = document.getElementById("modules");
+        el.innerHTML = "";
+        if (!modules.length) {
+          const empty = document.createElement("p");
+          empty.className = "hint";
+          empty.textContent = "No added modules yet.";
+          el.appendChild(empty);
+          return;
+        }
+        for (const module of modules) {
+          const lab = document.createElement("label");
+          lab.className = "opt";
+          const input = document.createElement("input");
+          input.type = "checkbox";
+          input.checked = module.enabled !== false;
+          input.addEventListener("change", () => {
+            void toggleModule(module.id, input.checked, input);
+          });
+          lab.appendChild(input);
+          lab.appendChild(document.createTextNode(module.title || module.id));
+          el.appendChild(lab);
+        }
+      }
 
-        const siteIds = String(prefs.launchLocationIds || "")
-          .split(",")
-          .map((s) => s.trim())
-          .filter(Boolean);
-        renderChecks("launch-sites", catalog.launchSites, siteIds);
+      async function toggleModule(id, enabled, input) {
+        input.disabled = true;
+        setStatus("Saving module…");
+        try {
+          const res = await fetch(api(`/briefing/modules/${encodeURIComponent(id)}`), {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ enabled }),
+          });
+          if (!res.ok) throw new Error(`Module update failed (${res.status})`);
+          const data = await res.json();
+          modules = modules.map((module) => (module.id === id ? data.module : module));
+          setStatus("Saved.", "ok");
+        } catch (err) {
+          input.checked = !enabled;
+          setStatus(err instanceof Error ? err.message : String(err), "err");
+        } finally {
+          input.disabled = false;
+        }
+      }
+
+      function paint() {
+        // Built-in launches UI is parked. Prefs still round-trip launchesMode on save.
+        // renderSeg("launches-mode", catalog.launchesModes, prefs.launchesMode, ...);
+        // renderChecks("launch-sites", catalog.launchSites, siteIds);
 
         document.getElementById("include-crypto").checked = Boolean(prefs.includeCrypto);
         const cryptoSel = document.getElementById("crypto-id");
@@ -395,26 +480,34 @@
         document.getElementById("include-ingested-notes").checked = Boolean(
           prefs.includeIngestedNotes !== false,
         );
+        document.getElementById("include-medicine-morning").checked = Boolean(
+          prefs.includeMedicineMorning,
+        );
+        document.getElementById("include-medicine-midday").checked = false;
+        document.getElementById("include-medicine-evening").checked = false;
 
         renderChecks("news-sources", catalog.newsSources, prefs.newsSources || []);
         const listed = Array.isArray(catalog.calendars);
         const calendars = listed ? catalog.calendars : [];
         renderChecks("agenda-calendars", calendars, prefs.agendaCalendarIds || []);
         document.getElementById("agenda-empty").classList.toggle("hidden", !listed || calendars.length > 0);
+        paintModules();
         syncDependent();
       }
 
       function collect() {
-        const sites = selectedIds("launch-sites");
         const news = selectedIds("news-sources").slice(0, 10);
         return {
           launchesMode: prefs.launchesMode,
-          launchLocationIds: sites.join(",") || "11",
+          launchLocationIds: prefs.launchLocationIds || "11",
           includeCrypto: document.getElementById("include-crypto").checked,
           cryptoId: document.getElementById("crypto-id").value,
           includeMetals: document.getElementById("include-metals").checked,
           metalSymbol: prefs.metalSymbol,
           includeIngestedNotes: document.getElementById("include-ingested-notes").checked,
+          includeMedicineMorning: document.getElementById("include-medicine-morning").checked,
+          includeMedicineMidday: false,
+          includeMedicineEvening: false,
           newsSources: news,
           agendaCalendarIds: selectedIds("agenda-calendars"),
         };
@@ -427,9 +520,42 @@
         const data = await res.json();
         catalog = data.catalog;
         prefs = data.prefs;
+        modules = Array.isArray(data.modules) ? data.modules : [];
         paint();
         setStatus("");
       }
+
+      document.getElementById("add-module").addEventListener("click", async () => {
+        const field = document.getElementById("module-request");
+        const request = field.value.trim();
+        if (!request) {
+          setStatus("Describe the section to add.", "err");
+          return;
+        }
+        const btn = document.getElementById("add-module");
+        btn.disabled = true;
+        setStatus("Designing the section and checking the source…");
+        try {
+          const res = await fetch(api("/briefing/modules"), {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ request }),
+          });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || `Add failed (${res.status})`);
+          modules = [
+            data.module,
+            ...modules.filter((module) => module.id !== data.module.id),
+          ];
+          field.value = "";
+          paintModules();
+          setStatus(data.speech || "Added.", "ok");
+        } catch (err) {
+          setStatus(err instanceof Error ? err.message : String(err), "err");
+        } finally {
+          btn.disabled = false;
+        }
+      });
 
       document.getElementById("include-crypto").addEventListener("change", syncDependent);
       document.getElementById("include-metals").addEventListener("change", syncDependent);

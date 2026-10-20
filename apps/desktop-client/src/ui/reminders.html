@@ -57,17 +57,18 @@
       }
       .item:first-of-type, .proposal:first-of-type, .row:first-of-type { border-top: 0; }
       .proposal { display: block; }
-      .proposal-top { display: flex; gap: 0.75rem; align-items: flex-start; justify-content: space-between; }
-      .copy { flex: 1; min-width: 0; }
+      .item { display: block; }
+      .proposal-top { display: flex; gap: 0.75rem; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; }
+      .copy { flex: 1 1 100%; min-width: 0; }
+      .item .controls, .proposal .controls { margin-top: 0.45rem; justify-content: flex-end; }
       .title { font-size: 0.92rem; }
       input.title {
         width: 100%;
         font-size: 0.92rem;
-        background: transparent;
-        border-color: transparent;
-        padding-left: 0;
+        background: #101820;
+        border-color: var(--line);
       }
-      input.title:focus { border-color: var(--line); background: #101820; }
+      input.title:disabled { opacity: 0.65; }
       .context { margin-top: 0.75rem; border-top: 1px solid var(--line); }
       .line { padding: 0.45rem 0; border-top: 1px solid var(--line); }
       .line.focus { background: rgba(126, 224, 195, 0.08); margin: 0 -0.4rem; padding: 0.45rem 0.4rem; }
@@ -111,7 +112,7 @@
       <h1 class="brand">Reminders</h1>
       <p class="sub">Apple Reminders · message commitments</p>
       <p class="hint">
-        Lists start at No Access. Write access lets Alfred add a reminder after you approve it, change its day, and check one off.
+        Lists start at No Access. Write access lets Alfred add a reminder after you approve it, change its name, change its day, and check one off.
         A promise in Messages waits here until you approve it. The morning brief reads what is due today and what is still open from earlier.
       </p>
       <p class="status" id="status"></p>
@@ -181,23 +182,38 @@
           title.type = "text";
           title.value = proposal.title || "";
           title.setAttribute("aria-label", "Task wording");
-          title.addEventListener("change", () => {
+          title.addEventListener("change", async () => {
             const next = title.value.trim();
-            if (!next || next === proposal.title) return;
-            proposal.title = next;
-            void fetch(`/reminders/proposals/${encodeURIComponent(proposal.id)}/title`, {
+            if (!next) {
+              title.value = proposal.title || "";
+              return;
+            }
+            if (next === proposal.title) return;
+            setStatus("");
+            const res = await fetch(`/reminders/proposals/${encodeURIComponent(proposal.id)}/title`, {
               method: "POST",
               headers: { "content-type": "application/json" },
               body: JSON.stringify({ title: next }),
             });
+            const body = await res.json().catch(() => ({}));
+            if (!res.ok) {
+              title.value = proposal.title || "";
+              setStatus(body.error || "Could not change the name");
+              return;
+            }
+            proposal.title = next;
+            title.value = next;
+            setStatus("Name updated.");
           });
           const meta = document.createElement("div");
           meta.className = "meta";
-          const origin = proposal.isGroup
-            ? proposal.chatName
-              ? `Group · ${proposal.chatName}`
-              : "Group conversation"
-            : proposal.handle || "Direct message";
+          const origin = proposal.selfNote
+            ? "Note to yourself"
+            : proposal.isGroup
+              ? proposal.chatName
+                ? `Group · ${proposal.chatName}`
+                : "Group conversation"
+              : proposal.handle || "Direct message";
           const when = proposal.sentAt
             ? new Date(proposal.sentAt).toLocaleString(undefined, {
                 weekday: "short",
@@ -326,9 +342,38 @@
           const row = document.createElement("div");
           row.className = "item";
           const copy = document.createElement("div");
-          const title = document.createElement("div");
+          const title = document.createElement("input");
           title.className = "title";
-          title.textContent = item.title;
+          title.type = "text";
+          title.value = item.title || "";
+          title.setAttribute("aria-label", "Reminder name");
+          const writable = listAccess(item.listId) === "write";
+          title.disabled = !writable;
+          if (!writable) title.title = "This list is not open for changes.";
+          title.addEventListener("change", async () => {
+            const next = title.value.trim();
+            if (!next) {
+              title.value = item.title || "";
+              return;
+            }
+            if (next === item.title) return;
+            setStatus("");
+            const res = await fetch("/reminders/title", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ id: item.id, title: next }),
+            });
+            const body = await res.json().catch(() => ({}));
+            if (!res.ok) {
+              title.value = item.title || "";
+              setStatus(body.error || "Could not change the name");
+              return;
+            }
+            item.title = body.reminder?.title || next;
+            title.value = item.title;
+            due.setAttribute("aria-label", `Due date for ${item.title}`);
+            setStatus("Name updated.");
+          });
           const meta = document.createElement("div");
           meta.className = "meta";
           meta.textContent = item.listTitle || "";
@@ -339,7 +384,6 @@
           due.type = "date";
           due.value = dueInputValue(item.due);
           due.setAttribute("aria-label", `Due date for ${item.title}`);
-          const writable = listAccess(item.listId) === "write";
           due.disabled = !writable;
           if (!writable) due.title = "This list is not open for changes.";
           due.addEventListener("change", async () => {

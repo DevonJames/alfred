@@ -13,6 +13,8 @@ export const KEYS = {
   /** Scoped link JWT from POST /servers/link (not a user account). */
   cloudToken: "alfred_cloud_token",
   cloudServerId: "alfred_cloud_server_id",
+  /** Claim secret kept so an expired link JWT can be re-minted without a new scan. */
+  claimSecret: "alfred_claim_secret",
   /** @deprecated leftover account fields — cleared on sign-out */
   cloudEmail: "alfred_cloud_email",
   cloudPassword: "alfred_cloud_password",
@@ -73,6 +75,7 @@ export async function clearCredentials(): Promise<void> {
   await Promise.all([
     removeItem(KEYS.cloudToken),
     removeItem(KEYS.cloudServerId),
+    removeItem(KEYS.claimSecret),
     removeItem(KEYS.cloudEmail),
     removeItem(KEYS.cloudPassword),
     removeItem(KEYS.cloudAccountKind),

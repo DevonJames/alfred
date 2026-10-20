@@ -8,6 +8,14 @@ export type ThreadMessage = {
   streaming?: boolean;
 };
 
+/** True when `next` is the same reply growing, or an earlier prefix of it. */
+function extendsUtterance(prev: string, next: string): boolean {
+  const a = prev.trim();
+  const b = next.trim();
+  if (!a || !b) return false;
+  return b.startsWith(a) || a.startsWith(b);
+}
+
 /** In-memory conversation thread rendered into a single DOM root. */
 export class TranscriptThread {
   private messages: ThreadMessage[] = [];
@@ -46,6 +54,9 @@ export class TranscriptThread {
   handleUserFinal(text: string): void {
     const trimmed = text.trim();
     if (!trimmed) return;
+    const current = this.currentAssistant();
+    if (current) current.streaming = false;
+    this.assistantId = undefined;
     const last = this.messages[this.messages.length - 1];
     if (last?.role === "user" && last.text === trimmed) return;
     this.messages.push({ id: `user_${++this.seq}`, role: "user", text: trimmed });
@@ -54,32 +65,8 @@ export class TranscriptThread {
   }
 
   handleCaption(msg: CaptionMessage): void {
-    if (msg.type === "start") {
-      this.assistantId = `asst_${++this.seq}`;
-      this.messages.push({
-        id: this.assistantId,
-        role: "assistant",
-        text: msg.text,
-        streaming: true,
-      });
-      this.render();
-      return;
-    }
-    if (msg.type === "reveal") {
-      const current = this.currentAssistant();
-      if (current) {
-        current.text = msg.text;
-        current.streaming = true;
-      } else {
-        this.assistantId = `asst_${++this.seq}`;
-        this.messages.push({
-          id: this.assistantId,
-          role: "assistant",
-          text: msg.text,
-          streaming: true,
-        });
-      }
-      this.render();
+    if (msg.type === "start" || msg.type === "reveal") {
+      this.upsertAssistant(msg.text, true);
       return;
     }
     const current = this.currentAssistant();
@@ -98,6 +85,33 @@ export class TranscriptThread {
   reset(): void {
     this.messages = [];
     this.assistantId = undefined;
+    this.render();
+  }
+
+  /**
+   * One bubble per spoken reply. GPT-Live republishes the same utterance as it
+   * grows ("I'm on" then "I'm on it"); those extend the last assistant line.
+   */
+  private upsertAssistant(text: string, streaming: boolean): void {
+    const tail = this.messages[this.messages.length - 1];
+    if (tail?.role === "assistant" && extendsUtterance(tail.text, text)) {
+      if (text.trim().length >= tail.text.trim().length) tail.text = text;
+      tail.streaming = streaming;
+      this.assistantId = tail.id;
+      this.render();
+      return;
+    }
+    if (!text.trim() && tail?.role === "assistant" && tail.streaming) {
+      this.assistantId = tail.id;
+      return;
+    }
+    this.assistantId = `asst_${++this.seq}`;
+    this.messages.push({
+      id: this.assistantId,
+      role: "assistant",
+      text,
+      streaming,
+    });
     this.render();
   }
 

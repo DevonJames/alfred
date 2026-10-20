@@ -105,7 +105,15 @@ describe("formatBriefingForDisplay", () => {
       "Speak to the IRS",
     );
     expect(display.sections.find((s) => s.id === "markets")?.lines[0]?.text).toContain("Bitcoin");
-    const headline = display.sections.find((s) => s.id === "headlines")?.lines[0];
+    // Headlines stay off the HUD until the user accepts the spoken offer.
+    expect(display.sections.find((s) => s.id === "headlines")).toBeUndefined();
+
+    const withNews = formatBriefingForDisplay(sample(), {
+      now: new Date("2026-10-08T08:18:00.000Z"),
+      timezone: "America/Los_Angeles",
+      includeHeadlines: true,
+    });
+    const headline = withNews.sections.find((s) => s.id === "headlines")?.lines[0];
     expect(headline?.text).toMatch(/^First:/);
     expect(headline?.newsIndex).toBe(1);
     expect(headline?.newsTitle).toBe("Example headline");

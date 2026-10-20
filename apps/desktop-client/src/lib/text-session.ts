@@ -14,7 +14,7 @@ import {
   createOpenClawHarness,
   createXIngestHarness,
 } from "@alfred/agents";
-import { createBriefingController, lookupCurrentTime, lookupEarthquakes, lookupExchangeRate, lookupHackerNews, lookupLiveCryptoPrice, lookupLiveMetalsPrice, lookupLiveNewsHeadlines, lookupLiveWeatherForecast, lookupNaturalEvents, lookupSpaceWeather, lookupWeatherAlerts, summarizeNewsArticle, type NewsHeadline } from "@alfred/briefing";
+import { createBriefingController, createBriefingModuleFromAsk, lookupCurrentTime, lookupEarthquakes, lookupExchangeRate, lookupHackerNews, lookupLiveCryptoPrice, lookupLiveMetalsPrice, lookupLiveNewsHeadlines, lookupLiveWeatherForecast, lookupNaturalEvents, lookupSpaceWeather, lookupWeatherAlerts, summarizeNewsArticle, type GreetingLlm, type NewsHeadline } from "@alfred/briefing";
 import { createPlaywrightCaptureAdapter } from "@alfred/browser";
 import type { AgentDelegationResult, PipelineConfiguration, TaskCategory, UserConfiguration } from "@alfred/contracts";
 import { SessionOrchestrator, SystemClock } from "@alfred/core";
@@ -87,6 +87,35 @@ const recentNewsBySession = new Map<string, NewsHeadline[]>();
 /** Speech Engine speaks headlines before the text brain. Keep that rundown for follow-ups. */
 export function rememberSpokenNews(sessionKey: string, headlines: NewsHeadline[]): void {
   recentNewsBySession.set(sessionKey, headlines);
+}
+
+async function registeredLlm(
+  registry: ProviderRegistry,
+  ids: string[],
+  messages: Parameters<GreetingLlm>[0],
+): Promise<string> {
+  for (const id of ids) {
+    try {
+      const llm = registry.getLlm(id);
+      let text = "";
+      let failed = false;
+      for await (const chunk of llm.generateStream({
+        messages,
+        modelPreset: "conversational",
+        reasoningEffort: "none",
+      })) {
+        if (chunk.type === "error") {
+          failed = true;
+          break;
+        }
+        if (chunk.type === "token" && chunk.text) text += chunk.text;
+      }
+      if (!failed && text.trim()) return text.trim();
+    } catch {
+      /* try the next model */
+    }
+  }
+  return "";
 }
 
 async function buildRuntime(sessionKey: string, parts: SessionKeyParts): Promise<TextRuntime> {
@@ -176,7 +205,7 @@ async function buildRuntime(sessionKey: string, parts: SessionKeyParts): Promise
     ],
     systemInstructions: process.env.ALFRED_ARCHIVE_URL?.trim()
       ? "You are HYPATIA, the librarian of a local Alexandria archive. Name the records you use. Distinguish source documents from AI analysis. Never state a truth score or percentage. Keep spoken answers short."
-      : "You are ALFRED, a helpful personal assistant. Be concise. Use retrieved memory when relevant. For calendars on this Mac, use delegate_task with category calendar and the user's own wording, including the clock time and calendar name. If a calendar question is answered, call delegate_task again instead of repeating the question. For camera or approvals, use delegate_task with category household.",
+      : "You are ALFRED, a helpful personal assistant. Be concise. Use retrieved memory when relevant. For calendars on this Mac, use delegate_task with category calendar and the user's own wording, including the clock time and calendar name. If a calendar question is answered, call delegate_task again instead of repeating the question. When they ask what is next on their agenda or schedule, always call delegate_task with category calendar — do not guess the first item of the day. For camera or approvals, use delegate_task with category household.",
   };
 
   const memory = new MemoryController(profileId, persistence.memorySettings);
@@ -271,6 +300,13 @@ async function buildRuntime(sessionKey: string, parts: SessionKeyParts): Promise
         hackerNews: lookupHackerNews,
       },
       lights,
+      addBriefingModule: async (request) => {
+        const { speech } = await createBriefingModuleFromAsk({
+          request,
+          llm: (messages) => registeredLlm(registry, llmIds, messages),
+        });
+        return speech;
+      },
     },
   });
   await session.start();

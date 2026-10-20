@@ -478,14 +478,23 @@ async function connect(): Promise<void> {
             if (msg.type === "start" && msg.display) {
               briefingHud.show(msg.display);
               captions.reset();
+              thread.handleCaption(msg);
+            } else if (briefingHud.isActive) {
+              // Structured brief/headline card stays until the user speaks.
+              // The spoken word stream must not erase it or stack prefix lines.
             } else if (msg.type === "start") {
               briefingHud.clear();
               captions.handle(msg);
-            } else if (!briefingHud.isActive) {
+              thread.handleCaption(msg);
+            } else {
               captions.handle(msg);
+              thread.handleCaption(msg);
             }
-            thread.handleCaption(msg);
-            if ((msg.type === "start" || msg.type === "reveal") && msg.text) {
+            if (
+              !briefingHud.isActive &&
+              (msg.type === "start" || msg.type === "reveal") &&
+              msg.text
+            ) {
               lastCaption = msg.text;
             }
             if (msg.type === "end") setRemoteAudioMuted(false);
@@ -891,6 +900,37 @@ function postAgendaTurn(role: "user" | "assistant", text: string, final: boolean
   );
 }
 
+async function startTalkAboutMemory(name: string): Promise<void> {
+  const label = name.trim() || "this memory";
+  const ask = `I have "${label}" open on the memory graph. Let's talk about it.`;
+  setStatus("Opening that memory…");
+  try {
+    if (room) {
+      await disconnect();
+      await connect();
+    } else if (!speechEngineRunning()) {
+      await connect();
+    }
+    ensureSpeechEngineAudible();
+    userTranscript.handle({ type: "final", text: ask });
+    thread.handleUserFinal(ask);
+    postAgendaTurn("user", ask, true);
+    if (speechEngineRunning()) {
+      if (!submitSpeechEngineText(ask)) {
+        throw new Error("Alfred's voice isn't connected. Press Start on Talk.");
+      }
+    } else if (room) {
+      await publishControl(room, { type: "text", text: ask });
+    } else {
+      throw new Error("Alfred's voice isn't connected. Press Start on Talk.");
+    }
+    setStatus("Online // talking about memory");
+  } catch (err) {
+    console.error("[voice-client] talk-focus", err);
+    setStatus(err instanceof Error ? err.message : "Couldn’t open that memory");
+  }
+}
+
 async function ensureSpeechEngine(): Promise<void> {
   if (speechEngineRunning() || sessionOp === "connecting") return;
   await connect();
@@ -914,6 +954,7 @@ window.addEventListener("message", (event) => {
     channel?: string;
     type?: string;
     text?: string;
+    name?: string;
     cmd?: string;
     id?: string;
     canvas?: OffscreenCanvas;
@@ -960,6 +1001,10 @@ window.addEventListener("message", (event) => {
     });
     return;
   }
+  if (data.type === "talk-focus") {
+    void startTalkAboutMemory(typeof data.name === "string" ? data.name : "this memory");
+    return;
+  }
   if (data.type !== "ask") return;
   void speakAgendaReply(data.text ?? "").catch((err) => {
     const message = err instanceof Error ? err.message : "Alfred's voice didn't start.";
@@ -972,6 +1017,19 @@ document.querySelector<HTMLFormElement>("#composer")!.addEventListener("submit",
   void sendComposer();
 });
 
+function formatConnectError(err: unknown): string {
+  const raw = err instanceof Error ? err.message : String(err);
+  if (
+    /NotAllowedError|Permission denied|permission denied|Microphone permission|getUserMedia/i.test(
+      raw,
+    ) ||
+    (err instanceof DOMException && err.name === "NotAllowedError")
+  ) {
+    return "Mic blocked — allow Microphone for this site (lock icon → Site settings), then press Start";
+  }
+  return raw;
+}
+
 connectBtn.addEventListener("click", () => {
   if (room || sessionOp === "connecting" || speechEngineRunning()) {
     void disconnect().catch((err) => console.error(err));
@@ -979,7 +1037,7 @@ connectBtn.addEventListener("click", () => {
   }
   void connect().catch((err) => {
     console.error(err);
-    setStatus(err instanceof Error ? err.message : String(err));
+    setStatus(formatConnectError(err));
     connectBtn.disabled = false;
     setSessionToggle(false);
     sessionOp = "idle";

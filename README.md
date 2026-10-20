@@ -59,7 +59,7 @@ Prereqs in `.env`: `DEEPGRAM_API_KEY` (optional on Mac — falls back to Apple o
 
 ### Experimental GPT-Live (`pnpm voice:live`)
 
-Full-duplex OpenAI GPT-Live-1 via LiveKit Agents (Ripple voice). Same memory/tools/briefing brain; does not use Deepgram or ElevenLabs. Run with `make alfred VOICE=live` so desktop tokens dispatch agent `alfred-live`. Details: [docs/gpt-live.md](docs/gpt-live.md).
+Full-duplex OpenAI GPT-Live-1 via LiveKit Agents, using a saved prompt-to-voice (or a builtin name via `ALFRED_GPT_LIVE_VOICE`). Same memory/tools/briefing brain; does not use Deepgram or ElevenLabs. Run with `make alfred VOICE=live` so desktop tokens dispatch agent `alfred-live`. Details: [docs/gpt-live.md](docs/gpt-live.md).
 
 **Three terminals** (from the repo root):
 
@@ -172,11 +172,13 @@ Successful URLs are removed from the inbox note and appended to `{Note} Ingested
 brew install yt-dlp
 ```
 
-2. Log the Alfred browser profile into X once (headed window). **Close that Chrome window** (and let `ingest-x-login` exit) before running ingest — Chrome only allows one process on this profile:
+2. Log the Alfred browser profile into X with a **dedicated ingest account** (not your personal X). X will reject anonymous and headless traffic; a separate logged-in account keeps rate limits and lockouts off your main profile. Ingest defaults to **Chrome**; pick **Brave** on Settings → Ingest if you prefer it. Then click **Log into X**, or:
 
 ```bash
 pnpm memory -- ingest-x-login
 ```
+
+**Close that browser window** (and let `ingest-x-login` exit) before scanning — only one process can use this profile. Ingest already runs headed in that same logged-in Chrome. Do not click Check session or Close login window while a scan is running. Headless (`ALFRED_BROWSER_HEADLESS=1`) is usually blocked by X.
 
 3. Register each Apple Note by folder + title (fails if the note cannot be found):
 
@@ -185,7 +187,7 @@ pnpm memory -- ingest-x-source add --folder "Alfred" --note "Marketing"
 pnpm memory -- ingest-x-source list
 ```
 
-4. Run ingest (first dump of dozens, then typically a few new links per day). Same URL pasted back into the inbox refreshes the existing memory:
+4. Run ingest (first dump of dozens, then typically a few new links per day). Links are scanned in batches of 20 with a pause between batches. Same URL pasted back into the inbox refreshes the existing memory:
 
 ```bash
 pnpm memory -- ingest-x
@@ -194,7 +196,7 @@ pnpm memory -- ingest-x https://x.com/foo/status/123
 pnpm memory -- ingest-x https://youtu.be/dQw4w9WgXcQ
 ```
 
-Voice: “ingest my X notes” starts the batch in the background; “go pull this X link …” or “go pull this YouTube link …” fetches one URL and speaks the result. With `pnpm desktop` running, the same batch also runs on a schedule (`ALFRED_X_INGEST_SCHEDULE`, default `06:00` local). Optional env: `ALFRED_BROWSER_USER_DATA_DIR`, `ALFRED_BROWSER_CHANNEL` (`chrome` / `brave` / `chromium`), `ALFRED_X_CUA` (`fallback` / `always` / `off`), `ALFRED_YTDLP_PATH`. The Mac generally needs to be awake (and usually unlocked) for Notes scripting.
+Voice: “ingest my X notes” starts the batch in the background; “go pull this X link …” or “go pull this YouTube link …” fetches one URL and speaks the result. With `pnpm desktop` running, the same batch also runs on a schedule (`ALFRED_X_INGEST_SCHEDULE`, default `06:00` local). Optional env: `ALFRED_BROWSER_USER_DATA_DIR`, `ALFRED_BROWSER_CHANNEL` (`chrome` / `brave`; desktop Ingest can also pick this), `ALFRED_X_CUA` (`fallback` / `always` / `off`), `ALFRED_YTDLP_PATH`. The Mac generally needs to be awake (and usually unlocked) for Notes scripting.
 
 **Reminders in conversation:** with `pnpm voice` running, Alfred can complete, dismiss, or snooze due daily-brief reminders in natural language (e.g. “I signed the offer letter, thanks”). That updates the OIP reminder status and invalidates today’s briefing cache so the next brief won’t repeat it. HTTP `/api/memory/due` and `/api/memory/:id/reminder/status` remain available for debugging.
 

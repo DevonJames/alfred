@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import {
+  handleAttachPhoto,
   handleAudio,
   handleAudioChunk,
   handleAudioMeta,
@@ -11,6 +12,9 @@ import {
   handleGetNote,
   handleGetUpload,
   handleListNotes,
+  handlePhoto,
+  handlePhotoChunk,
+  handlePhotoMeta,
   handlePutUploadChunk,
   handleRetryDetails,
   handleRetryTranscript,
@@ -32,6 +36,10 @@ apiNotesRouter.get("/jobs/:jobId", handleGetJob);
 apiNotesRouter.get("/:id/audio/meta", handleAudioMeta);
 apiNotesRouter.get("/:id/audio/chunks/:index", handleAudioChunk);
 apiNotesRouter.get("/:id/audio", handleAudio);
+apiNotesRouter.get("/:id/photos/:photoId/meta", handlePhotoMeta);
+apiNotesRouter.get("/:id/photos/:photoId/chunks/:index", handlePhotoChunk);
+apiNotesRouter.get("/:id/photos/:photoId", handlePhoto);
+apiNotesRouter.post("/:id/photos", handleAttachPhoto);
 apiNotesRouter.post("/:id/retry-details", handleRetryDetails);
 apiNotesRouter.post("/:id/retry-transcript", handleRetryTranscript);
 apiNotesRouter.get("/:id", handleGetNote);

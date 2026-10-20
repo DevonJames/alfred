@@ -22,6 +22,7 @@ const IDENTITY_PREFIXES = {
   ios: "alfred-ios",
   robot: "alfred-robot",
   web: "alfred-client",
+  fitness: "alfred-fitness",
 } as const;
 
 export type LiveKitClientKind = keyof typeof IDENTITY_PREFIXES;
@@ -50,6 +51,15 @@ export function liveKitIdentityPrefix(client?: string | null): string {
   }
   if (key === "ios" || key === "alfred-ios" || key === "phone") {
     return IDENTITY_PREFIXES.ios;
+  }
+  if (
+    key === "fitnessally" ||
+    key === "fitnessally-ios" ||
+    key === "fitnessally-web" ||
+    key === "fitnessally-watch" ||
+    key === "alfred-fitness"
+  ) {
+    return IDENTITY_PREFIXES.fitness;
   }
   return IDENTITY_PREFIXES.ios;
 }

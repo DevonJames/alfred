@@ -13,6 +13,8 @@
  * Markdown folders (scheduled scan, separate from the file picker):
  * GET/POST /memory/ingest/folders · POST .../pick · POST .../scan · POST .../remove
  * GET/POST /memory/ingest/notes-sources · POST .../scan · POST .../remove
+ * GET /memory/ingest/x-session · POST /memory/ingest/x-login · POST .../x-login/close
+ * POST /memory/ingest/youtube — one YouTube video URL → caption transcript in OIP
  * POST /memory/ingest/discover-links — SSE: propose missing high-level graph links
  */
 
@@ -48,6 +50,13 @@ import {
   scanNotesIngestSource,
 } from "../lib/notes-ingest-sources.js";
 import { kindFromFilename } from "../lib/text-extract.js";
+import { ingestYouTubeLink } from "../lib/youtube-ingest.js";
+import {
+  closeXIngestLogin,
+  openXIngestLogin,
+  readXIngestSession,
+  setXIngestBrowser,
+} from "../lib/x-session.js";
 import { memoryGraphRouter } from "./memory-graph.js";
 import { memoryGraphBetaRouter } from "./memory-graph-beta.js";
 
@@ -80,9 +89,34 @@ memoryRouter.get("/ingest/notes-sources", async (c) => {
 });
 
 memoryRouter.post("/ingest/notes-sources/scan", async (c) => {
+  const id = await readFolderActionId(c);
+  if (!id) return c.json({ error: "missing_id", message: "Note id is required" }, 400);
+  const accept = c.req.header("accept") ?? "";
+  if (accept.includes("text/event-stream")) {
+    return streamSSE(c, async (stream) => {
+      try {
+        const result = await scanNotesIngestSource(id, {
+          onProgress: async (progress) => {
+            await stream.writeSSE({
+              event: "progress",
+              data: JSON.stringify(progress),
+            });
+          },
+        });
+        await stream.writeSSE({
+          event: "done",
+          data: JSON.stringify({ ok: true, ...result }),
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        await stream.writeSSE({
+          event: "error",
+          data: JSON.stringify({ error: "scan_failed", message }),
+        });
+      }
+    });
+  }
   try {
-    const id = await readFolderActionId(c);
-    if (!id) return c.json({ error: "missing_id", message: "Note id is required" }, 400);
     const result = await scanNotesIngestSource(id);
     return c.json({ ok: true, ...result });
   } catch (err) {
@@ -101,6 +135,61 @@ memoryRouter.post("/ingest/notes-sources/remove", async (c) => {
     const message = err instanceof Error ? err.message : String(err);
     return c.json({ error: "remove_failed", message }, 400);
   }
+});
+
+memoryRouter.post("/ingest/youtube", async (c) => {
+  try {
+    const ct = c.req.header("content-type") ?? "";
+    const body = ct.includes("application/json")
+      ? ((await c.req.json().catch(() => ({}))) as Record<string, unknown>)
+      : ((await c.req.parseBody()) as Record<string, unknown>);
+    const url = typeof body.url === "string" ? body.url : "";
+    const result = await ingestYouTubeLink(url);
+    if (result.status !== "ingested") {
+      const detail = result.error || "Could not fetch a transcript";
+      const message = result.headline ? `${result.headline}: ${detail}` : detail;
+      return c.json({ error: "ingest_failed", message, result }, 400);
+    }
+    return c.json({ ok: true, ...result });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return c.json({ error: "ingest_failed", message }, 400);
+  }
+});
+
+memoryRouter.get("/ingest/x-session", async (c) => {
+  try {
+    return c.json(await readXIngestSession());
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return c.json({ error: "session_failed", message, loggedIn: false, hint: message }, 400);
+  }
+});
+
+memoryRouter.post("/ingest/x-session", async (c) => {
+  try {
+    const body = (await c.req.json().catch(() => ({}))) as { channel?: unknown };
+    const channel = typeof body.channel === "string" ? body.channel : "";
+    return c.json({ ok: true, ...(await setXIngestBrowser(channel)) });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return c.json({ error: "browser_failed", message }, 400);
+  }
+});
+
+memoryRouter.post("/ingest/x-login", async (c) => {
+  try {
+    const result = await openXIngestLogin();
+    return c.json({ ok: true, ...result });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return c.json({ error: "login_failed", message }, 409);
+  }
+});
+
+memoryRouter.post("/ingest/x-login/close", async (c) => {
+  const result = await closeXIngestLogin();
+  return c.json({ ok: true, ...result });
 });
 
 memoryRouter.post("/ingest/notes-sources", async (c) => {
@@ -493,108 +582,254 @@ function ingestPageHtml(
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Alfred — Ingest memory</title>
+  <title>Alfred // Ingest</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Syne:wght@700;800&display=swap" rel="stylesheet" />
   <style>
     :root {
-      --bg: #1a1f1c;
-      --panel: #243028;
-      --ink: #e8efe6;
-      --muted: #9aab9c;
-      --accent: #c4a35a;
-      --line: #3a463d;
+      --bg: #0b0f14;
+      --fg: #e8eef5;
+      --ink: #e8eef5;
+      --muted: #8b9bb0;
+      --line: #1c2733;
+      --accent: #7ee0c3;
+      --mint: #3dffc4;
+      --warn: #e0c07e;
+      --panel: rgba(8, 12, 18, 0.96);
     }
     * { box-sizing: border-box; }
     body {
       margin: 0;
       min-height: 100vh;
-      font-family: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+      font-family: "IBM Plex Mono", ui-monospace, monospace;
       background:
-        radial-gradient(ellipse at top, #2a332c 0%, transparent 55%),
+        radial-gradient(1200px 600px at 12% -10%, #163049 0%, transparent 55%),
+        radial-gradient(900px 500px at 100% 0%, #1a2a22 0%, transparent 48%),
         var(--bg);
-      color: var(--ink);
-      display: grid;
-      place-items: center;
-      padding: 2rem 1rem;
+      color: var(--fg);
+      padding: 1.5rem 1.25rem 3rem;
     }
-    main {
-      width: min(36rem, 100%);
-      background: color-mix(in srgb, var(--panel) 92%, black);
-      border: 1px solid var(--line);
-      padding: 2rem 1.75rem 1.75rem;
-    }
-    h1 {
+    main { width: min(90rem, 100%); margin: 0 auto; }
+    .brand {
+      font-family: Syne, sans-serif;
+      font-weight: 800;
+      font-size: clamp(1.6rem, 3vw, 2.1rem);
+      letter-spacing: 0.03em;
+      line-height: 1.05;
       margin: 0 0 0.35rem;
-      font-size: 1.85rem;
-      font-weight: 600;
-      letter-spacing: 0.02em;
     }
-    .brand { color: var(--accent); }
-    p {
-      margin: 0 0 1.1rem;
+    .sub {
       color: var(--muted);
+      font-size: 0.72rem;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      margin: 0 0 1.15rem;
+    }
+    .board {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      gap: 1rem;
+      align-items: start;
+    }
+    @media (min-width: 760px) {
+      .board { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+    @media (min-width: 1180px) {
+      .board { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    }
+    section {
+      min-width: 0;
+      border: 1px solid var(--line);
+      background: rgba(12, 18, 26, 0.55);
+      padding: 1rem 1.05rem 1.05rem;
+    }
+    h2 {
+      margin: 0 0 0.7rem;
+      font-size: 0.7rem;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      color: var(--accent);
+      font-weight: 600;
+    }
+    p, .hint {
+      margin: 0 0 0.75rem;
+      color: var(--muted);
+      font-size: 0.75rem;
       line-height: 1.45;
-      font-size: 1rem;
+    }
+    .kicker {
+      margin: 0.35rem 0 0.35rem;
+      font-size: 0.65rem;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
     }
     label {
       display: block;
-      font-size: 0.85rem;
       color: var(--muted);
-      margin-bottom: 0.45rem;
+      font-size: 0.65rem;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      margin: 0.15rem 0 0.35rem;
     }
-    select, input[type="file"] {
+    select,
+    input[type="text"],
+    input[type="url"] {
       width: 100%;
-      color: var(--ink);
-      margin-bottom: 1.25rem;
-    }
-    select {
-      appearance: none;
-      padding: 0.55rem 0.7rem;
-      font: inherit;
-      font-size: 1rem;
-      background: color-mix(in srgb, var(--panel) 70%, black);
+      margin: 0 0 0.7rem;
+      padding: 0.55rem 0.65rem;
       border: 1px solid var(--line);
-    }
-    button {
-      appearance: none;
-      border: 1px solid var(--accent);
-      background: transparent;
-      color: var(--ink);
-      padding: 0.7rem 1.1rem;
+      background: rgba(8, 12, 18, 0.75);
+      color: var(--fg);
       font: inherit;
-      font-size: 1rem;
+      font-size: 0.82rem;
+      color-scheme: dark;
+    }
+    input[type="file"] {
+      width: 100%;
+      margin: 0 0 0.8rem;
+      color: var(--muted);
+      font: inherit;
+      font-size: 0.72rem;
+    }
+    input[type="file"]::file-selector-button {
+      appearance: none;
+      margin-right: 0.75rem;
+      border: 1px solid var(--line);
+      background: rgba(8, 12, 18, 0.9);
+      color: var(--fg);
+      font: inherit;
+      font-size: 0.68rem;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      padding: 0.45rem 0.65rem;
       cursor: pointer;
     }
-    button:hover { background: color-mix(in srgb, var(--accent) 22%, transparent); }
-    .meta {
-      margin-top: 1.4rem;
-      font-size: 0.8rem;
+    input::placeholder { color: #5d6d80; }
+    button {
+      appearance: none;
+      border: 1px solid rgba(61, 255, 196, 0.45);
+      background: rgba(61, 255, 196, 0.1);
+      color: var(--mint);
+      font: inherit;
+      font-size: 0.68rem;
+      font-weight: 600;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      padding: 0.6rem 0.8rem;
+      cursor: pointer;
+    }
+    button:hover { background: rgba(61, 255, 196, 0.18); }
+    button.secondary {
+      border-color: var(--line);
+      background: transparent;
       color: var(--muted);
-      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     }
-    #photo-label-hint { margin-top: 0.35rem; }
-    #ingest-status { min-height: 1.4em; margin: 0.8rem 0 0; }
-    #ingest-status.is-error { color: #d7a07a; }
-    #ingest-result {
-      margin-top: 1rem;
-      padding: 0.9rem 1rem;
-      border: 1px solid var(--line);
-      background: color-mix(in srgb, var(--panel) 70%, black);
+    button.secondary:hover { color: var(--fg); background: rgba(255, 255, 255, 0.04); }
+    button:disabled { opacity: 0.5; cursor: default; }
+    .folder-actions { display: flex; flex-wrap: wrap; gap: 0.45rem; margin: 0.1rem 0 0.35rem; }
+    a { color: var(--accent); }
+    code { font-size: 0.92em; color: var(--fg); }
+    ul#bullets {
+      margin: 0 0 0.75rem 1.05rem;
+      padding: 0;
+      color: var(--muted);
+      font-size: 0.75rem;
+      line-height: 1.45;
     }
-    #ingest-result[hidden] { display: none; }
-    #ingest-result p { margin: 0 0 0.45rem; }
-    #ingest-result p:last-child { margin-bottom: 0; }
-    #discover-status { min-height: 1.4em; margin: 0.8rem 0 0; }
-    #discover-status.is-error { color: #d7a07a; }
+    #photo-label-hint { margin-top: 0; }
+    #ingest-status,
+    #folder-status,
+    #notes-source-status,
+    #youtube-status,
+    #voice-folder-status,
+    #discover-status {
+      min-height: 1.2em;
+      margin: 0.55rem 0 0.35rem;
+      font-size: 0.75rem;
+      color: var(--fg);
+    }
+    #ingest-status.is-error,
+    #discover-status.is-error { color: var(--warn); }
+    #ingest-result,
+    #youtube-result,
     #discover-result {
-      margin-top: 1rem;
-      padding: 0.9rem 1rem;
+      margin-top: 0.75rem;
+      padding: 0.75rem 0.8rem;
       border: 1px solid var(--line);
-      background: color-mix(in srgb, var(--panel) 70%, black);
+      background: rgba(8, 12, 18, 0.55);
     }
+    #ingest-result[hidden],
+    #youtube-result[hidden],
     #discover-result[hidden] { display: none; }
-    #discover-result p { margin: 0 0 0.45rem; }
+    #ingest-result p,
+    #youtube-result p,
+    #discover-result p { margin: 0 0 0.4rem; color: var(--fg); }
+    #ingest-result p:last-child,
+    #youtube-result p:last-child,
     #discover-result p:last-child { margin-bottom: 0; }
-    button:disabled { opacity: 0.55; cursor: wait; }
+    #youtube-card.transcript-open { grid-column: 1 / -1; }
+    .transcript-tools { display: flex; flex-wrap: wrap; gap: 0.45rem; margin-top: 0.7rem; }
+    #youtube-transcript {
+      margin: 0.65rem 0 0;
+      max-height: 28rem;
+      overflow: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font: inherit;
+      font-size: 0.78rem;
+      line-height: 1.55;
+      color: var(--fg);
+      background: rgba(8, 12, 18, 0.75);
+      border: 1px solid var(--line);
+      padding: 0.85rem 0.95rem;
+    }
+    #folder-list,
+    #notes-source-list,
+    #voice-folder-list {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      max-height: 16rem;
+      overflow: auto;
+    }
+    #folder-list li,
+    #notes-source-list li,
+    #voice-folder-list li {
+      border-top: 1px solid var(--line);
+      padding: 0.7rem 0;
+    }
+    #folder-list li.empty,
+    #notes-source-list li.empty,
+    #voice-folder-list li.empty {
+      border-top: 0;
+      color: var(--muted);
+      font-size: 0.75rem;
+    }
+    #folder-list li.is-busy,
+    #notes-source-list li.is-busy,
+    #voice-folder-list li.is-busy { background: rgba(61, 255, 196, 0.05); }
+    #folder-list strong,
+    #notes-source-list strong,
+    #voice-folder-list strong { color: var(--fg); font-weight: 600; font-size: 0.82rem; }
+    .folder-path {
+      display: block;
+      margin: 0.25rem 0 0.3rem;
+      font-size: 0.68rem;
+      word-break: break-all;
+      color: var(--muted);
+    }
+    .folder-meta { font-size: 0.7rem; color: var(--muted); }
+    .folder-note { margin-top: 0.4rem; font-size: 0.75rem; color: var(--fg); }
+    .folder-row-actions { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.5rem; }
+    .missing { color: var(--warn); }
+    .foot {
+      margin: 1rem 0 0;
+      font-size: 0.72rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
     .job-progress {
       position: fixed;
       right: 1rem;
@@ -615,16 +850,16 @@ function ingestPageHtml(
       pointer-events: auto;
     }
     .job-progress-title {
-      font-size: 0.72rem;
+      font-size: 0.68rem;
       text-transform: uppercase;
-      letter-spacing: 0.08em;
+      letter-spacing: 0.14em;
       color: var(--accent);
       margin: 0 0 0.3rem;
     }
     .job-progress-label {
       margin: 0 0 0.55rem;
-      font-size: 0.82rem;
-      color: var(--ink);
+      font-size: 0.75rem;
+      color: var(--fg);
       line-height: 1.35;
       min-height: 1.1em;
     }
@@ -637,7 +872,7 @@ function ingestPageHtml(
     .job-progress-fill {
       height: 100%;
       width: 0;
-      background: var(--accent);
+      background: var(--mint);
       transition: width 160ms ease;
     }
     .job-progress-meta {
@@ -645,171 +880,139 @@ function ingestPageHtml(
       justify-content: space-between;
       gap: 0.75rem;
       margin-top: 0.4rem;
-      font-size: 0.72rem;
+      font-size: 0.68rem;
       color: var(--muted);
       font-variant-numeric: tabular-nums;
     }
-    .job-progress.err .job-progress-title { color: #d7a07a; }
-    .job-progress.err .job-progress-fill { background: #d7a07a; }
-    ul { color: var(--muted); margin: 0 0 1.2rem 1.1rem; padding: 0; line-height: 1.4; }
-    hr.rule {
-      border: 0;
-      border-top: 1px solid var(--line);
-      margin: 1.75rem 0 1.35rem;
-    }
-    h2 {
-      margin: 0 0 0.4rem;
-      font-size: 1.2rem;
-      font-weight: 600;
-    }
-    .folder-form input[type="text"] {
-      width: 100%;
-      margin-bottom: 0.75rem;
-      padding: 0.5rem 0.65rem;
-      font: inherit;
-      font-size: 0.95rem;
-      color: var(--ink);
-      background: color-mix(in srgb, var(--panel) 70%, black);
-      border: 1px solid var(--line);
-    }
-    .folder-actions {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 0.55rem;
-      margin-bottom: 1.1rem;
-    }
-    button.secondary {
-      border-color: var(--line);
-    }
-    #folder-status, #notes-source-status {
-      min-height: 1.3em;
-      margin: 0 0 0.85rem;
-      font-size: 0.95rem;
-      color: var(--ink);
-    }
-    #folder-list li.is-busy,
-    #notes-source-list li.is-busy {
-      border-color: var(--accent);
-    }
-    #folder-list li.is-busy [data-action="scan"],
-    #notes-source-list li.is-busy [data-action="scan"] {
-      background: color-mix(in srgb, var(--accent) 22%, transparent);
-    }
-    button:disabled { opacity: 0.55; cursor: default; }
-    .folder-note { margin-top: 0.45rem; font-size: 0.88rem; color: var(--ink); }
-    #folder-list,
-    #notes-source-list {
-      list-style: none;
-      margin: 0 0 0.4rem;
-      padding: 0;
-    }
-    #folder-list li,
-    #notes-source-list li {
-      border: 1px solid var(--line);
-      padding: 0.75rem 0.8rem;
-      margin: 0 0 0.55rem;
-    }
-    #folder-list strong,
-    #notes-source-list strong { color: var(--ink); }
-    .folder-path {
-      display: block;
-      margin: 0.2rem 0 0.35rem;
-      font-size: 0.78rem;
-      word-break: break-all;
-      color: var(--muted);
-    }
-    .folder-meta { font-size: 0.82rem; }
-    .folder-row-actions { display: flex; flex-wrap: wrap; gap: 0.45rem; margin-top: 0.55rem; }
-    .folder-row-actions button { padding: 0.4rem 0.7rem; font-size: 0.9rem; }
-    .missing { color: #d7a07a; }
+    .job-progress.err .job-progress-title,
+    .job-progress.err .job-progress-fill { color: var(--warn); }
+    .job-progress.err .job-progress-fill { background: var(--warn); }
   </style>
 </head>
 <body>
   <main>
-    <h1><span class="brand">Alfred</span> memory ingest</h1>
-    <p id="intro">Upload a knowledge export. Alfred will:</p>
-    <ul id="bullets">
-      <li>Merge high-priority / how-to-work sections into <code>USER.md</code></li>
-      <li>Split remaining details into individual OIP memory records</li>
-      <li>Keep the original file as a content-addressed artifact</li>
-    </ul>
-    <p id="hint">Prefer <code>.json</code> (see <code>docs/knowledge-export-prompt.md</code>). Markdown / txt / rtf still work via section splitting. Provider: <code>${escapeHtml(providerId)}</code>.</p>
-    <form id="ingest-form" method="post" action="/memory/ingest" enctype="multipart/form-data">
-      <label for="mode">What are you uploading?</label>
-      <select id="mode" name="mode">
-        <option value="knowledge" selected>LLM Knowledge Export</option>
-        <option value="document">Document</option>
-        <option value="photo">Photo</option>
-        <option value="node-bundle">Alfred Memory File from Another Node</option>
+    <h1 class="brand">Ingest</h1>
+    <p class="sub">Memory</p>
+    <div class="board">
+    <section>
+      <h2>File</h2>
+      <p class="hint" id="intro">Upload a knowledge export. Alfred will:</p>
+      <ul id="bullets">
+        <li>Merge high-priority / how-to-work sections into <code>USER.md</code></li>
+        <li>Split remaining details into individual OIP memory records</li>
+        <li>Keep the original file as a content-addressed artifact</li>
+      </ul>
+      <p class="hint" id="hint">Prefer <code>.json</code> (see <code>docs/knowledge-export-prompt.md</code>). Markdown / txt / rtf still work via section splitting. Provider: <code>${escapeHtml(providerId)}</code>.</p>
+      <form id="ingest-form" method="post" action="/memory/ingest" enctype="multipart/form-data">
+        <label for="mode">What are you uploading?</label>
+        <select id="mode" name="mode">
+          <option value="knowledge" selected>LLM Knowledge Export</option>
+          <option value="document">Document</option>
+          <option value="photo">Photo</option>
+          <option value="node-bundle">Alfred Memory File from Another Node</option>
+        </select>
+        <label for="file" id="file-label">Knowledge export</label>
+        <input id="file" name="file" type="file" accept=".json,.txt,.md,.markdown,.rtf,application/json,text/plain,text/markdown,application/rtf" required />
+        <div id="photo-label-wrap" hidden>
+          <label for="photo-label">Label</label>
+          <input id="photo-label" name="label" type="text" placeholder="Kitchen remodel · receipts" autocomplete="off" />
+          <p class="hint" id="photo-label-hint">Optional. Same as a folder label: it becomes a hub in the memory graph, and every photo plus its extracted facts connect to it. Multiple photos in one upload are also linked to each other.</p>
+        </div>
+        <button type="submit" id="ingest-submit">Analyze &amp; ingest</button>
+        <p id="ingest-status"></p>
+        <div id="ingest-result" hidden></div>
+      </form>
+    </section>
+    <section id="youtube-card">
+      <h2>YouTube</h2>
+      <p>Paste a video link. Alfred fetches the caption transcript with <code>yt-dlp</code>, stores it in memory, and shows the full text here so you can read and copy it. Install <code>yt-dlp</code> with <code>brew install yt-dlp</code> if it is not already on this Mac. Playlists and channel pages are skipped.</p>
+      <form id="youtube-form" class="folder-form">
+        <label for="youtube-url">Video link</label>
+        <input id="youtube-url" name="url" type="url" placeholder="https://www.youtube.com/watch?v=…" autocomplete="off" />
+        <div class="folder-actions">
+          <button type="submit" id="youtube-submit">Pull transcript</button>
+        </div>
+      </form>
+      <p id="youtube-status"></p>
+      <div id="youtube-result" hidden></div>
+    </section>
+    <section id="x-session-card">
+      <h2>X.com session</h2>
+      <p>X ingest uses a dedicated browser profile. Chrome is the default; Brave works too if you prefer it. Sign in with a <strong>dedicated ingest account</strong> — not your personal X — then close that window before scanning. Do not click Check session or Close login window while a scan is running.</p>
+      <label for="x-session-browser">Browser</label>
+      <select id="x-session-browser">
+        <option value="chrome">Chrome</option>
+        <option value="brave">Brave</option>
       </select>
-      <label for="file" id="file-label">Knowledge export</label>
-      <input id="file" name="file" type="file" accept=".json,.txt,.md,.markdown,.rtf,application/json,text/plain,text/markdown,application/rtf" required />
-      <div id="photo-label-wrap" hidden>
-        <label for="photo-label">Label</label>
-        <input id="photo-label" name="label" type="text" placeholder="Kitchen remodel · receipts" autocomplete="off" />
-        <p class="meta" id="photo-label-hint">Optional. Same as a folder label: it becomes a hub in the memory graph, and every photo plus its extracted facts connect to it. Multiple photos in one upload are also linked to each other.</p>
-      </div>
-      <button type="submit" id="ingest-submit">Analyze &amp; ingest</button>
-      <p id="ingest-status"></p>
-      <div id="ingest-result" hidden></div>
-    </form>
-    <hr class="rule" />
-    <h2>Apple Notes inboxes</h2>
-    <p>Scan these Apple Notes for X and YouTube links ${escapeHtml(notesSources.schedule.label)}. After ingest, saved links move to the archive note. Close the login Chrome window before scanning.</p>
-    <form id="notes-source-form" class="folder-form">
-      <label for="notes-source-folder">Notes folder</label>
-      <input id="notes-source-folder" name="folder" type="text" placeholder="USPTO" autocomplete="off" />
-      <label for="notes-source-note">Note title</label>
-      <input id="notes-source-note" name="note" type="text" placeholder="uspto job prep" autocomplete="off" />
-      <label for="notes-source-archive">Archive note (optional)</label>
-      <input id="notes-source-archive" name="archiveNote" type="text" placeholder="uspto job prep Ingested" autocomplete="off" />
+      <p id="x-session-status">Click Check session only when a scan is not running.</p>
       <div class="folder-actions">
-        <button type="submit" id="notes-source-watch">Watch this note</button>
+        <button type="button" id="x-session-login">Log into X</button>
+        <button type="button" id="x-session-refresh" class="secondary">Check session</button>
+        <button type="button" id="x-session-close" class="secondary">Close login window</button>
       </div>
-    </form>
-    <p id="notes-source-status"></p>
-    <p>Currently scanning</p>
-    <ul id="notes-source-list">${renderNotesSourceListItems(notesSources)}</ul>
-    <hr class="rule" />
-    <h2>Markdown folders</h2>
-    <p>Watch a folder of <code>.md</code>, <code>.txt</code>, <code>.rtf</code>, and <code>.pdf</code> files. The label becomes a hub in the memory graph; every file and section ingested from the folder connects to it. Alfred also scans it ${escapeHtml(folderList.schedule.label)} and re-ingests files that changed.</p>
-    <form id="folder-form" class="folder-form" method="post" action="/memory/ingest/folders">
-      <label for="folder-path">Folder on this Mac</label>
-      <input id="folder-path" name="path" type="text" placeholder="/Users/you/Documents/docs" autocomplete="off" />
-      <label for="folder-label">Label</label>
-      <input id="folder-label" name="label" type="text" placeholder="Project docs" required autocomplete="off" />
-      <div class="folder-actions">
-        <button type="button" id="folder-pick" class="secondary">Choose folder…</button>
-        <button type="button" id="folder-watch">Watch this folder</button>
-      </div>
-    </form>
-    <p id="folder-status"></p>
-    <p>Currently watching</p>
-    <ul id="folder-list">${renderFolderListItems(folderList)}</ul>
-    <hr class="rule" />
-    <h2>Voice note folders</h2>
-    <p>Ingest a folder of recordings one file at a time through the same Notes pipeline. iPhone uploads jump the line. Filenames (Home 14, Sunset Plaza, a person’s name) become location or participants; the note title comes from the transcript subject.</p>
-    <form id="voice-folder-form" class="folder-form">
-      <label for="voice-folder-path">Folder on this Mac</label>
-      <input id="voice-folder-path" name="path" type="text" placeholder="/Users/you/Documents/Voice Memos" autocomplete="off" />
-      <label for="voice-folder-label">Label</label>
-      <input id="voice-folder-label" name="label" type="text" placeholder="Voice memos" required autocomplete="off" />
-      <div class="folder-actions">
-        <button type="button" id="voice-folder-pick" class="secondary">Choose folder…</button>
-        <button type="button" id="voice-folder-watch">Scan this folder</button>
-        <button type="button" id="voice-folder-pause" class="secondary">Pause folder queue</button>
-      </div>
-    </form>
-    <p id="voice-folder-status">${escapeHtml(voiceQueueMessage)}</p>
-    <p>Registered folders</p>
-    <ul id="voice-folder-list">${renderVoiceFolderListItems(voiceFolders)}</ul>
-    <hr class="rule" />
-    <h2>Find connections</h2>
-    <p>Scan high-level memories and add missed links. Also creates concept hubs — shared topics like AI, Rock Hoppers, or USPTO — that pull currently disconnected memories together. Needs <code>OPENAI_API_KEY</code>.</p>
-    <button type="button" id="discover-links">Find connections</button>
-    <p id="discover-status"></p>
-    <div id="discover-result" hidden></div>
-    <p class="meta">POST /memory/ingest · fields <code>mode</code>, <code>file</code>, optional <code>label</code> · <a href="/memory/graph" style="color:var(--accent)">Browse graph</a></p>
+    </section>
+    <section>
+      <h2>Apple Notes</h2>
+      <p>Scan these Apple Notes for X and YouTube links ${escapeHtml(notesSources.schedule.label)}. After ingest, saved links move to the archive note. YouTube does not need the X login.</p>
+      <form id="notes-source-form" class="folder-form">
+        <label for="notes-source-folder">Notes folder</label>
+        <input id="notes-source-folder" name="folder" type="text" placeholder="USPTO" autocomplete="off" />
+        <label for="notes-source-note">Note title</label>
+        <input id="notes-source-note" name="note" type="text" placeholder="uspto job prep" autocomplete="off" />
+        <label for="notes-source-archive">Archive note (optional)</label>
+        <input id="notes-source-archive" name="archiveNote" type="text" placeholder="uspto job prep Ingested" autocomplete="off" />
+        <div class="folder-actions">
+          <button type="submit" id="notes-source-watch">Watch this note</button>
+        </div>
+      </form>
+      <p id="notes-source-status"></p>
+      <p class="kicker">Currently scanning</p>
+      <ul id="notes-source-list">${renderNotesSourceListItems(notesSources)}</ul>
+    </section>
+    <section>
+      <h2>Markdown folders</h2>
+      <p>Watch a folder of <code>.md</code>, <code>.txt</code>, <code>.rtf</code>, and <code>.pdf</code> files. The label becomes a hub in the memory graph; every file and section ingested from the folder connects to it. Alfred also scans it ${escapeHtml(folderList.schedule.label)} and re-ingests files that changed.</p>
+      <form id="folder-form" class="folder-form" method="post" action="/memory/ingest/folders">
+        <label for="folder-path">Folder on this Mac</label>
+        <input id="folder-path" name="path" type="text" placeholder="/Users/you/Documents/docs" autocomplete="off" />
+        <label for="folder-label">Label</label>
+        <input id="folder-label" name="label" type="text" placeholder="Project docs" required autocomplete="off" />
+        <div class="folder-actions">
+          <button type="button" id="folder-pick" class="secondary">Choose folder…</button>
+          <button type="button" id="folder-watch">Watch this folder</button>
+        </div>
+      </form>
+      <p id="folder-status"></p>
+      <p class="kicker">Currently watching</p>
+      <ul id="folder-list">${renderFolderListItems(folderList)}</ul>
+    </section>
+    <section>
+      <h2>Voice notes</h2>
+      <p>Ingest a folder of recordings one file at a time through the same Notes pipeline. iPhone uploads jump the line. Filenames (Home 14, Sunset Plaza, a person’s name) become location or participants; the note title comes from the transcript subject.</p>
+      <form id="voice-folder-form" class="folder-form">
+        <label for="voice-folder-path">Folder on this Mac</label>
+        <input id="voice-folder-path" name="path" type="text" placeholder="/Users/you/Documents/Voice Memos" autocomplete="off" />
+        <label for="voice-folder-label">Label</label>
+        <input id="voice-folder-label" name="label" type="text" placeholder="Voice memos" required autocomplete="off" />
+        <div class="folder-actions">
+          <button type="button" id="voice-folder-pick" class="secondary">Choose folder…</button>
+          <button type="button" id="voice-folder-watch">Scan this folder</button>
+          <button type="button" id="voice-folder-pause" class="secondary">Pause folder queue</button>
+        </div>
+      </form>
+      <p id="voice-folder-status">${escapeHtml(voiceQueueMessage)}</p>
+      <p class="kicker">Registered folders</p>
+      <ul id="voice-folder-list">${renderVoiceFolderListItems(voiceFolders)}</ul>
+    </section>
+    <section>
+      <h2>Connections</h2>
+      <p>Scan high-level memories and add missed links. Also creates concept hubs — shared topics like AI, Rock Hoppers, or USPTO — that pull currently disconnected memories together. Needs <code>OPENAI_API_KEY</code>.</p>
+      <button type="button" id="discover-links">Find connections</button>
+      <p id="discover-status"></p>
+      <div id="discover-result" hidden></div>
+    </section>
+    </div>
+    <p class="foot"><a href="/memory/graph">Browse graph</a></p>
   </main>
   <div class="job-progress" id="job-progress" hidden>
     <div class="job-progress-title" id="job-progress-title">Find connections</div>
@@ -933,7 +1136,7 @@ function ingestPageHtml(
     }
     function setFolderStatus(text, isError) {
       folderStatus.textContent = text || "";
-      folderStatus.style.color = isError ? "#d7a07a" : "var(--ink)";
+      folderStatus.style.color = isError ? "var(--warn)" : "var(--ink)";
     }
     function paint() {
       return new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
@@ -998,6 +1201,83 @@ function ingestPageHtml(
       if (!res.ok) throw new Error(data.message || res.statusText || "Request failed");
       return data;
     }
+
+    const youtubeForm = document.getElementById("youtube-form");
+    const youtubeUrl = document.getElementById("youtube-url");
+    const youtubeSubmit = document.getElementById("youtube-submit");
+    const youtubeStatus = document.getElementById("youtube-status");
+    const youtubeResult = document.getElementById("youtube-result");
+    const youtubeCard = document.getElementById("youtube-card");
+    let youtubeTranscript = "";
+    function setYoutubeStatus(text, isError) {
+      youtubeStatus.textContent = text || "";
+      youtubeStatus.style.color = isError ? "var(--warn)" : "var(--ink)";
+    }
+    async function copyYoutubeTranscript(btn) {
+      const text = youtubeTranscript;
+      if (!text) return;
+      let copied = false;
+      try {
+        await navigator.clipboard.writeText(text);
+        copied = true;
+      } catch (err) {
+        const pre = document.getElementById("youtube-transcript");
+        if (pre) {
+          const range = document.createRange();
+          range.selectNodeContents(pre);
+          const sel = window.getSelection();
+          sel.removeAllRanges();
+          sel.addRange(range);
+          copied = document.execCommand("copy");
+          sel.removeAllRanges();
+        }
+      }
+      const previous = btn.textContent;
+      btn.textContent = copied ? "Copied" : "Copy failed";
+      setTimeout(() => { btn.textContent = previous; }, 1600);
+    }
+    youtubeForm.addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      const url = youtubeUrl.value.trim();
+      if (!url) { setYoutubeStatus("Paste a YouTube link.", true); return; }
+      youtubeSubmit.disabled = true;
+      youtubeResult.hidden = true;
+      youtubeTranscript = "";
+      youtubeCard.classList.remove("transcript-open");
+      setYoutubeStatus("Fetching captions… this can take a minute.");
+      try {
+        const data = await readJson(await fetch(api("/memory/ingest/youtube"), {
+          method: "POST",
+          headers: { accept: "application/json", "content-type": "application/json" },
+          body: JSON.stringify({ url }),
+        }));
+        youtubeTranscript = typeof data.transcript === "string" ? data.transcript : "";
+        const bits = ["<p>Saved <strong>" + esc(data.headline || data.url) + "</strong>"];
+        if (data.author) bits[0] += " by " + esc(data.author);
+        bits[0] += ".</p>";
+        if (youtubeTranscript) {
+          bits.push('<div class="transcript-tools"><button type="button" id="youtube-copy">Copy transcript</button></div>');
+          bits.push('<pre id="youtube-transcript"></pre>');
+        }
+        if (data.memoryDid) {
+          bits.push('<p><a href="/memory/graph?node=' + encodeURIComponent(data.memoryDid) + '">See it on the memory graph</a></p>');
+        }
+        youtubeResult.innerHTML = bits.join("");
+        const transcriptEl = document.getElementById("youtube-transcript");
+        if (transcriptEl) transcriptEl.textContent = youtubeTranscript;
+        const copyBtn = document.getElementById("youtube-copy");
+        if (copyBtn) copyBtn.addEventListener("click", () => copyYoutubeTranscript(copyBtn));
+        youtubeCard.classList.toggle("transcript-open", Boolean(youtubeTranscript));
+        youtubeResult.hidden = false;
+        youtubeUrl.value = "";
+        setYoutubeStatus("Transcript saved.");
+      } catch (err) {
+        setYoutubeStatus(err.message || String(err), true);
+      } finally {
+        youtubeSubmit.disabled = false;
+      }
+    });
+
     async function refreshFolderList() {
       const data = await readJson(await fetch(api("/memory/ingest/folders"), {
         headers: { accept: "application/json" },
@@ -1128,7 +1408,7 @@ function ingestPageHtml(
     const notesList = document.getElementById("notes-source-list");
     function setNotesStatus(text, isError) {
       notesStatus.textContent = text || "";
-      notesStatus.style.color = isError ? "#d7a07a" : "var(--ink)";
+      notesStatus.style.color = isError ? "var(--warn)" : "var(--ink)";
     }
     function notesRow(id) {
       return notesList.querySelector('li[data-id="' + CSS.escape(id) + '"]');
@@ -1221,21 +1501,141 @@ function ingestPageHtml(
           renderNotesSources(data.sources || []);
           setNotesStatus("Stopped scanning that note.");
         } else if (action === "scan") {
-          setNotesStatus("Scanning… close the login Chrome window if it is still open.");
+          setNotesStatus("Scanning…");
           setNotesRowBusy(id, true, "Scanning…");
+          showJobProgress("Scan Apple Note");
           await paint();
-          const data = await postFolderAction("/memory/ingest/notes-sources/scan", id);
+          const res = await fetch(api("/memory/ingest/notes-sources/scan"), {
+            method: "POST",
+            headers: { accept: "text/event-stream", "content-type": "application/json" },
+            body: JSON.stringify({ id }),
+          });
+          const data = await readSseResponse(res, function (progress) {
+            setJobProgress(progress);
+            setNotesRowBusy(id, true, progress.label || "Scanning…");
+            setNotesStatus(progress.label || "Scanning…");
+          });
           renderNotesSources(data.sources || []);
           const speech = data.run && data.run.speech ? data.run.speech : "Scan finished.";
           setNotesStatus(speech);
           setNotesRowBusy(id, false, speech);
+          hideJobProgress();
         }
       } catch (err) {
         setNotesRowBusy(id, false);
         setNotesStatus(err.message || String(err), true);
+        failJobProgress(err.message || String(err));
       }
     });
     refreshNotesSources().catch(() => {});
+
+    const xStatus = document.getElementById("x-session-status");
+    const xLogin = document.getElementById("x-session-login");
+    const xRefresh = document.getElementById("x-session-refresh");
+    const xClose = document.getElementById("x-session-close");
+    const xBrowser = document.getElementById("x-session-browser");
+    function setXSessionStatus(text, isError) {
+      xStatus.textContent = text || "";
+      xStatus.style.color = isError ? "var(--warn)" : "var(--ink)";
+    }
+    function paintXSession(data) {
+      const browsers = Array.isArray(data.browsers) ? data.browsers : [];
+      if (browsers.length) {
+        xBrowser.innerHTML = browsers.map((b) => {
+          const missing = b.installed ? "" : " (not installed)";
+          return '<option value="' + esc(b.id) + '"' + (b.installed ? '' : ' disabled') + '>' +
+            esc(b.name) + missing + '</option>';
+        }).join("");
+      }
+      if (data.channel) xBrowser.value = data.channel;
+      const handle = data.handle ? "@" + data.handle : "";
+      const using = data.browser ? "Using " + data.browser + ". " : "";
+      if (data.loginOpen) {
+        setXSessionStatus(using + (data.hint || "Sign-in window is open. Close it after logging in."), true);
+        return;
+      }
+      if (data.loggedIn) {
+        setXSessionStatus(using + (data.hint || ("Logged in" + (handle ? " as " + handle : "") + ".")), false);
+        return;
+      }
+      setXSessionStatus(using + (data.hint || "Not logged into X."), true);
+    }
+    let xSessionInflight = false;
+    async function refreshXSession() {
+      if (xSessionInflight) return;
+      xSessionInflight = true;
+      setXSessionStatus("Checking X session… this uses Alfred’s ingest Chrome, not your everyday window.");
+      xRefresh.disabled = true;
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 15000);
+      try {
+        const data = await readJson(await fetch(api("/memory/ingest/x-session"), {
+          headers: { accept: "application/json" },
+          signal: ctrl.signal,
+        }));
+        paintXSession(data);
+      } catch (err) {
+        const aborted = err && (err.name === "AbortError" || /aborted/i.test(err.message || ""));
+        setXSessionStatus(
+          aborted
+            ? "Session check timed out. Alfred is not using your everyday Chrome window. Click Close login window, then try again."
+            : (err.message || String(err)),
+          true,
+        );
+      } finally {
+        clearTimeout(timer);
+        xSessionInflight = false;
+        xRefresh.disabled = false;
+      }
+    }
+    xRefresh.addEventListener("click", () => { refreshXSession(); });
+    xLogin.addEventListener("click", async () => {
+      xLogin.disabled = true;
+      try {
+        setXSessionStatus("Opening " + (xBrowser.value === "brave" ? "Brave" : "Chrome") + "…");
+        const data = await readJson(await fetch(api("/memory/ingest/x-login"), {
+          method: "POST",
+          headers: { accept: "application/json" },
+        }));
+        setXSessionStatus(data.hint || "Log in, then close that browser window.", false);
+      } catch (err) {
+        setXSessionStatus(err.message || String(err), true);
+      } finally {
+        xLogin.disabled = false;
+      }
+    });
+    xClose.addEventListener("click", async () => {
+      xClose.disabled = true;
+      try {
+        await readJson(await fetch(api("/memory/ingest/x-login/close"), {
+          method: "POST",
+          headers: { accept: "application/json" },
+        }));
+        await refreshXSession();
+      } catch (err) {
+        setXSessionStatus(err.message || String(err), true);
+      } finally {
+        xClose.disabled = false;
+      }
+    });
+    xBrowser.addEventListener("change", async () => {
+      const channel = xBrowser.value;
+      xBrowser.disabled = true;
+      try {
+        setXSessionStatus("Switching browser…");
+        const data = await readJson(await fetch(api("/memory/ingest/x-session"), {
+          method: "POST",
+          headers: { accept: "application/json", "content-type": "application/json" },
+          body: JSON.stringify({ channel }),
+        }));
+        paintXSession(data);
+      } catch (err) {
+        setXSessionStatus(err.message || String(err), true);
+      } finally {
+        xBrowser.disabled = false;
+      }
+    });
+    /* Do not auto-check on load — that races a scan for the ingest Chrome profile. */
 
     const voiceForm = document.getElementById("voice-folder-form");
     const voicePath = document.getElementById("voice-folder-path");
@@ -1247,7 +1647,7 @@ function ingestPageHtml(
     const voiceList = document.getElementById("voice-folder-list");
     function setVoiceStatus(text, isError) {
       voiceStatus.textContent = text || "";
-      voiceStatus.style.color = isError ? "#d7a07a" : "var(--ink)";
+      voiceStatus.style.color = isError ? "var(--warn)" : "var(--ink)";
     }
     function renderVoiceFolders(folders) {
       if (!folders.length) {
@@ -1501,13 +1901,17 @@ function errorPageHtml(message: string): string {
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Alfred — Ingest failed</title>
   <style>
+    :root { --bg: #0b0f14; --fg: #e8eef5; --line: #1c2733; --accent: #7ee0c3; --warn: #e0c07e; }
     body {
-      margin: 0; min-height: 100vh; display: grid; place-items: center;
-      font-family: Georgia, serif; background: #1a1f1c; color: #e8efe6; padding: 2rem;
+      margin: 0; min-height: 100vh;
+      font-family: "IBM Plex Mono", ui-monospace, monospace;
+      background: radial-gradient(900px 420px at 15% -20%, #163049 0%, transparent 55%), var(--bg);
+      color: var(--fg); padding: 2rem 1.25rem;
     }
-    main { width: min(36rem, 100%); border: 1px solid #3a463d; padding: 1.75rem; background: #243028; }
-    a { color: #c4a35a; }
-    .err { color: #d7a07a; }
+    main { width: min(40rem, 100%); margin: 2rem auto; border: 1px solid var(--line); background: rgba(12, 18, 26, 0.55); padding: 1.25rem 1.3rem; }
+    h1 { font-family: Syne, sans-serif; font-weight: 800; margin: 0 0 0.75rem; }
+    a { color: var(--accent); }
+    .err { color: var(--warn); }
   </style>
 </head>
 <body>
@@ -1531,12 +1935,16 @@ function successPageHtml(result: IngestFileResult): string {
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Alfred — Memory merged</title>
   <style>
+    :root { --bg: #0b0f14; --fg: #e8eef5; --line: #1c2733; --accent: #7ee0c3; --warn: #e0c07e; }
     body {
-      margin: 0; min-height: 100vh; display: grid; place-items: center;
-      font-family: Georgia, serif; background: #1a1f1c; color: #e8efe6; padding: 2rem;
+      margin: 0; min-height: 100vh;
+      font-family: "IBM Plex Mono", ui-monospace, monospace;
+      background: radial-gradient(900px 420px at 15% -20%, #163049 0%, transparent 55%), var(--bg);
+      color: var(--fg); padding: 2rem 1.25rem;
     }
-    main { width: min(36rem, 100%); border: 1px solid #3a463d; padding: 1.75rem; background: #243028; }
-    a { color: #c4a35a; }
+    main { width: min(40rem, 100%); margin: 2rem auto; border: 1px solid var(--line); background: rgba(12, 18, 26, 0.55); padding: 1.25rem 1.3rem; }
+    h1 { font-family: Syne, sans-serif; font-weight: 800; margin: 0 0 0.75rem; }
+    a { color: var(--accent); }
     code { font-family: ui-monospace, Menlo, monospace; font-size: 0.85em; }
   </style>
 </head>
@@ -1575,12 +1983,16 @@ function successPageHtml(result: IngestFileResult): string {
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Alfred — Ingested</title>
   <style>
+    :root { --bg: #0b0f14; --fg: #e8eef5; --line: #1c2733; --accent: #7ee0c3; --warn: #e0c07e; }
     body {
-      margin: 0; min-height: 100vh; display: grid; place-items: center;
-      font-family: Georgia, serif; background: #1a1f1c; color: #e8efe6; padding: 2rem;
+      margin: 0; min-height: 100vh;
+      font-family: "IBM Plex Mono", ui-monospace, monospace;
+      background: radial-gradient(900px 420px at 15% -20%, #163049 0%, transparent 55%), var(--bg);
+      color: var(--fg); padding: 2rem 1.25rem;
     }
-    main { width: min(36rem, 100%); border: 1px solid #3a463d; padding: 1.75rem; background: #243028; }
-    a { color: #c4a35a; }
+    main { width: min(40rem, 100%); margin: 2rem auto; border: 1px solid var(--line); background: rgba(12, 18, 26, 0.55); padding: 1.25rem 1.3rem; }
+    h1 { font-family: Syne, sans-serif; font-weight: 800; margin: 0 0 0.75rem; }
+    a { color: var(--accent); }
     code { font-family: ui-monospace, Menlo, monospace; font-size: 0.85em; }
   </style>
 </head>

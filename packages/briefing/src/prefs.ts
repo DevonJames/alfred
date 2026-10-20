@@ -18,6 +18,15 @@ export interface BriefingPrefs {
   metalSymbol: "gold" | "silver";
   /** Include Notes ingest digest (saved X / YouTube links) in the briefing. */
   includeIngestedNotes: boolean;
+  /** Speak untaken morning medicine in the daily briefing. */
+  includeMedicineMorning: boolean;
+  /**
+   * Reserved for a future mid-day briefing. Always stored false.
+   * The daily briefing does not read this flag.
+   */
+  includeMedicineMidday: boolean;
+  /** Reserved for a future evening briefing. Always stored false. */
+  includeMedicineEvening: boolean;
   newsSources: string[];
   /** EventKit calendar ids whose events on today's date are read into the briefing. */
   agendaCalendarIds: string[];
@@ -50,6 +59,9 @@ export function defaultBriefingPrefs(): BriefingPrefs {
     includeMetals: false,
     metalSymbol: "gold",
     includeIngestedNotes: true,
+    includeMedicineMorning: false,
+    includeMedicineMidday: false,
+    includeMedicineEvening: false,
     newsSources: ["AP News", "BBC News", "TechCrunch"],
     agendaCalendarIds: [],
   };
@@ -108,6 +120,13 @@ function normalizePrefs(raw: Partial<BriefingPrefs> | null | undefined): Briefin
       raw.includeIngestedNotes !== undefined
         ? Boolean(raw.includeIngestedNotes)
         : d.includeIngestedNotes,
+    includeMedicineMorning:
+      raw.includeMedicineMorning !== undefined
+        ? Boolean(raw.includeMedicineMorning)
+        : d.includeMedicineMorning,
+    // Mid-day and evening briefings do not exist yet, so these stay off.
+    includeMedicineMidday: false,
+    includeMedicineEvening: false,
     newsSources: newsSources.length ? newsSources : d.newsSources,
     agendaCalendarIds,
   };
@@ -149,6 +168,7 @@ export async function resolveBriefingConfig(
     includeMetals: prefs.includeMetals,
     metalSymbol: prefs.metalSymbol,
     includeIngestedNotes: prefs.includeIngestedNotes,
+    includeMedicineMorning: prefs.includeMedicineMorning,
     newsSources: prefs.newsSources,
     agendaCalendarIds: prefs.agendaCalendarIds,
     ...overrides,

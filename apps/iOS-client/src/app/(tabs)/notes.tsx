@@ -44,7 +44,13 @@ export default function NotesTab() {
     queryFn: () => listAudioNotes(),
     enabled: connected,
     refetchInterval: (query) =>
-      query.state.data?.some((note) => note.processingStatus === "processing") ? 4000 : false,
+      query.state.data?.some(
+        (note) =>
+          note.processingStatus === "processing" ||
+          note.photos?.some((photo) => photo.analysisStatus === "pending"),
+      )
+        ? 4000
+        : false,
   });
 
   useEffect(() => {

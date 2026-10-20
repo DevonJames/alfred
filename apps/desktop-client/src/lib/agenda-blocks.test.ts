@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   blockRunsOn,
+  cleanAgendaBlock,
   nextFittingDay,
   placeInBlock,
   type BusySpan,
@@ -75,5 +76,39 @@ describe("block days", () => {
         date === "2026-10-12" ? [span({ startMin: 9 * 60, endMin: 12 * 60, title: "Offsite" })] : [],
     });
     expect(found).toEqual({ date: "2026-10-13", startMin: 9 * 60 });
+  });
+});
+
+describe("cleanAgendaBlock", () => {
+  it("accepts a weekday block and assigns an id", () => {
+    const block = cleanAgendaBlock({
+      name: "Deep work",
+      start: "09:00",
+      end: "12:00",
+      repeat: "weekdays",
+      days: [],
+      calendarId: "cal-1",
+    });
+    expect(block).toMatchObject({
+      name: "Deep work",
+      start: "09:00",
+      end: "12:00",
+      repeat: "weekdays",
+      calendarId: "cal-1",
+    });
+    expect(block?.id).toBeTruthy();
+  });
+
+  it("rejects inverted clocks", () => {
+    expect(
+      cleanAgendaBlock({
+        name: "Nope",
+        start: "14:00",
+        end: "10:00",
+        repeat: "all",
+        days: [],
+        calendarId: "cal-1",
+      }),
+    ).toBeNull();
   });
 });

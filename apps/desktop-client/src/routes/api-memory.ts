@@ -10,7 +10,12 @@ import {
   revisionToCard,
   type MemoryCardCategory,
 } from "../lib/memory-cards.js";
-import { loadMemoryGraph, loadMemoryRecordDetail } from "../lib/memory-graph.js";
+import {
+  loadMemoryGraph,
+  loadMemoryRecordDetail,
+  setTalkFocusFromNode,
+  updateMemoryRecord,
+} from "../lib/memory-graph.js";
 import {
   artifactRefFromRevision,
   revisionToPhoneMemory,
@@ -621,6 +626,81 @@ apiMemoryRouter.get("/graph/node/:id", async (c) => {
   }
 });
 
+/** POST /api/memory/graph/node/update — light edit (name/text/contact) from phone. */
+apiMemoryRouter.post("/graph/node/update", async (c) => {
+  try {
+    const body = await c.req.json<{
+      id?: string;
+      name?: string;
+      text?: string;
+      summary?: string;
+      email?: string | null;
+      telephone?: string | null;
+      birthDate?: string | null;
+    }>();
+    const id = typeof body.id === "string" ? body.id.trim() : "";
+    if (!id) return c.json({ error: "missing_id", message: "id is required" }, 400);
+    const detail = await updateMemoryRecord(
+      id,
+      {
+        name: typeof body.name === "string" ? body.name : undefined,
+        text: typeof body.text === "string" ? body.text : undefined,
+        summary: typeof body.summary === "string" ? body.summary : undefined,
+        email:
+          body.email === null ? null : typeof body.email === "string" ? body.email : undefined,
+        telephone:
+          body.telephone === null
+            ? null
+            : typeof body.telephone === "string"
+              ? body.telephone
+              : undefined,
+        birthDate:
+          body.birthDate === null
+            ? null
+            : typeof body.birthDate === "string"
+              ? body.birthDate
+              : undefined,
+      },
+      profileFromRequest(c),
+    );
+    if (!detail) return c.json({ error: "not_found", message: `No record ${id}` }, 404);
+    return c.json(detail);
+  } catch (err) {
+    return c.json(
+      {
+        error: "node_update_failed",
+        message: err instanceof Error ? err.message : String(err),
+      },
+      500,
+    );
+  }
+});
+
+/** POST /api/memory/graph/talk — pin a node as Talk focus for the next conversation. */
+apiMemoryRouter.post("/graph/talk", async (c) => {
+  try {
+    const body = await c.req.json<{ id?: string }>();
+    const id = typeof body.id === "string" ? body.id.trim() : "";
+    if (!id) return c.json({ error: "missing_id", message: "id is required" }, 400);
+    const focus = await setTalkFocusFromNode(id, profileFromRequest(c));
+    if (!focus) return c.json({ error: "not_found", message: `No record ${id}` }, 404);
+    return c.json({
+      ok: true,
+      did: focus.did,
+      name: focus.name,
+      type: focus.type,
+    });
+  } catch (err) {
+    return c.json(
+      {
+        error: "talk_focus_failed",
+        message: err instanceof Error ? err.message : String(err),
+      },
+      500,
+    );
+  }
+});
+
 /** Resolve a package id (DID or logical) into the phone Memory card shape. */
 async function loadPhoneMemory(profileId: string, rawId: string) {
   const memory = oipForProfile(profileId);
@@ -695,6 +775,110 @@ apiMemoryRouter.get("/entity/:id", async (c) => {
     return c.json({ memory });
   } catch (err) {
     return c.json({ error: err instanceof Error ? err.message : String(err) }, 500);
+  }
+});
+
+/** POST /api/memory/verify — integrity check for Settings admin. */
+apiMemoryRouter.post("/verify", async (c) => {
+  const memory = oipForProfile(profileFromRequest(c));
+  try {
+    const report = await memory.verify();
+    return c.json({
+      ok: report.ok,
+      checked: {
+        memories: report.packagesChecked,
+        assertions: report.revisionsChecked,
+        artifacts: report.artifactsChecked,
+        drefs: 0,
+      },
+      problems: report.issues.map((issue) => ({
+        kind: issue.code,
+        id: issue.path ?? "",
+        detail: issue.message,
+      })),
+      verifiedAt: new Date().toISOString(),
+    });
+  } catch (err) {
+    return c.json(
+      { error: err instanceof Error ? err.message : String(err) },
+      500,
+    );
+  }
+});
+
+/** POST /api/memory/rebuild-indexes */
+apiMemoryRouter.post("/rebuild-indexes", async (c) => {
+  const memory = oipForProfile(profileFromRequest(c));
+  try {
+    await memory.rebuildIndexes();
+    return c.json({
+      rebuiltAt: new Date().toISOString(),
+      prunedReferences: 0,
+      indexed: {
+        memories: 0,
+        distinctTerms: 0,
+        reminders: 0,
+      },
+    });
+  } catch (err) {
+    return c.json(
+      { error: err instanceof Error ? err.message : String(err) },
+      500,
+    );
+  }
+});
+
+/**
+ * POST /api/memory/link-public
+ * Save a public recommendation into private memory after user approval.
+ */
+apiMemoryRouter.post("/link-public", async (c) => {
+  const memory = oipForProfile(profileFromRequest(c));
+  let body: { publicItemId?: string; note?: string } = {};
+  try {
+    body = (await c.req.json()) as typeof body;
+  } catch {
+    return c.json({ error: "Invalid JSON" }, 400);
+  }
+  const publicItemId = body.publicItemId?.trim();
+  if (!publicItemId) return c.json({ error: "publicItemId is required" }, 400);
+
+  const { getPublicCandidate } = await import("../lib/public-knowledge.js");
+  const candidate = await getPublicCandidate(publicItemId);
+  if (!candidate) return c.json({ error: "public item not found" }, 404);
+
+  const note = body.note?.trim();
+  const text = [
+    `Saved suggestion: ${candidate.title}`,
+    candidate.url,
+    candidate.summary,
+    note ? `Note: ${note}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  try {
+    const observation = await memory.createRecord("Observation", {
+      text,
+      name: candidate.title.slice(0, 80),
+      observedAt: new Date().toISOString(),
+      provenance: {
+        sourceType: "public_link",
+        publicItemId: candidate.id,
+        publicUrl: candidate.url,
+        learnedAt: new Date().toISOString(),
+      },
+      alfred: { visibility: "private", confidence: 1, assertionType: "explicit" },
+      schema: { text, url: candidate.url },
+    });
+    return c.json({
+      memory: revisionToPhoneMemory(observation),
+    });
+  } catch (err) {
+    return c.json(
+      { error: err instanceof Error ? err.message : String(err) },
+      500,
+    );
   }
 });
 

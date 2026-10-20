@@ -3,8 +3,11 @@ import {
   LAUNCH_SITE_OPTIONS,
   NEWS_SOURCE_OPTIONS,
   createBriefingController,
+  createBriefingModuleFromAsk,
+  listBriefingModules,
   loadBriefingPrefs,
   saveBriefingPrefs,
+  setBriefingModuleEnabled,
   type BriefingPrefs,
 } from "@alfred/briefing";
 import {
@@ -18,7 +21,7 @@ import { Hono } from "hono";
 import { readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { getBriefingHud, resetSpeechEngineBriefingOffer } from "../lib/speech-engine.js";
+import { getBriefingHud, greetingLlm, resetSpeechEngineBriefingOffer } from "../lib/speech-engine.js";
 
 const uiDir = resolve(dirname(fileURLToPath(import.meta.url)), "../ui");
 
@@ -62,6 +65,7 @@ async function agendaCalendars(): Promise<Array<{ id: string; label: string }>> 
 /** GET /briefing/prefs */
 briefingUiRouter.get("/prefs", async (c) => {
   const prefs = await loadBriefingPrefs(profileId());
+  const modules = await listBriefingModules(profileId());
   let calendars: Array<{ id: string; label: string }> = [];
   try {
     calendars = await agendaCalendars();
@@ -70,6 +74,7 @@ briefingUiRouter.get("/prefs", async (c) => {
   }
   return c.json({
     prefs,
+    modules,
     catalog: {
       launchSites: LAUNCH_SITE_OPTIONS,
       crypto: CRYPTO_OPTIONS,
@@ -86,6 +91,53 @@ briefingUiRouter.get("/prefs", async (c) => {
       ],
     },
   });
+});
+
+/** POST /briefing/modules — design a section from a written request and save it. */
+briefingUiRouter.post("/modules", async (c) => {
+  let body: { request?: unknown };
+  try {
+    body = (await c.req.json()) as { request?: unknown };
+  } catch {
+    return c.json({ error: "Invalid JSON" }, 400);
+  }
+  const request = typeof body.request === "string" ? body.request.trim() : "";
+  if (!request) return c.json({ error: "Describe the section to add." }, 400);
+  try {
+    const created = await createBriefingModuleFromAsk({
+      request,
+      llm: greetingLlm,
+      profileId: profileId(),
+    });
+    await createBriefingController({}).invalidateTodayCache().catch(() => {});
+    return c.json({ module: created.module, speech: created.speech });
+  } catch (err) {
+    console.error("[briefing] add module failed:", err);
+    return c.json(
+      { error: err instanceof Error ? err.message : String(err) },
+      500,
+    );
+  }
+});
+
+/** PATCH /briefing/modules/:id — enable or disable a user-added section. */
+briefingUiRouter.patch("/modules/:id", async (c) => {
+  let body: { enabled?: unknown };
+  try {
+    body = (await c.req.json()) as { enabled?: unknown };
+  } catch {
+    return c.json({ error: "Invalid JSON" }, 400);
+  }
+  if (typeof body.enabled !== "boolean") {
+    return c.json({ error: "enabled must be a boolean" }, 400);
+  }
+  try {
+    const module = await setBriefingModuleEnabled(c.req.param("id"), body.enabled, profileId());
+    await createBriefingController({}).invalidateTodayCache().catch(() => {});
+    return c.json({ module });
+  } catch (err) {
+    return c.json({ error: err instanceof Error ? err.message : String(err) }, 404);
+  }
 });
 
 /** PUT /briefing/prefs */

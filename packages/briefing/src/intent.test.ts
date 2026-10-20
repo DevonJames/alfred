@@ -16,6 +16,15 @@ describe("wantsLaunches", () => {
 });
 
 describe("detectBriefingIntent", () => {
+  it("does not play the briefing when the user is adding a section", () => {
+    expect(
+      detectBriefingIntent(
+        "Alright, um, I would like you to add upcoming rocket launches to my briefing, please",
+        false,
+      ),
+    ).toBe("none");
+  });
+
   it("matches explicit asks with natural phrasing", () => {
     expect(detectBriefingIntent("ok id like to hear the briefing now", false)).toBe(
       "explicitAsk",
@@ -40,6 +49,24 @@ describe("detectBriefingIntent", () => {
     expect(detectBriefingIntent("yes please I would", true)).toBe("affirmOffer");
     expect(detectBriefingIntent("no", true)).toBe("declineOffer");
     expect(detectBriefingIntent("not now", true)).toBe("declineOffer");
+  });
+
+  it("routes yes/no to the headline offer when that is pending", () => {
+    expect(
+      detectBriefingIntent("yes", { offerPending: false, newsOfferPending: true }),
+    ).toBe("affirmNewsOffer");
+    expect(
+      detectBriefingIntent("sure", { newsOfferPending: true }),
+    ).toBe("affirmNewsOffer");
+    expect(
+      detectBriefingIntent("no", { newsOfferPending: true }),
+    ).toBe("declineNewsOffer");
+  });
+
+  it("prefers the news offer over a stale soft briefing offer", () => {
+    expect(
+      detectBriefingIntent("yes", { offerPending: true, newsOfferPending: true }),
+    ).toBe("affirmNewsOffer");
   });
 
   it("prefers explicit ask over affirm when both could match", () => {

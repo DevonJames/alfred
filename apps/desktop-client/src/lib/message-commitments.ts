@@ -22,6 +22,7 @@ import {
   readMessageSentAt,
   readNewIncomingMessages,
   readNewOutgoingMessages,
+  readNewSelfNotes,
   looksLikeFollowUp,
   looksLikeObligation,
   shouldDraftMessage,
@@ -40,6 +41,8 @@ export interface CommitmentProposal {
   chatName: string | null;
   createdAt: string;
   sentAt?: string | null;
+  /** Received copy of a note the user sent to themself. */
+  selfNote?: boolean;
 }
 
 interface SettledCommitment {
@@ -64,6 +67,9 @@ interface CommitmentFile {
   /** 1 once "I need to…" notes in the lookback window have been read. */
   obligationScan?: number;
   obligationCursor?: number;
+  /** 1 once notes the user sent themself have a cursor of their own. */
+  selfScan?: number;
+  selfCursor?: number;
 }
 
 function profileId(): string {
@@ -199,13 +205,15 @@ export async function approveProposal(
     listId,
     title: nextTitle,
     due,
-    notes: proposal.isGroup
-      ? proposal.chatName
-        ? `From the group ${proposal.chatName}`
-        : "From a group conversation"
-      : proposal.handle
-        ? `From a message with ${contactLabel(proposal.handle)}`
-        : "From a message",
+    notes: proposal.selfNote
+      ? "From a note to yourself"
+      : proposal.isGroup
+        ? proposal.chatName
+          ? `From the group ${proposal.chatName}`
+          : "From a group conversation"
+        : proposal.handle
+          ? `From a message with ${contactLabel(proposal.handle)}`
+          : "From a message",
   });
   await withStoreLock(async () => {
     const latest = await readStore();
@@ -219,6 +227,12 @@ export async function approveProposal(
 
 export async function rescheduleReminder(id: string, due: string | null): Promise<AppleReminder> {
   return gateway().setDue(id, due);
+}
+
+export async function renameReminder(id: string, title: string): Promise<AppleReminder> {
+  const next = title.trim().slice(0, 180);
+  if (!next) throw new Error("A reminder needs a name.");
+  return gateway().setTitle(id, next);
 }
 
 export async function completeReminder(id: string): Promise<void> {
@@ -295,6 +309,7 @@ const BODY_SCAN = 1;
 const INCOMING_SCAN = 1;
 const FOLLOW_SCAN = 1;
 const OBLIGATION_SCAN = 1;
+const SELF_SCAN = 1;
 const SCAN_BATCH = 200;
 const DRAFTS_PER_TICK = 8;
 
@@ -308,6 +323,8 @@ async function saveProgress(
     followScan?: number;
     obligationCursor?: number;
     obligationScan?: number;
+    selfCursor?: number;
+    selfScan?: number;
   },
   added: CommitmentProposal[] = [],
 ): Promise<void> {
@@ -321,6 +338,8 @@ async function saveProgress(
     if (patch.followScan != null) latest.followScan = patch.followScan;
     if (patch.obligationCursor != null) latest.obligationCursor = patch.obligationCursor;
     if (patch.obligationScan != null) latest.obligationScan = patch.obligationScan;
+    if (patch.selfCursor != null) latest.selfCursor = patch.selfCursor;
+    if (patch.selfScan != null) latest.selfScan = patch.selfScan;
     for (const proposal of added) {
       if (messageIsSettled(latest, proposal.messageId)) continue;
       if (latest.proposals.some((item) => item.messageId === proposal.messageId)) continue;
@@ -350,11 +369,12 @@ async function considerMessage(
     title: draft.title,
     due: normalizeDueYear(draft.due, `${message.priorText ?? ""}\n${message.text}`, calendarYear()),
     quote: message.text.slice(0, 240),
-    handle: message.handle,
+    handle: message.selfNote ? null : message.handle,
     isGroup: message.isGroup,
     chatName: message.chatName,
     createdAt: new Date().toISOString(),
     sentAt: message.sentAt,
+    selfNote: message.selfNote === true,
   };
   file.proposals.push(proposal);
   added.push(proposal);
@@ -503,6 +523,33 @@ export async function scanMessageCommitments(): Promise<void> {
     if (incoming == null) return;
     file.incomingCursor = incoming.cursor;
     await saveProgress({ incomingCursor: file.incomingCursor }, incoming.added);
+
+    const needsSelf = (file.selfScan ?? 0) < SELF_SCAN || typeof file.selfCursor !== "number";
+    if (needsSelf) {
+      const days = messageLookbackDays();
+      const start = initialScanCursor(days);
+      if (start == null) {
+        if (!loggedUnreadable) {
+          loggedUnreadable = true;
+          console.warn("[messages] chat.db is not readable. Grant Full Disk Access to the app running Alfred.");
+        }
+        return;
+      }
+      file.selfCursor = start;
+      file.selfScan = SELF_SCAN;
+      await saveProgress({ selfCursor: file.selfCursor, selfScan: file.selfScan });
+      if (days > 0) console.log(`[messages] reading notes you sent yourself from the last ${days} days`);
+    }
+    const selfNotes = await walkMessages(
+      file,
+      readNewSelfNotes,
+      file.selfCursor ?? 0,
+      drafts,
+      (message) => message.selfNote === true && shouldDraftMessage(message),
+    );
+    if (selfNotes == null) return;
+    file.selfCursor = selfNotes.cursor;
+    await saveProgress({ selfCursor: file.selfCursor }, selfNotes.added);
   } finally {
     scanning = false;
   }

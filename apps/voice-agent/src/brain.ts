@@ -28,6 +28,14 @@ import {
   lookupNaturalEvents,
   lookupSpaceWeather,
   lookupWeatherAlerts,
+  formatFitnessFocusPrompt,
+  isMedicineLogMode,
+  isMedicinePeriod,
+  loadBriefingConfig,
+  readFitnessDayPlan,
+  storeMedicineLog,
+  readNewestFitnessFocus,
+  speakFitnessPlan,
   summarizeNewsArticle,
   type BriefingController,
   type GreetingLlm,
@@ -167,6 +175,13 @@ export interface AlfredBrain {
     hackerNews(query?: { topic?: "general" | "ai" }): Promise<string>;
   };
   lights: ElgatoLightsController;
+  fitness: {
+    planSpeech(): Promise<string>;
+    focusSpeech(): Promise<string>;
+  };
+  medicine: {
+    log(args: { mode: string; period?: string; names?: string[] }): Promise<string>;
+  };
   archive?: ArchivePort;
   listDueReminders(): Promise<DueReminderSummary[]>;
 }
@@ -212,7 +227,7 @@ export async function createAlfredBrain(opts?: {
       { category: "calendar", orderedHarnessIds: ["harness.openclaw-local"] },
     ],
     systemInstructions:
-      "You are ALFRED. Follow SOUL.md, IDENTITY.md, and USER.md below. Prefer delegate_task for external actions. For calendars on this Mac, use delegate_task with category calendar and the user's own wording, including the clock time and calendar name. If they answer a calendar question, call delegate_task again instead of repeating it. Keep spoken answers concise.",
+      "You are ALFRED. Follow SOUL.md, IDENTITY.md, and USER.md below. Prefer delegate_task for external actions. For calendars on this Mac, use delegate_task with category calendar and the user's own wording, including the clock time and calendar name. If they answer a calendar question, call delegate_task again instead of repeating it. When they ask what is next on their agenda or schedule, always call delegate_task with category calendar — do not guess the first item of the day. When they ask what they are eating or training today, call get_fitness_plan. When they ask about ingredients, spices, amounts, steps, or the recipe or workout they have open, call get_fitness_focus before asking which one. Do not invent meals, workouts, ingredients, or exercise steps. When they say they took their medicine or supplements, or ask what is still untaken, call log_medicine. Do not invent products. Keep spoken answers concise.",
   };
 
   const memory = new MemoryController(config.profile.id, persistence.memorySettings);
@@ -332,6 +347,45 @@ export async function createAlfredBrain(opts?: {
   void lights.refresh().catch((err) => {
     console.warn("[brain] Elgato light discovery failed:", err);
   });
+  const fitness = {
+    async planSpeech() {
+      const timezone =
+        process.env.BRIEFING_TIMEZONE?.trim() || Intl.DateTimeFormat().resolvedOptions().timeZone;
+      const now = new Date();
+      return speakFitnessPlan(await readFitnessDayPlan(), now, timezone);
+    },
+    async focusSpeech() {
+      const focus = await readNewestFitnessFocus();
+      if (!focus) return "No FitnessAlly recipe or workout is on screen.";
+      return formatFitnessFocusPrompt(focus.card);
+    },
+  };
+  const medicine = {
+    async log(args: { mode: string; period?: string; names?: string[] }) {
+      if (!isMedicineLogMode(args.mode)) return "I couldn't update the medicine log.";
+      const rawPeriod = args.period === "mid-day" ? "midday" : args.period;
+      const period = rawPeriod && isMedicinePeriod(rawPeriod) ? rawPeriod : undefined;
+      if (rawPeriod && !period) return "Say morning, mid-day, or evening.";
+      try {
+        const config = loadBriefingConfig({ profileId });
+        const result = await storeMedicineLog(
+          {
+            mode: args.mode,
+            period,
+            names: args.names?.map((name) => name.trim()).filter(Boolean),
+          },
+          new Date(),
+          config.timezone,
+          config.dayStart,
+          { profileId: config.profileId },
+        );
+        return result.speech;
+      } catch (err) {
+        console.error("[brain] log_medicine failed:", err);
+        return "I couldn't update the medicine log just now.";
+      }
+    },
+  };
 
   const sessionId = `sess_${Date.now().toString(36)}`;
 
@@ -358,6 +412,8 @@ export async function createAlfredBrain(opts?: {
     currentTime,
     situational,
     lights,
+    fitness,
+    medicine,
     archive,
     async listDueReminders() {
       try {

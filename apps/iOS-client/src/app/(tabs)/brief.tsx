@@ -1,10 +1,8 @@
 /**
- * Brief (§12.4). What's due, and what the wider world has that might interest
- * you.
+ * Brief (§12.4). Daily Brief from the Mac, due reminders, and public suggestions.
  *
- * The two halves are visually and verbally separate on purpose: reminders are
- * things you told Alfred, discovery cards are suggestions from public sources.
- * A recommendation must never read as "Alfred remembers this about you" (§11.5).
+ * Discovery cards are recommendations from public sources — never phrased as
+ * something Alfred remembers about you (§11.5).
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import * as Linking from "expo-linking";
@@ -26,11 +24,18 @@ import {
 } from "@/components/ui";
 import { cn } from "@/lib/cn";
 import { useConnection } from "@/lib/connection";
-import { desktopErrorMessage, discoverPublic, linkPublic, setReminderStatus } from "@/lib/desktop-api";
+import {
+  desktopErrorMessage,
+  discoverPublic,
+  getBriefing,
+  getFitnessDayPlan,
+  linkPublic,
+  setReminderStatus,
+} from "@/lib/desktop-api";
 import { rediscover } from "@/lib/discovery";
 import { applyReminderStatus } from "@/lib/memory-cache";
 import { describeCopy, recallDue } from "@/lib/recall";
-import type { Memory } from "@/lib/types";
+import type { BriefingDisplaySection, FitnessDayPlan, Memory } from "@/lib/types";
 
 export default function Brief() {
   const insets = useSafeAreaInsets();
@@ -39,9 +44,12 @@ export default function Brief() {
   const discovering = useConnection((s) => s.discovering);
   const connected = useConnection((s) => Boolean(s.serverUrl));
 
-  // What's due is worked out on the Mac when it's reachable and from this
-  // phone's copy when it isn't (§11.3), so a morning without a network still
-  // tells you what you asked to be told.
+  const daily = useQuery({
+    queryKey: ["briefing", "daily"],
+    queryFn: () => getBriefing({ refresh: false }),
+    enabled: connected,
+  });
+
   const due = useQuery({
     queryKey: ["reminders", "due"],
     queryFn: () => recallDue(),
@@ -53,14 +61,22 @@ export default function Brief() {
     enabled: connected,
   });
 
+  const fitness = useQuery({
+    queryKey: ["fitness", "day-plan"],
+    queryFn: getFitnessDayPlan,
+    enabled: connected,
+  });
+
   const status = useMutation({
-    mutationFn: (input: { id: string; status: "completed" | "dismissed" }) =>
-      setReminderStatus(input.id, input.status),
+    mutationFn: (input: {
+      id: string;
+      status: "completed" | "dismissed" | "snoozed";
+      snoozedUntil?: string;
+    }) => setReminderStatus(input.id, input.status, input.snoozedUntil),
     onSuccess: (_result, input) => {
-      // Keep the copy honest: a reminder the Mac has closed shouldn't come back
-      // the next time this phone reads its own mirror.
       applyReminderStatus(input.id, input.status);
       queryClient.invalidateQueries({ queryKey: ["reminders", "due"] });
+      queryClient.invalidateQueries({ queryKey: ["briefing", "daily"] });
     },
   });
 
@@ -75,8 +91,20 @@ export default function Brief() {
   const reminders = due.data?.data.reminders ?? [];
   const fromPhone = due.data?.source === "phone";
   const candidates = suggestions.data?.candidates ?? [];
-  const hour = new Date().getHours();
-  const greeting = hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
+  const sections = daily.data?.display?.sections ?? [];
+  const greeting =
+    daily.data?.briefing?.greeting?.trim() ||
+    (new Date().getHours() < 12
+      ? "Good morning"
+      : new Date().getHours() < 18
+        ? "Good afternoon"
+        : "Good evening");
+  const whenLabel = daily.data?.display?.when || daily.data?.briefing?.date;
+
+  const refreshing =
+    daily.isFetching || due.isFetching || suggestions.isFetching || fitness.isFetching;
+  const plan = fitness.data?.plan ?? null;
+  const hasFitnessSection = sections.some((s) => s.id === "training" || s.id === "meals");
 
   return (
     <Backdrop>
@@ -87,10 +115,12 @@ export default function Brief() {
         showsVerticalScrollIndicator={false}
         refreshControl={
           <RefreshControl
-            refreshing={due.isFetching ? !due.isLoading : false}
+            refreshing={refreshing && !daily.isLoading && !due.isLoading}
             onRefresh={() => {
-              due.refetch();
-              suggestions.refetch();
+              void daily.refetch();
+              void due.refetch();
+              void suggestions.refetch();
+              void fitness.refetch();
             }}
             tintColor="#D8A54A"
           />
@@ -98,13 +128,49 @@ export default function Brief() {
       >
         <View className="px-5">
           <ConnectionPill mode={mode} busy={discovering} onPress={() => rediscover().catch(() => {})} />
-          <Display className="mt-5">{greeting}.</Display>
+          <Display className="mt-5">{greeting}</Display>
+          {whenLabel ? (
+            <Text className="mt-2 text-sm text-faint">{whenLabel}</Text>
+          ) : null}
           <Text className="mt-3 text-base leading-[22px] text-muted">
-            {reminders.length === 0
-              ? "Nothing is waiting on you today."
-              : `${reminders.length} thing${reminders.length === 1 ? "" : "s"} you asked me to bring up.`}
+            {connected
+              ? "Your Mac’s Daily Brief, what’s due, and a few public suggestions."
+              : "Showing what’s due from this phone until your Mac is back."}
           </Text>
         </View>
+
+        {connected && daily.isLoading ? <Loading /> : null}
+        {daily.isError ? (
+          <View className="mt-6 px-5">
+            <Notice testID="brief-daily-error">
+              {desktopErrorMessage(
+                daily.error,
+                "I couldn’t load the Daily Brief. Pull to refresh, or check the Mac."
+              )}
+            </Notice>
+          </View>
+        ) : null}
+
+        {connected && plan && !hasFitnessSection ? (
+          <View className="mt-8 px-5">
+            <Label>FitnessAlly</Label>
+            <FitnessPlanCard plan={plan} />
+          </View>
+        ) : null}
+
+        {sections.length > 0 ? (
+          <View className="mt-8 px-5">
+            <Label>Today</Label>
+            <View className="mt-3 space-y-3">
+              {sections.map((section, index) => (
+                <BriefSectionCard key={section.id || `section-${index}`} section={section} index={index} />
+              ))}
+            </View>
+            <Text className="mt-3 text-xs leading-5 text-faint">
+              Prefs live on the Mac → Briefing. This phone shows the latest brief.
+            </Text>
+          </View>
+        ) : null}
 
         {due.isLoading ? <Loading /> : null}
         {due.isError ? (
@@ -132,14 +198,19 @@ export default function Brief() {
             <View className="mt-3 space-y-3">
               {reminders.map((reminder, index) => (
                 <ReminderRow
-                  // A record the Mac sent without an id still gets a stable
-                  // slot; it just can't be opened or written back.
                   key={reminder.id || `reminder-${index}`}
                   memory={reminder}
                   index={index}
                   writable={!fromPhone && Boolean(reminder.id)}
                   onComplete={() => status.mutate({ id: reminder.id, status: "completed" })}
                   onDismiss={() => status.mutate({ id: reminder.id, status: "dismissed" })}
+                  onSnooze={() =>
+                    status.mutate({
+                      id: reminder.id,
+                      status: "snoozed",
+                      snoozedUntil: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+                    })
+                  }
                 />
               ))}
             </View>
@@ -209,19 +280,107 @@ export default function Brief() {
   );
 }
 
+function BriefSectionCard({
+  section,
+  index,
+}: {
+  section: BriefingDisplaySection;
+  index: number;
+}) {
+  const title =
+    section.title ||
+    ({
+      weather: "Weather",
+      agenda: "Agenda",
+      due: "Due Today",
+      open: "Still Open",
+      markets: "Markets",
+      launches: "Launches",
+      headlines: "Headlines",
+      notes: "Saved",
+      training: "Training",
+      meals: "Meals",
+    }[section.id] ?? section.id);
+
+  return (
+    <Animated.View entering={FadeInDown.delay(index * 50)}>
+      <Card testID={`brief-section-${section.id}`}>
+        <Text className="text-xs uppercase text-faint" style={{ letterSpacing: 1.4 }}>
+          {title}
+        </Text>
+        <View className="mt-2 space-y-1.5">
+          {section.lines.map((line, i) =>
+            line.newsUrl ? (
+              <Pressable
+                key={`${section.id}-${i}`}
+                onPress={() => Linking.openURL(line.newsUrl!)}
+                className="active:opacity-70"
+              >
+                <Text className="text-sm leading-5 text-brass">{line.text}</Text>
+              </Pressable>
+            ) : (
+              <Text key={`${section.id}-${i}`} className="text-sm leading-5 text-bone">
+                {line.text}
+              </Text>
+            )
+          )}
+        </View>
+      </Card>
+    </Animated.View>
+  );
+}
+
+function FitnessPlanCard({ plan }: { plan: FitnessDayPlan }) {
+  const workouts = plan.workouts.filter((w) => w.status !== "skipped");
+  const meals = [...plan.meals].filter((m) => m.status !== "skipped");
+  return (
+    <Card testID="brief-fitness-plan" className="mt-3">
+      {workouts.length > 0 ? (
+        <View className="mb-3">
+          <Text className="text-xs uppercase text-faint" style={{ letterSpacing: 1.4 }}>
+            Training
+          </Text>
+          {workouts.map((item) => (
+            <Text key={item.id} className="mt-1.5 text-sm leading-5 text-bone">
+              {item.name}
+              {item.status === "completed" ? " · done" : ""}
+            </Text>
+          ))}
+        </View>
+      ) : null}
+      {meals.length > 0 ? (
+        <View>
+          <Text className="text-xs uppercase text-faint" style={{ letterSpacing: 1.4 }}>
+            Meals
+          </Text>
+          {meals.map((meal) => (
+            <Text key={meal.id} className="mt-1.5 text-sm leading-5 text-bone">
+              {meal.mealType.charAt(0).toUpperCase() + meal.mealType.slice(1)}: {meal.name}
+            </Text>
+          ))}
+        </View>
+      ) : null}
+      {!workouts.length && !meals.length ? (
+        <Text className="text-sm text-muted">No meals or training on today’s plan.</Text>
+      ) : null}
+    </Card>
+  );
+}
+
 function ReminderRow({
   memory,
   index,
   writable,
   onComplete,
   onDismiss,
+  onSnooze,
 }: {
   memory: Memory;
   index: number;
-  /** False while this row came off the phone's copy — the Mac owns the write. */
   writable: boolean;
   onComplete: () => void;
   onDismiss: () => void;
+  onSnooze: () => void;
 }) {
   const due = memory.reminder?.dueAt ? new Date(memory.reminder.dueAt) : null;
 
@@ -246,7 +405,6 @@ function ReminderRow({
         testID={`reminder-${memory.id}`}
         className={cn(memory.overdue && "border-warn/40 bg-warn/5")}
       >
-        {/* Without an id there is no detail page to open, so don't pretend. */}
         {memory.id ? (
           <Link href={{ pathname: "/memory/[id]", params: { id: memory.id } }} asChild>
             <Pressable className="active:opacity-70">{body}</Pressable>
@@ -254,7 +412,7 @@ function ReminderRow({
         ) : (
           <View>{body}</View>
         )}
-        <View className={cn("mt-4 flex-row space-x-2", !writable && "opacity-40")}>
+        <View className={cn("mt-4 flex-row flex-wrap gap-2", !writable && "opacity-40")}>
           <Pressable
             testID={`complete-reminder-${memory.id}`}
             disabled={!writable}
@@ -262,6 +420,14 @@ function ReminderRow({
             className="rounded-full border border-ok/40 bg-ok/10 px-3 py-2 active:opacity-70"
           >
             <Text className="text-xs text-ok">Done</Text>
+          </Pressable>
+          <Pressable
+            testID={`snooze-reminder-${memory.id}`}
+            disabled={!writable}
+            onPress={onSnooze}
+            className="rounded-full border border-brass/40 bg-brass/10 px-3 py-2 active:opacity-70"
+          >
+            <Text className="text-xs text-brass">In 1 hour</Text>
           </Pressable>
           <Pressable
             testID={`dismiss-reminder-${memory.id}`}

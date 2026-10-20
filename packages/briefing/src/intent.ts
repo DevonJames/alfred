@@ -1,4 +1,17 @@
-export type BriefingIntentKind = "explicitAsk" | "affirmOffer" | "declineOffer" | "none";
+import { looksLikeAddBriefingModule } from "./modules.js";
+
+export type BriefingIntentKind =
+  | "explicitAsk"
+  | "affirmOffer"
+  | "declineOffer"
+  | "affirmNewsOffer"
+  | "declineNewsOffer"
+  | "none";
+
+export type BriefingOfferFlags = {
+  offerPending?: boolean;
+  newsOfferPending?: boolean;
+};
 
 const ASK_PATTERNS: RegExp[] = [
   /\bbrief(?:ing|ed|s)?\b/i,
@@ -30,42 +43,65 @@ export function wantsLaunches(text: string): boolean {
   return LAUNCH_PATTERNS.some((re) => re.test(text));
 }
 
-/**
- * Deterministic briefing intent. Affirm/decline only apply when an offer is pending.
- */
-export function detectBriefingIntent(
-  text: string,
-  offerPending: boolean,
-): BriefingIntentKind {
-  const trimmed = text.trim();
-  if (!trimmed) return "none";
-
-  if (ASK_PATTERNS.some((re) => re.test(trimmed))) {
-    return "explicitAsk";
+function normalizeOfferFlags(
+  offer: boolean | BriefingOfferFlags | undefined,
+): Required<BriefingOfferFlags> {
+  if (typeof offer === "boolean") {
+    return { offerPending: offer, newsOfferPending: false };
   }
+  return {
+    offerPending: Boolean(offer?.offerPending),
+    newsOfferPending: Boolean(offer?.newsOfferPending),
+  };
+}
 
-  if (!offerPending) return "none";
-
-  if (DECLINE_RE.test(trimmed) && !/\byes\b/i.test(trimmed)) {
-    // Prefer decline when user says "no" / "not now"
-    if (/^(no|nah|nope)\b/i.test(trimmed) || /\bnot\s+now\b/i.test(trimmed) || /\bskip\b/i.test(trimmed)) {
-      return "declineOffer";
-    }
-    if (DECLINE_RE.test(trimmed) && trimmed.length < 48) {
-      return "declineOffer";
-    }
+function isDecline(trimmed: string): boolean {
+  if (!DECLINE_RE.test(trimmed) || /\byes\b/i.test(trimmed)) return false;
+  if (/^(no|nah|nope)\b/i.test(trimmed) || /\bnot\s+now\b/i.test(trimmed) || /\bskip\b/i.test(trimmed)) {
+    return true;
   }
+  return DECLINE_RE.test(trimmed) && trimmed.length < 48;
+}
 
-  // Short affirmation (optionally with trailing politeness).
-  // STT often inserts commas: "Yes, please. I would."
+function isAffirm(trimmed: string): boolean {
   const normalized = trimmed
     .replace(/[.!?]+$/g, "")
     .replace(/,/g, " ")
     .replace(/\s+/g, " ")
     .trim();
-  if (normalized.length <= 48 && AFFIRM_RE.test(normalized)) {
-    return "affirmOffer";
+  return normalized.length <= 48 && AFFIRM_RE.test(normalized);
+}
+
+/**
+ * Deterministic briefing intent. Affirm/decline only apply when an offer is pending.
+ * News-offer pending is checked before the soft briefing offer.
+ */
+export function detectBriefingIntent(
+  text: string,
+  offer: boolean | BriefingOfferFlags = false,
+): BriefingIntentKind {
+  const trimmed = text.trim();
+  if (!trimmed) return "none";
+
+  // "Add rocket launches to my briefing" mentions briefing without asking to hear it.
+  if (looksLikeAddBriefingModule(trimmed)) return "none";
+
+  if (ASK_PATTERNS.some((re) => re.test(trimmed))) {
+    return "explicitAsk";
   }
+
+  const { offerPending, newsOfferPending } = normalizeOfferFlags(offer);
+
+  if (newsOfferPending) {
+    if (isDecline(trimmed)) return "declineNewsOffer";
+    if (isAffirm(trimmed)) return "affirmNewsOffer";
+    return "none";
+  }
+
+  if (!offerPending) return "none";
+
+  if (isDecline(trimmed)) return "declineOffer";
+  if (isAffirm(trimmed)) return "affirmOffer";
 
   return "none";
 }

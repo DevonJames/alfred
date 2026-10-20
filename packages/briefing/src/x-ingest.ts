@@ -1,20 +1,8 @@
-import type { XIngestDigest } from "@alfred/memory";
+import { sanitizeXIngestError, type XIngestDigest } from "@alfred/memory";
 import type { XIngestBriefing } from "./types.js";
 
-/** Playwright dumps are not speakable — keep a short reason for the briefing. */
 function sanitizeIngestError(error: string | undefined): string {
-  const raw = (error ?? "an unknown error").replace(/\s+/g, " ").trim();
-  if (!raw) return "an unknown error";
-  if (/ERR_HTTP_RESPONSE_CODE_FAILURE|page\.goto|Call log|net::ERR_/i.test(raw)) {
-    return "the page could not be loaded";
-  }
-  if (/paywall/i.test(raw)) return "a paywall";
-  if (/timeout/i.test(raw)) return "a timeout";
-  if (/no transcript/i.test(raw)) return "no transcript";
-  // First clause only; drop stack / call-log tails.
-  const short = raw.split(/ at Call log:| waiting until |:\s*Error:/i)[0]!.trim();
-  if (short.length > 80) return `${short.slice(0, 77).trim()}…`;
-  return short || "an unknown error";
+  return sanitizeXIngestError(error);
 }
 
 export function formatXIngestSpeech(digest: XIngestDigest | null | undefined): string {

@@ -21,6 +21,7 @@
         --warn: #e0c07e;
       }
       * { box-sizing: border-box; }
+      [hidden] { display: none !important; }
       body {
         margin: 0;
         min-height: 100vh;
@@ -71,6 +72,7 @@
       <h1>Time blocks</h1>
       <p class="hint">
         Name the parts of the day. A reminder placed in a block becomes an event on that block’s calendar.
+        Pick a category from the <a id="weekly-plan" href="/agenda/standard-plan">weekly plan</a>, or a custom name that hosts several. A category can sit in more than one block, and its hours are split across them.
         <a id="back" href="/agenda">Back to Agenda</a>
       </p>
       <p class="status" id="status"></p>
@@ -87,10 +89,12 @@
         return typeof alfredUrl === "function" ? alfredUrl(path) : path;
       }
       document.getElementById("back").href = api("/agenda");
+      document.getElementById("weekly-plan").href = api("/agenda/standard-plan");
 
       const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
       let calendars = [];
       let blocks = [];
+      let categories = [];
 
       function setStatus(text) {
         document.getElementById("status").textContent = text || "";
@@ -100,6 +104,7 @@
         return {
           id: "",
           name: "",
+          categoryIds: [],
           start: "09:00",
           end: "12:00",
           repeat: "weekdays",
@@ -108,11 +113,21 @@
         };
       }
 
+      function categoryName(id) {
+        return categories.find((item) => item.id === id)?.name || "";
+      }
+
       function readCard(card) {
         const days = [...card.querySelectorAll("input[data-day]:checked")].map((input) => Number(input.dataset.day));
+        const mode = card.querySelector(".name-mode");
+        const custom = !categories.length || !mode || mode.value === "custom";
+        const categoryId = custom ? "" : mode.value;
+        const checked = [...card.querySelectorAll("input[data-category]:checked")].map((input) => input.dataset.category);
         return {
           id: card.dataset.id || "",
-          name: card.querySelector(".name").value,
+          name: custom ? card.querySelector(".name").value : categoryName(categoryId),
+          categoryIds: custom ? checked : categoryId ? [categoryId] : [],
+          customName: custom && categories.length > 0,
           start: card.querySelector(".start").value,
           end: card.querySelector(".end").value,
           repeat: card.querySelector(".repeat").value,
@@ -130,10 +145,12 @@
           empty.textContent = "No time blocks yet.";
           root.appendChild(empty);
         }
-        for (const block of blocks) {
+        for (const [index, block] of blocks.entries()) {
           const card = document.createElement("div");
           card.className = "block";
           card.dataset.id = block.id || "";
+          const owned = block.categoryIds || [];
+          const single = !block.customName && owned.length === 1 && categoryName(owned[0]) === (block.name || "");
           const nameLabel = document.createElement("label");
           nameLabel.textContent = "Name";
           const name = document.createElement("input");
@@ -141,6 +158,45 @@
           name.type = "text";
           name.value = block.name || "";
           name.placeholder = "Work";
+          const mode = document.createElement("select");
+          mode.className = "name-mode";
+          for (const category of categories) {
+            const option = document.createElement("option");
+            option.value = category.id;
+            option.textContent = category.name;
+            if (single && category.id === owned[0]) option.selected = true;
+            mode.appendChild(option);
+          }
+          const customOption = document.createElement("option");
+          customOption.value = "custom";
+          customOption.textContent = "Custom name";
+          if (!single) customOption.selected = true;
+          mode.appendChild(customOption);
+          const hosts = document.createElement("div");
+          hosts.className = "days";
+          const hostsLabel = document.createElement("label");
+          hostsLabel.textContent = "Categories in this block";
+          for (const category of categories) {
+            const label = document.createElement("label");
+            const box = document.createElement("input");
+            box.type = "checkbox";
+            box.dataset.category = category.id;
+            box.checked = owned.includes(category.id);
+            label.append(box, document.createTextNode(category.name));
+            hosts.appendChild(label);
+          }
+          const syncName = () => {
+            const custom = !categories.length || mode.value === "custom";
+            mode.hidden = !categories.length;
+            name.hidden = categories.length > 0 && !custom;
+            hosts.hidden = !custom || !categories.length;
+            hostsLabel.hidden = hosts.hidden;
+          };
+          mode.addEventListener("change", () => {
+            blocks = [...root.querySelectorAll(".block")].map(readCard);
+            paint();
+          });
+          syncName();
           const times = document.createElement("div");
           times.className = "row";
           times.innerHTML = `<div><label>From</label><input class="start" type="time" value="${block.start || "09:00"}"></div><div><label>To</label><input class="end" type="time" value="${block.end || "12:00"}"></div>`;
@@ -202,21 +258,24 @@
           };
           repeat.addEventListener("change", syncDays);
           syncDays();
-          card.append(nameLabel, name, times, repeatLabel, repeat, days, calendarLabel, calendar, remove);
+          card.append(nameLabel, mode, name, hostsLabel, hosts, times, repeatLabel, repeat, days, calendarLabel, calendar, remove);
           root.appendChild(card);
         }
       }
 
       async function load() {
-        const [blockRes, calendarRes] = await Promise.all([
+        const [blockRes, calendarRes, planRes] = await Promise.all([
           fetch(api("/agenda/blocks")),
           fetch(api("/agenda/calendars")),
+          fetch(api("/agenda/standard-plan/data")),
         ]);
         const blockBody = await blockRes.json();
         const calendarBody = await calendarRes.json();
+        const planBody = await planRes.json().catch(() => ({}));
         if (calendarBody.error) setStatus(calendarBody.error);
         calendars = calendarBody.calendars || [];
-        blocks = blockBody.blocks || [];
+        blocks = (blockBody.blocks || []).map((block) => ({ ...block, categoryIds: block.categoryIds || [] }));
+        categories = planBody.categories || [];
         paint();
       }
 

@@ -7,6 +7,8 @@ export interface XSource {
   folder: string;
   note: string;
   archiveNote: string;
+  /** DigitalDocument DID for the note's rolling synthesis brief. */
+  briefDid?: string;
 }
 
 export interface XSourcesFile {
@@ -61,8 +63,21 @@ export interface XCapture {
   failure?: { reason: string; headline?: string };
 }
 
+export interface XBrowserSession {
+  loggedIn: boolean;
+  handle?: string;
+  loginOpen?: boolean;
+  blocked?: boolean;
+  profileDir?: string;
+  channel?: "chrome" | "brave" | "chromium";
+  browser?: string;
+  hint: string;
+  error?: string;
+}
+
 export interface XCaptureAdapter {
   capture(url: string): Promise<XCapture>;
+  probeSession?(): Promise<XBrowserSession>;
   close?(): Promise<void>;
 }
 
@@ -96,11 +111,27 @@ export interface XIngestItemResult {
   error?: string;
   memoryDid?: string;
   summary?: string;
+  /** Full caption text. Set only for a single-video ingest, not batch note scans. */
+  transcript?: string;
 }
 
 export interface XIngestRunResult {
   processed: XIngestItemResult[];
   sources: XSource[];
+}
+
+export interface XIngestProgress {
+  phase: "start" | "item" | "pause" | "done";
+  label: string;
+  current: number;
+  total: number;
+  percent: number;
+  note?: string;
+  url?: string;
+  status?: XIngestItemResult["status"];
+  headline?: string;
+  batch?: number;
+  batches?: number;
 }
 
 export type XIngestIntent =

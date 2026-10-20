@@ -30,6 +30,10 @@ describe("looksLikeCommitment", () => {
     expect(looksLikeObligation(bill)).toBe(true);
     expect(looksLikeCommitment(bill)).toBe(true);
     expect(shouldDraftMessage({ fromMe: true, text: bill })).toBe(true);
+    expect(shouldDraftMessage({ fromMe: false, selfNote: true, text: "i need to add unity spark to the rockhoppers prd" })).toBe(
+      true,
+    );
+    expect(shouldDraftMessage({ fromMe: false, text: "i need to add unity spark to the rockhoppers prd" })).toBe(false);
     expect(looksLikeCommitment("I have to pay that invoice by Friday")).toBe(true);
     expect(looksLikeCommitment("Maybe I need to call them tomorrow")).toBe(false);
   });
@@ -187,5 +191,24 @@ describe("group conversations", () => {
     expect(prompt).toContain("not a private chat");
     expect(prompt).toContain("Earlier message from +15551212");
     expect(prompt).not.toContain("direct conversation");
+  });
+
+  it("tells the model a note to yourself is the user's own task", () => {
+    const message: IncomingMessage = {
+      id: 2,
+      text: "i need to add unity spark to the rockhoppers prd",
+      fromMe: true,
+      selfNote: true,
+      handle: null,
+      priorText: null,
+      priorFromMe: false,
+      priorHandle: null,
+      isGroup: false,
+      chatName: null,
+      participantCount: 1,
+      sentAt: null,
+    };
+    expect(commitmentPrompt(message)).toContain("sent to themself");
+    expect(commitmentPrompt(message)).toContain("i need to add unity spark");
   });
 });

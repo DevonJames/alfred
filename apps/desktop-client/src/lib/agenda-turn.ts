@@ -5,6 +5,9 @@ import {
   agendaRewrite,
   agendaWindow,
   answerAgendaClock,
+  answerNextAgendaItem,
+  hoursPeriod,
+  hoursWeekShift,
   calendarPolicyPath,
   createEventKitGateway,
   describeAgendaView,
@@ -15,9 +18,12 @@ import {
   loadCalendarPolicy,
   looksLikeAgendaQuestion,
   looksLikeClockQuestion,
+  looksLikeHoursQuestion,
+  looksLikeNextAgendaQuestion,
   looksLikeScheduleChange,
   mergeCalendarAccess,
   parseRearrangeReply,
+  sumMatchedHours,
   prepareRearrange,
   readableCalendars,
   runCalendarTask,
@@ -32,7 +38,7 @@ import {
   type CalendarEvent,
   type CalendarRow,
 } from "@alfred/calendar-gateway";
-import { draftScheduleChange, splitAgendaNote } from "./agenda-llm.js";
+import { draftScheduleChange, selectMatchingHours, splitAgendaNote } from "./agenda-llm.js";
 import { conversationForSchedule, noteConversationTurn } from "./conversation-thread.js";
 import { getTextSession } from "./text-session.js";
 
@@ -243,20 +249,91 @@ async function produceAgendaReply(input: {
       writable: calendar.access === "write",
     })),
   );
+  const contextEvents = scheduleEvents.map((event) => ({
+    title: event.title,
+    start: event.start,
+    end: event.end,
+    allDay: event.allDay,
+    calendarTitle: event.calendarTitle,
+    sourceTitle: scheduleCalendars.find((calendar) => calendar.id === event.calendarId)?.sourceTitle ?? "",
+  }));
+  const wallNow = new Date();
   const clockAnswer = answerAgendaClock({
     text,
-    now: new Date(),
+    now: wallNow,
     timeZone: board.timeZone,
-    events: scheduleEvents.map((event) => ({
-      title: event.title,
-      start: event.start,
-      end: event.end,
-      allDay: event.allDay,
-      calendarTitle: event.calendarTitle,
-      sourceTitle: scheduleCalendars.find((calendar) => calendar.id === event.calendarId)?.sourceTitle ?? "",
-    })),
+    events: contextEvents,
   });
   if (clockAnswer) return clockAnswer;
+
+  if (looksLikeNextAgendaQuestion(text)) {
+    let nextEvents = contextEvents;
+    // Day view at night only has today's items; look ahead a week so "next" can land tomorrow.
+    if (input.view === "today" || board.dayOffset !== 0) {
+      const week = await agendaBoard("week", wallNow);
+      nextEvents = week.calendars.flatMap((calendar) =>
+        calendar.events.map((event) => ({
+          title: event.title,
+          start: event.start,
+          end: event.end,
+          allDay: event.allDay,
+          calendarTitle: calendar.title,
+          sourceTitle: calendar.sourceTitle,
+        })),
+      );
+    }
+    const nextAnswer = answerNextAgendaItem({
+      text,
+      now: wallNow,
+      timeZone: board.timeZone,
+      events: nextEvents,
+    });
+    if (nextAnswer) return nextAnswer;
+  }
+
+  if (looksLikeHoursQuestion(text)) {
+    const thread = conversationForSchedule();
+    const shift = hoursWeekShift(text, thread);
+    let source = board;
+    if (shift !== null && !(shift === 0 && input.view === "week" && !/\b(next|last) week\b/i.test(text))) {
+      const weekFocus = shift === 0 ? new Date() : new Date(Date.now() + shift * 86_400_000);
+      source = await agendaBoard("week", weekFocus);
+    }
+    const events = source.calendars.flatMap((calendar) =>
+      calendar.events.map((event) => ({
+        id: event.id,
+        title: event.title,
+        start: event.start,
+        end: event.end,
+        allDay: event.allDay,
+        calendarTitle: calendar.title,
+        sourceTitle: calendar.sourceTitle,
+      })),
+    );
+    const fromAsk = hoursPeriod(text);
+    const period = fromAsk === "then" ? hoursPeriod(thread) : fromAsk;
+    const picked = await selectMatchingHours({
+      question: thread || text,
+      timeZone: source.timeZone,
+      rangeLabel: source.rangeLabel,
+      todayLabel: new Intl.DateTimeFormat("en-US", {
+        timeZone: source.timeZone,
+        weekday: "long",
+        month: "long",
+        day: "numeric",
+      }).format(new Date()),
+      events,
+    });
+    if (picked) {
+      return sumMatchedHours({
+        timeZone: source.timeZone,
+        label: picked.label,
+        period: period === "then" ? "this week" : period,
+        events,
+        ids: picked.ids,
+      });
+    }
+  }
 
   const stance = scheduleReplyStance(text);
   const pending = currentProposal();

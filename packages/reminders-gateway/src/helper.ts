@@ -152,6 +152,7 @@ export interface RemindersGateway {
   items(): Promise<AppleReminder[]>;
   create(input: { listId: string; title: string; notes?: string; due?: string | null }): Promise<AppleReminder>;
   setDue(reminderId: string, due: string | null): Promise<AppleReminder>;
+  setTitle(reminderId: string, title: string): Promise<AppleReminder>;
   complete(reminderId: string): Promise<AppleReminder>;
 }
 
@@ -179,6 +180,13 @@ export function createRemindersGateway(policyPath: string): RemindersGateway {
     },
     async setDue(reminderId, due) {
       const payload = (await callHelper({ op: "due", reminderId, due: due ?? "", ...policy })) as {
+        reminder?: AppleReminder;
+      };
+      if (!payload.reminder) throw new RemindersHelperError("Reminders helper returned no reminder.", "empty");
+      return payload.reminder;
+    },
+    async setTitle(reminderId, title) {
+      const payload = (await callHelper({ op: "title", reminderId, title, ...policy })) as {
         reminder?: AppleReminder;
       };
       if (!payload.reminder) throw new RemindersHelperError("Reminders helper returned no reminder.", "empty");

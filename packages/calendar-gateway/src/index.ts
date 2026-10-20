@@ -34,10 +34,19 @@ export type { BriefingAgendaEvent } from "./briefing-events.js";
 export {
   agendaWindow,
   answerAgendaClock,
+  answerNextAgendaItem,
   describeAgendaView,
+  hoursPeriod,
+  hoursWeekShift,
   looksLikeAgendaQuestion,
   looksLikeClockQuestion,
+  looksLikeHoursQuestion,
+  looksLikeNextAgendaQuestion,
+  parseHoursPick,
+  pickNextAgendaEvent,
+  sumMatchedHours,
   relativeDayLabel,
+  timedAgendaEvents,
 } from "./agenda.js";
 export type { AgendaContextCalendar, AgendaContextEvent, AgendaView, AgendaWindow } from "./agenda.js";
 export { runCalendarTask } from "./run.js";

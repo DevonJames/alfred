@@ -1,12 +1,16 @@
 import type { Context } from "hono";
 import {
+  attachNotePhoto,
   createNoteFromAudio,
   getAudioNote,
   getNoteAudioChunk,
   getNoteAudioMeta,
+  getNotePhotoChunk,
+  getNotePhotoMeta,
   listAudioNotes,
   queueNoteFromAudio,
   readAudioNoteBytes,
+  readNotePhotoBytes,
   retryNoteDetails,
   retryNoteTranscript,
 } from "./service.js";
@@ -201,6 +205,73 @@ export async function handleAudioMeta(c: Context) {
   const meta = await getNoteAudioMeta(id, NOTE_UPLOAD_CHUNK_BYTES);
   if (!meta) return c.json({ error: "Audio not found" }, 404);
   return c.json({ audio: { ...meta, chunkSize: NOTE_UPLOAD_CHUNK_BYTES } });
+}
+
+export async function handleAttachPhoto(c: Context) {
+  try {
+    const id = c.req.param("id") ?? "";
+    const body = (await c.req.json()) as {
+      image?: string;
+      filename?: string;
+      mimeType?: string;
+      offsetSeconds?: number;
+      capturedAt?: string;
+    };
+    if (!body.image || typeof body.image !== "string") {
+      return c.json({ error: "image is required" }, 400);
+    }
+    const bytes = Buffer.from(body.image, "base64");
+    if (!bytes.length) return c.json({ error: "image is required" }, 400);
+    const offsetRaw = Number(body.offsetSeconds);
+    const photo = await attachNotePhoto({
+      noteId: id,
+      bytes,
+      filename: body.filename || `note-still-${Date.now()}.jpg`,
+      mimeType: body.mimeType,
+      offsetSeconds: Number.isFinite(offsetRaw) ? offsetRaw : 0,
+      capturedAt: typeof body.capturedAt === "string" ? body.capturedAt : undefined,
+    });
+    return c.json({ photo });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    const status = /not found/i.test(message) ? 404 : /required|larger than/i.test(message) ? 400 : 500;
+    return c.json({ error: message }, status);
+  }
+}
+
+export async function handlePhoto(c: Context) {
+  const id = c.req.param("id") ?? "";
+  const photoId = c.req.param("photoId") ?? "";
+  const file = await readNotePhotoBytes(id, photoId);
+  if (!file) return c.json({ error: "Photo not found" }, 404);
+  const safeName = file.filename.replace(/[\r\n"]/g, "");
+  return c.body(Uint8Array.from(file.bytes), 200, {
+    "Content-Type": file.mimeType,
+    "Content-Disposition": `inline; filename="${safeName}"`,
+    "Cache-Control": "private, max-age=3600",
+  });
+}
+
+export async function handlePhotoMeta(c: Context) {
+  const id = c.req.param("id") ?? "";
+  const photoId = c.req.param("photoId") ?? "";
+  const meta = await getNotePhotoMeta(id, photoId, NOTE_UPLOAD_CHUNK_BYTES);
+  if (!meta) return c.json({ error: "Photo not found" }, 404);
+  return c.json({ photo: { ...meta, chunkSize: NOTE_UPLOAD_CHUNK_BYTES } });
+}
+
+export async function handlePhotoChunk(c: Context) {
+  const id = c.req.param("id") ?? "";
+  const photoId = c.req.param("photoId") ?? "";
+  const index = Number(c.req.param("index"));
+  try {
+    const chunk = await getNotePhotoChunk(id, photoId, index, NOTE_UPLOAD_CHUNK_BYTES);
+    if (!chunk) return c.json({ error: "Photo not found" }, 404);
+    return c.json({ chunk });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return c.json({ error: message }, /invalid/i.test(message) ? 400 : 500);
+  }
 }
 
 export async function handleAudioChunk(c: Context) {

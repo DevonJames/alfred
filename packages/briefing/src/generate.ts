@@ -9,7 +9,11 @@ import { BriefingCache } from "./cache.js";
 import { formatBriefingForDisplay } from "./display.js";
 import { formatBriefingAsMarkdown, formatBriefingForSpeech } from "./format.js";
 import { buildGreeting, type GreetingLlm } from "./greeting.js";
-import { fetchLaunches, formatLaunchesSpeech } from "./launches.js";
+import { buildHeadlineOffer } from "./headline-offer.js";
+import { runEnabledBriefingModules } from "./modules.js";
+// Built-in rocket launches are parked so a user-added module can supply them.
+// Restore by uncommenting the fetchLaunches import and the call below.
+// import { fetchLaunches, formatLaunchesSpeech } from "./launches.js";
 import {
   fetchCrypto,
   fetchIndex,
@@ -30,6 +34,8 @@ import {
 import type { BriefingData, BriefingPayload } from "./types.js";
 import { fetchWeather, formatWeatherSpeech } from "./weather.js";
 import { formatAgendaSpeech, type BriefingAgendaSlice } from "./agenda.js";
+import { formatFitnessSpeech, type FitnessDayPlan } from "./fitness.js";
+import { formatMedicineSpeech, type MedicineItem } from "./medicine.js";
 import { toXIngestBriefing } from "./x-ingest.js";
 
 export interface GenerateBriefingOptions {
@@ -45,6 +51,10 @@ export interface GenerateBriefingOptions {
   includeLaunches?: boolean;
   /** Today's events from calendars selected under Settings → Briefing → Agenda. */
   agendaEvents?: (now: Date) => Promise<BriefingAgendaSlice>;
+  /** Today's FitnessAlly snapshot, already filtered to the briefing day. */
+  fitnessPlan?: (now: Date) => Promise<FitnessDayPlan | null>;
+  /** Untaken morning medicine. Ignored unless config.includeMedicineMorning is set. */
+  medicineItems?: (now: Date) => Promise<MedicineItem[]>;
 }
 
 export async function generateBriefing(
@@ -66,6 +76,24 @@ export async function generateBriefing(
       }
       const agenda = await readAgenda(opts.agendaEvents, now);
       applyAgenda(hit.briefing, agenda, config.timezone);
+      const fitness = await readFitness(opts.fitnessPlan, now);
+      applyFitness(hit.briefing, fitness);
+      const medicine = config.includeMedicineMorning
+        ? await readMedicine(opts.medicineItems, now)
+        : null;
+      applyMedicine(hit.briefing, medicine);
+      hit.briefing.modules = await runEnabledBriefingModules({
+        llm: opts.llm,
+        profileId: config.profileId,
+      });
+      if (hit.briefing.news.length) {
+        hit.briefing.headlineOffer = await buildHeadlineOffer({
+          llm: opts.llm,
+          count: hit.briefing.news.length,
+        });
+      } else {
+        hit.briefing.headlineOffer = null;
+      }
       hit.speech = formatBriefingForSpeech(hit.briefing, { now, timezone: config.timezone });
       hit.markdown = formatBriefingAsMarkdown(hit.briefing, { timezone: config.timezone });
       hit.display = formatBriefingForDisplay(hit.briefing, { now, timezone: config.timezone });
@@ -105,8 +133,8 @@ export async function generateBriefing(
     llm: opts.llm,
   });
 
-  const [launches, crypto, headlines, memoryReminders, taskReminders] = await Promise.all([
-    includeLaunches ? fetchLaunches(config.launchLocationIds) : Promise.resolve([]),
+  const [crypto, headlines, memoryReminders, taskReminders] = await Promise.all([
+    // includeLaunches ? fetchLaunches(config.launchLocationIds) : Promise.resolve([]),
     config.includeCrypto ? fetchCrypto(config.cryptoId) : Promise.resolve(null),
     fetchNewsHeadlines(config.newsSources),
     opts.taskReminders
@@ -149,6 +177,10 @@ export async function generateBriefing(
     ? toXIngestBriefing(await loadXIngestDigest(config.profileId, dayKey, config.cacheDir))
     : null;
   const agenda = await readAgenda(opts.agendaEvents, now);
+  const fitness = await readFitness(opts.fitnessPlan, now);
+  const medicine = config.includeMedicineMorning
+    ? await readMedicine(opts.medicineItems, now)
+    : null;
 
   const data: BriefingData = {
     greeting,
@@ -156,8 +188,8 @@ export async function generateBriefing(
     dayKey,
     weather,
     weatherText,
-    launches,
-    launchesText: formatLaunchesSpeech(launches),
+    launches: [],
+    launchesText: null,
     markets: {
       crypto: config.includeCrypto ? crypto : null,
       cryptoId: config.cryptoId,
@@ -170,6 +202,9 @@ export async function generateBriefing(
     marketsText,
     news: headlines,
     newsText: formatNewsSpeech(headlines, { inviteFollowUp: true }) || null,
+    headlineOffer: headlines.length
+      ? await buildHeadlineOffer({ llm: opts.llm, count: headlines.length })
+      : null,
     xIngest,
     xIngestText: xIngest?.speech ?? null,
     reminders: memoryReminders,
@@ -180,6 +215,12 @@ export async function generateBriefing(
     generated: now.toISOString(),
   };
   applyAgenda(data, agenda, config.timezone);
+  applyFitness(data, fitness);
+  applyMedicine(data, medicine);
+  data.modules = await runEnabledBriefingModules({
+    llm: opts.llm,
+    profileId: config.profileId,
+  });
 
   const payload: BriefingPayload = {
     briefing: data,
@@ -224,4 +265,50 @@ function applyAgenda(
   }
   data.agenda = agenda.events;
   data.agendaText = formatAgendaSpeech(agenda.events, timezone) ?? "Nothing on your agenda today.";
+}
+
+async function readFitness(
+  load: GenerateBriefingOptions["fitnessPlan"],
+  now: Date,
+): Promise<FitnessDayPlan | null> {
+  if (!load) return null;
+  try {
+    return await load(now);
+  } catch (err) {
+    console.warn("[briefing] fitness", err instanceof Error ? err.message : err);
+    return null;
+  }
+}
+
+function applyFitness(data: BriefingData, plan: FitnessDayPlan | null): void {
+  if (!plan) {
+    delete data.fitness;
+    data.fitnessText = null;
+    return;
+  }
+  data.fitness = plan;
+  data.fitnessText = formatFitnessSpeech(plan);
+}
+
+async function readMedicine(
+  load: GenerateBriefingOptions["medicineItems"],
+  now: Date,
+): Promise<MedicineItem[] | null> {
+  if (!load) return null;
+  try {
+    return await load(now);
+  } catch (err) {
+    console.warn("[briefing] medicine", err instanceof Error ? err.message : err);
+    return null;
+  }
+}
+
+function applyMedicine(data: BriefingData, items: MedicineItem[] | null): void {
+  if (!items?.length) {
+    delete data.medicine;
+    data.medicineText = null;
+    return;
+  }
+  data.medicine = items;
+  data.medicineText = formatMedicineSpeech(items);
 }

@@ -40,6 +40,8 @@ export interface LiveKitRoomSessionOptions {
   media: LiveKitMediaBridge;
   /** When set, only subscribe to this remote participant identity. */
   targetIdentity?: string;
+  /** Remote participant identities, updated as peers join and leave. */
+  onParticipants?: (identities: string[]) => void;
   logger?: Pick<Console, "log" | "warn" | "error" | "debug">;
 }
 
@@ -199,10 +201,12 @@ export class LiveKitRoomSession {
       room.on(RoomEvent.ParticipantConnected, (p: RemoteParticipant) => {
         this.log.log(`[livekit] participant connected: ${p.identity}`);
         this.vad.reset();
+        this.publishParticipants();
       });
       room.on(RoomEvent.ParticipantDisconnected, (p: RemoteParticipant) => {
         this.log.log(`[livekit] participant disconnected: ${p.identity}`);
         this.vad.reset();
+        this.publishParticipants();
       });
       room.on(
         RoomEvent.DataReceived,
@@ -232,6 +236,7 @@ export class LiveKitRoomSession {
           }
         }
       }
+      this.publishParticipants();
 
       this.reconnectAttempt = 0;
     } catch (err) {
@@ -356,6 +361,13 @@ export class LiveKitRoomSession {
     }
   }
 
+  private publishParticipants(): void {
+    const identities = this.room
+      ? [...this.room.remoteParticipants.values()].map((participant) => participant.identity)
+      : [];
+    this.opts.onParticipants?.(identities);
+  }
+
   private async teardownRoom(opts: { disposeNative: boolean }): Promise<void> {
     this.clearMediaUnsubs();
     this.opts.media.reset();
@@ -377,6 +389,7 @@ export class LiveKitRoomSession {
       this.audioSource = undefined;
       this.localTrack = undefined;
       this.room = undefined;
+      this.publishParticipants();
       if (opts.disposeNative) {
         try {
           await dispose();

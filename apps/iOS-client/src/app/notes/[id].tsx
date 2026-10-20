@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAudioPlayer, useAudioPlayerStatus } from "expo-audio";
+import { Image } from "expo-image";
 import { router, useLocalSearchParams } from "expo-router";
 import { ChevronLeft, Pause, Play } from "lucide-react-native";
 import { useEffect, useState, type ReactNode } from "react";
@@ -26,6 +27,8 @@ import {
 } from "@/lib/desktop-api";
 import { prepareNotePlaybackSession } from "@/lib/audio";
 import { playableNoteAudio } from "@/lib/note-audio";
+import { visibleNotePhoto } from "@/lib/note-photo";
+import type { AudioNotePhoto } from "@/lib/types";
 
 export default function NoteDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -41,8 +44,13 @@ export default function NoteDetail() {
     queryKey: ["notes", id],
     queryFn: () => getAudioNote(id!),
     enabled: Boolean(id),
-    refetchInterval: (query) =>
-      query.state.data?.processingStatus === "processing" ? 4000 : false,
+    refetchInterval: (query) => {
+      const data = query.state.data;
+      if (!data) return false;
+      if (data.processingStatus === "processing") return 4000;
+      if (data.photos?.some((photo) => photo.analysisStatus === "pending")) return 4000;
+      return false;
+    },
   });
 
   useEffect(() => {
@@ -138,6 +146,32 @@ export default function NoteDetail() {
               </Pressable>
               {playError ? <Notice>{playError}</Notice> : null}
 
+              {data.photos?.length ? (
+                <Box title="Stills" wide>
+                  <NoteStills
+                    noteId={data.id}
+                    photos={data.photos}
+                    onSeek={async (offset) => {
+                      try {
+                        if (!loadedUri) {
+                          setPlayBusy(true);
+                          const source = await playableNoteAudio(data.id);
+                          await prepareNotePlaybackSession();
+                          player.replace({ uri: source.uri });
+                          setLoadedUri(source.uri);
+                        }
+                        await player.seekTo(offset);
+                        player.play();
+                      } catch (err) {
+                        setPlayError(err instanceof Error ? err.message : "Couldn't play that recording.");
+                      } finally {
+                        setPlayBusy(false);
+                      }
+                    }}
+                  />
+                </Box>
+              ) : null}
+
               <View style={styles.grid}>
                 <Box title="Summary" wide>
                   <Text style={styles.copy}>{data.summary || "No summary yet."}</Text>
@@ -212,6 +246,64 @@ function Box({
   );
 }
 
+function formatOffset(seconds: number): string {
+  const total = Math.max(0, Math.round(seconds || 0));
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return `${m}:${s.toString().padStart(2, "0")}`;
+}
+
+function NoteStills({
+  noteId,
+  photos,
+  onSeek,
+}: {
+  noteId: string;
+  photos: AudioNotePhoto[];
+  onSeek: (offsetSeconds: number) => Promise<void>;
+}) {
+  const [uris, setUris] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      for (const photo of photos) {
+        try {
+          const next = await visibleNotePhoto(noteId, photo.id);
+          if (!cancelled) setUris((current) => ({ ...current, [photo.id]: next.uri }));
+        } catch {
+          // stills still show analysis even if the image can't download yet
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [noteId, photos]);
+
+  return (
+    <View style={styles.stills}>
+      {photos.map((photo) => {
+        const status =
+          photo.analysisStatus === "completed"
+            ? photo.analysis?.summary || "Analyzed"
+            : photo.analysisStatus === "failed"
+              ? photo.analysisError || "Analysis failed"
+              : "Analyzing…";
+        return (
+          <Pressable key={photo.id} onPress={() => onSeek(photo.offsetSeconds)} style={styles.still}>
+            {uris[photo.id] ? <Image source={{ uri: uris[photo.id] }} style={styles.stillImage} /> : null}
+            <Text style={styles.stillMeta}>
+              {formatOffset(photo.offsetSeconds)} · {status}
+            </Text>
+            {photo.analysis?.fullText ? <Text style={styles.copy}>{photo.analysis.fullText}</Text> : null}
+          </Pressable>
+        );
+      })}
+    </View>
+  );
+}
+
 function Bullets({ items, empty }: { items: string[]; empty: string }) {
   if (!items.length) return <Text style={styles.faint}>{empty}</Text>;
   return (
@@ -259,4 +351,8 @@ const styles = StyleSheet.create({
   actions: { flexDirection: "row", gap: 10, marginTop: 8 },
   action: { borderWidth: 1, borderColor: LINE, paddingHorizontal: 12, paddingVertical: 8 },
   actionText: { color: BRASS, fontSize: 13, letterSpacing: 0.4, textTransform: "uppercase" },
+  stills: { gap: 12 },
+  still: { gap: 8 },
+  stillImage: { width: "100%", height: 220, backgroundColor: "#111317" },
+  stillMeta: { color: FAINT, fontSize: 12, letterSpacing: 0.4, textTransform: "uppercase" },
 });

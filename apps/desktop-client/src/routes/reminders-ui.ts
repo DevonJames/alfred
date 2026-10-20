@@ -15,6 +15,7 @@ import {
   approveProposal,
   completeReminder,
   dismissProposal,
+  renameReminder,
   rescheduleReminder,
   listOpenReminders,
   listProposals,
@@ -95,6 +96,18 @@ remindersUiRouter.post("/due", async (c) => {
   if (due && !/^\d{4}-\d{2}-\d{2}$/.test(due)) return c.json({ error: "Choose a day" }, 400);
   try {
     const reminder = await rescheduleReminder(body.id, due || null);
+    return c.json({ ok: true, reminder });
+  } catch (err) {
+    return c.json({ error: err instanceof Error ? err.message : String(err) }, 400);
+  }
+});
+
+remindersUiRouter.post("/title", async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as { id?: unknown; title?: unknown };
+  if (typeof body.id !== "string" || !body.id.trim()) return c.json({ error: "Missing id" }, 400);
+  if (typeof body.title !== "string" || !body.title.trim()) return c.json({ error: "A reminder needs a name." }, 400);
+  try {
+    const reminder = await renameReminder(body.id, body.title);
     return c.json({ ok: true, reminder });
   } catch (err) {
     return c.json({ error: err instanceof Error ? err.message : String(err) }, 400);

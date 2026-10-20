@@ -22,6 +22,7 @@
     query: "",
     queryB: "",
     queryDate: "",
+    loadStats: "",
     bridge: null,
     matchA: new Set(),
     matchB: new Set(),
@@ -822,7 +823,17 @@
     state.sim = buildSimulation(data.nodes, data.links);
     state.nodes = state.sim.nodes;
     state.links = state.sim.links;
+    updateShownStats();
     state.raf = requestAnimationFrame(loop);
+  }
+
+  function updateShownStats() {
+    if (!elStats || !state.loadStats) return;
+    const shown = state.nodes.length;
+    const total = state.raw?.nodes?.length || 0;
+    const extra =
+      shown === total ? `${shown} shown` : `${shown} shown of ${total}`;
+    elStats.textContent = `${state.loadStats}\n${extra}`;
   }
 
   function render() {
@@ -943,7 +954,11 @@
           <div>
             <div class="detail-label-row">
               <label for="edit-text">Details</label>
-              <button type="button" class="detail-expand" id="btn-expand-details">Expand</button>
+              <span>
+                <button type="button" class="detail-expand" id="btn-copy-details">Copy</button>
+                <button type="button" class="detail-expand" id="btn-download-details">Download</button>
+                <button type="button" class="detail-expand" id="btn-expand-details">Expand</button>
+              </span>
             </div>
             <textarea id="edit-text" name="text">${escapeHtml(String(text))}</textarea>
           </div>
@@ -964,6 +979,7 @@
               : ""
           }
           <div class="detail-actions">
+            <button type="button" id="btn-talk">Talk</button>
             <button type="button" id="btn-connections">${
               state.egoId === id ? "Show full graph" : "Show connections"
             }</button>
@@ -991,6 +1007,9 @@
           )
           .join("")}</ul>`,
       ].join("");
+      document.getElementById("btn-talk")?.addEventListener("click", () => {
+        talkAboutNode(id, name);
+      });
       document.getElementById("btn-center")?.addEventListener("click", () => {
         const node = state.nodes.find((n) => n.id === id);
         if (!node) return;
@@ -1169,6 +1188,12 @@
       elDetailBody.querySelectorAll(".neighbors li").forEach((li) => {
         li.addEventListener("click", () => selectNode(li.getAttribute("data-id")));
       });
+      document.getElementById("btn-copy-details")?.addEventListener("click", () => {
+        copyFieldText(document.getElementById("edit-text"), document.getElementById("btn-copy-details"));
+      });
+      document.getElementById("btn-download-details")?.addEventListener("click", () => {
+        downloadFieldText(document.getElementById("edit-text"));
+      });
       document.getElementById("btn-expand-details")?.addEventListener("click", () => {
         openDetailOverlay(name);
       });
@@ -1199,6 +1224,128 @@
   const elOverlayPhoto = document.getElementById("detail-overlay-photo");
   const elOverlayImg = document.getElementById("detail-overlay-img");
   const elOverlayFile = document.getElementById("detail-overlay-file");
+
+  async function copyFieldText(field, btn) {
+    const text = field?.value || "";
+    if (!text || !btn) return;
+    let copied = false;
+    try {
+      await navigator.clipboard.writeText(text);
+      copied = true;
+    } catch {
+      const start = field.selectionStart;
+      const end = field.selectionEnd;
+      field.focus();
+      field.select();
+      try {
+        copied = document.execCommand("copy");
+      } catch {
+        copied = false;
+      }
+      if (typeof start === "number" && typeof end === "number") field.setSelectionRange(start, end);
+    }
+    const previous = btn.textContent;
+    btn.textContent = copied ? "Copied" : "Copy failed";
+    window.setTimeout(() => {
+      if (btn.isConnected) btn.textContent = previous;
+    }, 1400);
+  }
+
+  function safeFilename(name, ext) {
+    const base = String(name || "memory")
+      .replace(/[<>:"/\\|?*\u0000-\u001f]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 80);
+    const stem = base || "memory";
+    const suffix = ext.startsWith(".") ? ext : `.${ext}`;
+    return stem.toLowerCase().endsWith(suffix) ? stem : `${stem}${suffix}`;
+  }
+
+  function txtFilename(name) {
+    return safeFilename(name, ".txt");
+  }
+
+  async function downloadTextFile(text, suggestedName, mimeType) {
+    if (!text) return;
+    const mime = mimeType || "text/plain;charset=utf-8";
+    if (typeof window.showSaveFilePicker === "function") {
+      try {
+        const ext = suggestedName.includes(".") ? `.${suggestedName.split(".").pop()}` : ".txt";
+        const handle = await window.showSaveFilePicker({
+          suggestedName,
+          types: [{ description: "Text file", accept: { [mime.split(";")[0]]: [ext] } }],
+        });
+        const writable = await handle.createWritable();
+        await writable.write(text);
+        await writable.close();
+        return;
+      } catch (err) {
+        if (err && err.name === "AbortError") return;
+      }
+    }
+    const blob = new Blob([text], { type: mime });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = suggestedName;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  function requestTalk(name) {
+    const payload = { channel: "alfred.shell", type: "talk-focus", name: name || "this memory" };
+    if (window.parent !== window && typeof window.alfredRequestShellNavigate === "function") {
+      window.alfredRequestShellNavigate("voice");
+      window.parent.postMessage(payload, window.location.origin);
+      return;
+    }
+    location.href = apiUrl("/#voice");
+  }
+
+  async function talkAboutNode(id, name) {
+    const status = document.getElementById("edit-status") || document.getElementById("report-status");
+    const btn = document.getElementById("btn-talk") || document.getElementById("report-talk");
+    if (btn) btn.disabled = true;
+    if (status) {
+      status.classList.remove("err", "ok");
+      status.textContent = "Opening Talk…";
+    }
+    try {
+      const res = await fetch(apiUrl("/memory/graph/talk"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const hint =
+          res.status === 404
+            ? " API missing — restart the desktop server, then try again."
+            : "";
+        throw new Error((data.message || data.error || "Could not open Talk") + hint);
+      }
+      requestTalk(data.name || name);
+    } catch (err) {
+      if (status) {
+        status.classList.add("err");
+        status.textContent = err.message || String(err);
+      }
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  }
+
+  async function downloadFieldText(field) {
+    const text = field?.value || "";
+    if (!text) return;
+    await downloadTextFile(
+      text,
+      txtFilename(document.getElementById("detail-title")?.textContent),
+    );
+  }
 
   function syncDetailOverlay(title) {
     const editText = document.getElementById("edit-text");
@@ -1268,11 +1415,12 @@
       links: (data.links || []).map((l) => ({ ...l })),
     };
     const s = data.stats;
-    elStats.textContent =
+    state.loadStats =
       `${s.nodes} nodes · ${s.links} links\n` +
       `${s.packagesOnDisk} packages on disk · ${s.recordsIndexed} indexed` +
       (s.rebuilt ? " · rebuilt" : "") +
       `\n${data.root}`;
+    elStats.textContent = state.loadStats;
     if (elEmptyDiag) {
       const sampleTypes = [...new Set((data.nodes || []).slice(0, 40).map((n) => n.type))].join(
         ", ",
@@ -1280,6 +1428,32 @@
       elEmptyDiag.textContent = `root: ${data.root}\npackagesOnDisk: ${s.packagesOnDisk}\nrecordsIndexed: ${s.recordsIndexed}\nnodes: ${s.nodes}\nsampleTypes: ${sampleTypes || "(none)"}`;
     }
     render();
+    openLinkedNode();
+  }
+
+  function linkedNodeId() {
+    try {
+      return new URLSearchParams(location.search).get("node")?.trim() || "";
+    } catch {
+      return "";
+    }
+  }
+
+  function centerNode(id) {
+    const node = state.nodes.find((n) => n.id === id);
+    if (!node || !Number.isFinite(node.x) || !Number.isFinite(node.y)) return false;
+    state.transform.k = 1.8;
+    state.transform.x = window.innerWidth / 2 - node.x * state.transform.k;
+    state.transform.y = window.innerHeight / 2 - node.y * state.transform.k;
+    draw();
+    return true;
+  }
+
+  function openLinkedNode() {
+    const id = linkedNodeId();
+    if (!id) return;
+    selectNode(id);
+    if (!centerNode(id)) window.setTimeout(() => centerNode(id), 700);
   }
 
   // Pointer interactions
@@ -1405,6 +1579,166 @@
   elQ2?.addEventListener("input", onSearchInput);
   elQDate?.addEventListener("input", onSearchInput);
 
+  const elReportOverlay = document.getElementById("report-overlay");
+  const elReportScope = document.getElementById("report-scope");
+  const elReportCompose = document.getElementById("report-compose");
+  const elReportPrompt = document.getElementById("report-prompt");
+  const elReportStatus = document.getElementById("report-status");
+  const elReportResult = document.getElementById("report-result");
+  const elReportBody = document.getElementById("report-body");
+  const elReportGenerate = document.getElementById("report-generate");
+  let lastReport = null;
+
+  function reportScopeText() {
+    const n = state.nodes.length;
+    const bits = [];
+    if (state.egoId) bits.push("connections view");
+    if (state.query.trim()) bits.push(`from “${state.query.trim()}”`);
+    if (state.queryB.trim()) bits.push(`to “${state.queryB.trim()}”`);
+    if (state.queryDate.trim()) bits.push(`date “${state.queryDate.trim()}”`);
+    const lens = bits.length ? bits.join(" · ") : "the current graph view";
+    return `${n} memor${n === 1 ? "y" : "ies"} currently shown (${lens}). All of them will be used.`;
+  }
+
+  function openReportOverlay() {
+    if (!elReportOverlay) return;
+    lastReport = null;
+    if (elReportCompose) elReportCompose.hidden = false;
+    if (elReportResult) elReportResult.hidden = true;
+    if (elReportBody) elReportBody.textContent = "";
+    if (elReportStatus) {
+      elReportStatus.textContent = "";
+      elReportStatus.classList.remove("err");
+    }
+    if (elReportScope) elReportScope.textContent = reportScopeText();
+    elReportOverlay.hidden = false;
+    requestAnimationFrame(() => {
+      elReportOverlay.classList.add("open");
+      elReportPrompt?.focus();
+    });
+  }
+
+  function closeReportOverlay() {
+    if (!elReportOverlay) return;
+    elReportOverlay.classList.remove("open");
+    elReportOverlay.hidden = true;
+  }
+
+  function showReportResult(data) {
+    lastReport = data;
+    if (elReportCompose) elReportCompose.hidden = true;
+    if (elReportResult) elReportResult.hidden = false;
+    if (elReportBody) elReportBody.textContent = data.markdown || "";
+    const title = document.getElementById("report-overlay-title");
+    if (title) title.textContent = data.title || "Report from this view";
+    if (elReportScope) {
+      const extra = data.truncated
+        ? ` Used ${data.usedCount} of ${data.requestedCount} memories.`
+        : ` Linked ${data.linkedCount} memories.`;
+      elReportScope.textContent = reportScopeText() + extra;
+    }
+  }
+
+  async function generateGraphReport() {
+    const nodeIds = state.nodes.map((n) => n.id).filter(Boolean);
+    if (!nodeIds.length) {
+      if (elReportStatus) {
+        elReportStatus.classList.add("err");
+        elReportStatus.textContent = "No memories are shown in this view.";
+      }
+      return;
+    }
+    const prompt = elReportPrompt?.value || "";
+    if (elReportGenerate) elReportGenerate.disabled = true;
+    if (elReportStatus) {
+      elReportStatus.classList.remove("err");
+      elReportStatus.textContent = "Generating…";
+    }
+    showJobProgress("Graph report");
+    try {
+      const res = await fetch(apiUrl("/memory/graph/report"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
+        body: JSON.stringify({
+          nodeIds,
+          prompt,
+          view: {
+            from: state.query.trim(),
+            to: state.queryB.trim(),
+            date: state.queryDate.trim(),
+          },
+        }),
+      });
+      const data = await readSseJob(res, setJobProgress, "Report failed");
+      setJobProgress({ label: "Done", percent: 100, current: 1, total: 1 });
+      showReportResult(data);
+      hideJobProgress();
+    } catch (err) {
+      const message = err.message || String(err);
+      if (elReportStatus) {
+        elReportStatus.classList.add("err");
+        elReportStatus.textContent = message;
+      }
+      failJobProgress(message);
+    } finally {
+      if (elReportGenerate) elReportGenerate.disabled = false;
+    }
+  }
+
+  document.getElementById("btn-report")?.addEventListener("click", () => {
+    const title = document.getElementById("report-overlay-title");
+    if (title) title.textContent = "Report from this view";
+    openReportOverlay();
+  });
+  document.getElementById("report-overlay-close")?.addEventListener("click", closeReportOverlay);
+  document.getElementById("report-cancel")?.addEventListener("click", closeReportOverlay);
+  elReportGenerate?.addEventListener("click", () => {
+    generateGraphReport();
+  });
+  document.getElementById("report-again")?.addEventListener("click", () => {
+    const title = document.getElementById("report-overlay-title");
+    if (title) title.textContent = "Report from this view";
+    if (elReportCompose) elReportCompose.hidden = false;
+    if (elReportResult) elReportResult.hidden = true;
+    if (elReportStatus) {
+      elReportStatus.textContent = "";
+      elReportStatus.classList.remove("err");
+    }
+    if (elReportScope) elReportScope.textContent = reportScopeText();
+    elReportPrompt?.focus();
+  });
+  document.getElementById("report-copy")?.addEventListener("click", () => {
+    const text = lastReport?.markdown || elReportBody?.textContent || "";
+    if (!text) return;
+    const fake = { value: text };
+    copyFieldText(fake, document.getElementById("report-copy"));
+  });
+  document.getElementById("report-download")?.addEventListener("click", () => {
+    const text = lastReport?.markdown || elReportBody?.textContent || "";
+    const name = lastReport?.filename || safeFilename(lastReport?.title || "graph-report", ".md");
+    downloadTextFile(text, name, "text/markdown;charset=utf-8");
+  });
+  document.getElementById("report-talk")?.addEventListener("click", () => {
+    const id = lastReport?.did;
+    if (!id) return;
+    talkAboutNode(id, lastReport?.title);
+  });
+  document.getElementById("report-open")?.addEventListener("click", async () => {
+    const id = lastReport?.did;
+    if (!id) return;
+    closeReportOverlay();
+    try {
+      await load(state.types.has("Artifact"), false);
+      selectNode(id);
+      window.setTimeout(() => centerNode(id), 400);
+    } catch (err) {
+      elStats.textContent = err.message || String(err);
+    }
+  });
+  elReportOverlay?.addEventListener("click", (e) => {
+    if (e.target === elReportOverlay) closeReportOverlay();
+  });
+
   document.getElementById("btn-reload").addEventListener("click", () => {
     load(state.types.has("Artifact"), false).catch((err) => {
       elStats.textContent = err.message;
@@ -1466,7 +1800,8 @@
     hideJobProgress(3200);
   }
 
-  async function readCleanIndexResponse(res, onProgress) {
+  async function readSseJob(res, onProgress, failLabel) {
+    const label = failLabel || "Job failed";
     const ctype = res.headers.get("content-type") || "";
     if (ctype.includes("application/json")) {
       const data = await res.json().catch(() => ({}));
@@ -1475,12 +1810,12 @@
           res.status === 404
             ? " API missing — restart the desktop server (pnpm desktop), then try again."
             : "";
-        throw new Error((data.message || data.error || `Clean failed (${res.status})`) + hint);
+        throw new Error((data.message || data.error || `${label} (${res.status})`) + hint);
       }
       return data;
     }
     if (!res.body) {
-      throw new Error(`Clean failed (${res.status})`);
+      throw new Error(`${label} (${res.status})`);
     }
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
@@ -1510,10 +1845,10 @@
     }
     if (buf.trim()) consumeBlock(buf);
     if (streamError) {
-      throw new Error(streamError.message || streamError.error || "Clean failed");
+      throw new Error(streamError.message || streamError.error || label);
     }
     if (!res.ok && !result) {
-      throw new Error(`Clean failed (${res.status})`);
+      throw new Error(`${label} (${res.status})`);
     }
     return result || {};
   }
@@ -1535,7 +1870,7 @@
         headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
         body: "{}",
       });
-      const data = await readCleanIndexResponse(res, setJobProgress);
+      const data = await readSseJob(res, setJobProgress, "Clean failed");
       setJobProgress({ label: "Reloading graph…", percent: 96, current: 1, total: 1 });
       await load(state.types.has("Artifact"), true);
       setJobProgress({ label: "Done", percent: 100, current: 1, total: 1 });
@@ -1592,6 +1927,12 @@
   });
   document.getElementById("detail-overlay-close")?.addEventListener("click", closeDetailOverlay);
   document.getElementById("detail-overlay-done")?.addEventListener("click", closeDetailOverlay);
+  document.getElementById("detail-overlay-copy")?.addEventListener("click", () => {
+    copyFieldText(elOverlayText, document.getElementById("detail-overlay-copy"));
+  });
+  document.getElementById("detail-overlay-download")?.addEventListener("click", () => {
+    downloadFieldText(elOverlayText);
+  });
   document.getElementById("detail-overlay-save")?.addEventListener("click", () => {
     const editText = document.getElementById("edit-text");
     if (elOverlayText && editText) editText.value = elOverlayText.value;
@@ -1601,7 +1942,13 @@
     if (e.target === elOverlay) closeDetailOverlay();
   });
   window.addEventListener("keydown", (e) => {
-    if (e.key === "Escape" && elOverlay?.classList.contains("open")) {
+    if (e.key !== "Escape") return;
+    if (elReportOverlay?.classList.contains("open")) {
+      e.preventDefault();
+      closeReportOverlay();
+      return;
+    }
+    if (elOverlay?.classList.contains("open")) {
       e.preventDefault();
       closeDetailOverlay();
     }

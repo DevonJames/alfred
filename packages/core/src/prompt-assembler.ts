@@ -33,6 +33,11 @@ export class PromptAssembler {
       );
       const caps = new Set(input.availableCapabilities);
       const guidance: string[] = [];
+      if (caps.has("calculate")) {
+        guidance.push(
+          "When the user asks you to add, subtract, multiply, or divide, call calculate with the expression. Do not do the arithmetic yourself.",
+        );
+      }
       if (caps.has("delegate_task")) {
         guidance.push(
           "For external harness actions (email, coding, X ingest, browser, etc.), use delegate_task rather than inventing harness-specific tools.",
@@ -51,6 +56,11 @@ export class PromptAssembler {
       if (caps.has("get_weather_forecast")) {
         guidance.push(
           "When the user asks about current weather or the forecast, call get_weather_forecast immediately (including casual phrasing like \"what's the weather\"). Do not ask which city or zip unless they named a different place — if they omit a location, call the tool with no location argument so home (BRIEFING_ZIP / lat-lon) is used. Only pass location when they specify another city, place, or zip. Do not invent temperatures or conditions. Prefer this over delegate_task for weather.",
+        );
+      }
+      if (caps.has("add_briefing_module")) {
+        guidance.push(
+          "When the user asks to add a new section or category to the daily briefing, call add_briefing_module with their request. Do not invent the data yourself.",
         );
       }
       if (caps.has("get_news_headlines")) {

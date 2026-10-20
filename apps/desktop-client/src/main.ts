@@ -21,9 +21,11 @@ import { startCloudConnect, stopCloudConnect } from "./lib/cloud-connect.js";
 import { endLiveConversation } from "./lib/livekit-session-end.js";
 import { attachSpeechEngine, closeSpeechEngine, isSpeechEngineStack } from "./lib/speech-engine.js";
 import { startMessageWatcher } from "./lib/message-commitments.js";
+import { applyBrowserChannelFromSettings } from "./lib/x-session.js";
 import { startXIngestScheduler } from "./lib/x-ingest-schedule.js";
 import { sidecarHostname, sidecarPort, isSidecarMode } from "./lib/sidecar-mode.js";
 import { sidecarRuntimeReady, warmupSidecarMemory } from "./lib/text-session.js";
+import { apiAgendaRouter } from "./routes/api-agenda.js";
 import { apiMemoryRouter } from "./routes/api-memory.js";
 import { briefingRouter } from "./routes/briefing.js";
 import { briefingUiRouter } from "./routes/briefing-ui.js";
@@ -33,6 +35,9 @@ import { remindersUiRouter } from "./routes/reminders-ui.js";
 import { connectRouter } from "./routes/connect.js";
 import { conversationRouter } from "./routes/conversation.js";
 import { conversationsRouter } from "./routes/conversations.js";
+import { fitnessRouter } from "./routes/fitness.js";
+import { apiMedicineRouter } from "./routes/api-medicine.js";
+import { medicineUiRouter } from "./routes/medicine-ui.js";
 import { loadNoteJobs } from "./lib/notes/jobs.js";
 import { resumeInterruptedNoteJobs } from "./lib/notes/service.js";
 import { resolveFfmpeg, resolveFfprobe } from "./lib/notes/audio-chunks.js";
@@ -41,7 +46,9 @@ import { apiNotesRouter } from "./routes/api-notes.js";
 import { memoryRouter } from "./routes/memory.js";
 import { notesUiRouter } from "./routes/notes-ui.js";
 import { pairRouter } from "./routes/pair.js";
+import { publicKnowledgeRouter } from "./routes/public-knowledge.js";
 import { sessionRouter } from "./routes/session.js";
+import { settingsRouter } from "./routes/settings.js";
 import { tokenRouter } from "./routes/token.js";
 import { voiceRouter } from "./routes/voice.js";
 import { vectorExplorerRouter } from "./routes/vector-explorer.js";
@@ -74,6 +81,9 @@ const statusPayload = {
   memoryIngest: "/memory/ingest",
   memoryGraph: "/memory/graph",
   briefing: "/api/briefing",
+  fitnessPlan: "/api/fitness/day-plan",
+  fitnessFocus: "/api/fitness/focus",
+  medicineSchedule: "/api/medicine/schedule",
   briefingPrefs: "/briefing",
   notes: "/notes",
   gateway: "/gateway",
@@ -154,10 +164,16 @@ app.route("/api/conversation", conversationRouter);
 app.route("/api/conversations", conversationsRouter);
 app.route("/api/memory", apiMemoryRouter);
 app.route("/api/notes", apiNotesRouter);
+app.route("/api/settings", settingsRouter);
+app.route("/api/public-knowledge", publicKnowledgeRouter);
+app.route("/api/agenda", apiAgendaRouter);
+app.route("/api/fitness", fitnessRouter);
+app.route("/api/medicine", apiMedicineRouter);
 app.route("/api", briefingRouter);
 
 // Local Daily Brief preferences UI (public, like ingest/claim).
 app.route("/briefing", briefingUiRouter);
+app.route("/medicine", medicineUiRouter);
 app.route("/gateway", gatewayUiRouter);
 app.route("/agenda", agendaUiRouter);
 app.route("/reminders", remindersUiRouter);
@@ -249,6 +265,9 @@ if (!sidecar) {
   console.log("[CloudConnect] Forced off in ALFRED_SIDECAR_MODE");
 }
 
+void applyBrowserChannelFromSettings().catch((err) => {
+  console.warn("[browser] could not load ingest browser setting:", err);
+});
 const stopXIngest = startXIngestScheduler();
 startMessageWatcher();
 void loadNoteJobs()

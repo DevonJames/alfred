@@ -1,4 +1,6 @@
 import {
+  ADD_BRIEFING_MODULE_TOOL,
+  CALCULATE_TOOL,
   CONTROL_STUDIO_LIGHTS_TOOL,
   GET_CRYPTO_PRICE_TOOL,
   GET_CURRENT_TIME_TOOL,
@@ -26,6 +28,7 @@ import type {
   StudioLightsPort,
   WeatherForecastPort,
 } from "./ports.js";
+import { speakMath } from "./math.js";
 import { resolveReminderMatch } from "./reminder-match.js";
 
 /** Ports the cascade voice session uses beyond plain delegate_task. */
@@ -40,6 +43,8 @@ export interface ConversationalPorts {
   /** Earthquakes, alerts, space weather, natural events, FX, Hacker News. */
   situational?: SituationalPort;
   lights?: StudioLightsPort;
+  /** Design and save a user briefing section from a spoken request. */
+  addBriefingModule?: (request: string) => Promise<string>;
 }
 
 type ToolSchema = {
@@ -49,7 +54,7 @@ type ToolSchema = {
 };
 
 export function conversationalCapabilities(ports?: ConversationalPorts): string[] {
-  const caps = ["delegate_task"];
+  const caps = ["delegate_task", "calculate"];
   if (ports?.reminders) caps.push("update_reminder");
   if (ports?.structuredMemory) caps.push("remember_memory");
   if (ports?.weather) caps.push("get_weather_forecast");
@@ -73,11 +78,12 @@ export function conversationalCapabilities(ports?: ConversationalPorts): string[
     );
   }
   if (ports?.lights) caps.push("control_studio_lights");
+  if (ports?.addBriefingModule) caps.push("add_briefing_module");
   return caps;
 }
 
 export function conversationalToolSchemas(ports?: ConversationalPorts): ToolSchema[] {
-  const tools: ToolSchema[] = [];
+  const tools: ToolSchema[] = [CALCULATE_TOOL as unknown as ToolSchema];
   if (ports?.reminders) tools.push(UPDATE_REMINDER_TOOL as unknown as ToolSchema);
   if (ports?.structuredMemory) tools.push(REMEMBER_MEMORY_TOOL as unknown as ToolSchema);
   if (ports?.weather) tools.push(GET_WEATHER_FORECAST_TOOL as unknown as ToolSchema);
@@ -99,6 +105,7 @@ export function conversationalToolSchemas(ports?: ConversationalPorts): ToolSche
     tools.push(GET_HACKER_NEWS_TOOL as unknown as ToolSchema);
   }
   if (ports?.lights) tools.push(CONTROL_STUDIO_LIGHTS_TOOL as unknown as ToolSchema);
+  if (ports?.addBriefingModule) tools.push(ADD_BRIEFING_MODULE_TOOL as unknown as ToolSchema);
   return tools;
 }
 
@@ -112,6 +119,9 @@ export async function applyConversationalTool(
   ports: ConversationalPorts | undefined,
   dueReminders: DueReminderSummary[],
 ): Promise<{ mode: "replace" | "ack"; speech: string } | null> {
+  if (toolName === "calculate") {
+    return { mode: "replace", speech: speakMath(typeof args.expression === "string" ? args.expression : "") };
+  }
   if (!toolName || !ports) return null;
   if (toolName === "get_weather_forecast" && ports.weather) {
     return { mode: "replace", speech: await applyWeather(ports.weather, args) };
@@ -137,6 +147,10 @@ export async function applyConversationalTool(
   }
   if (toolName === "control_studio_lights" && ports.lights) {
     return { mode: "replace", speech: await applyLights(ports.lights, args) };
+  }
+  if (toolName === "add_briefing_module" && ports.addBriefingModule) {
+    const request = typeof args.request === "string" ? args.request : "";
+    return { mode: "replace", speech: await ports.addBriefingModule(request) };
   }
   if (toolName === "remember_memory" && ports.structuredMemory) {
     return { mode: "ack", speech: await applyRemember(ports.structuredMemory, args) };

@@ -8,12 +8,17 @@
 
 import {
   createBriefingController,
+  createBriefingModuleFromAsk,
+  formatNewsForDisplay,
+  looksLikeAddBriefingModule,
   lookupCurrentTime,
   lookupLiveCryptoPrice,
   lookupLiveMetalsPrice,
   lookupLiveNewsHeadlines,
   lookupLiveWeatherForecast,
   speakSituationalRequest,
+  readFitnessDayPlan,
+  speakFitnessPlan,
   summarizeNewsArticle,
   type BriefingController,
   type BriefingDisplay,
@@ -46,6 +51,7 @@ import { answerAgendaTurn, answerLooseScheduleTurn, currentAgendaEar } from "./a
 import { loadTaskReminders } from "./message-commitments.js";
 import { noteConversationTurn } from "./conversation-thread.js";
 import { appendLive2ConversationTurn } from "./conversation-history.js";
+import { formatTalkFocusSystem, readTalkFocus } from "@alfred/memory";
 import { oipForProfile } from "./oip-memory.js";
 import { cancelTextSession, delegateTextSessionTask, getTextSession, rememberSpokenNews, resetTextSession } from "./text-session.js";
 
@@ -251,7 +257,7 @@ function hasNovelWord(heard: string, assistant: string): boolean {
 let briefing: BriefingController | undefined;
 
 /** Same short briefing salutation cascade asks the conversational model for. */
-const greetingLlm: GreetingLlm = async (messages) => {
+export const greetingLlm: GreetingLlm = async (messages) => {
   const providers = [];
   const openaiKey = process.env.OPENAI_API_KEY?.trim();
   if (openaiKey) providers.push(new OpenAiResponsesLLMProvider({ apiKey: openaiKey }));
@@ -369,6 +375,16 @@ async function lightsInventoryHint(): Promise<string | undefined> {
  * Cascade answers lights, situational lookups, weather, news, docs ingest, and X ingest before the LLM.
  */
 async function toolSpeech(key: string, text: string): Promise<string | null> {
+  if (looksLikeAddBriefingModule(text)) {
+    try {
+      const created = await createBriefingModuleFromAsk({ request: text, llm: greetingLlm });
+      console.log(`[speech-engine] briefing module: ${created.module.id}`);
+      return created.speech;
+    } catch (err) {
+      console.error("[speech-engine] briefing module failed:", err);
+      return err instanceof Error ? err.message : "I couldn't add that briefing section.";
+    }
+  }
   const lightsCommand = parseStudioLightIntent(text);
   if (lightsCommand) {
     try {
@@ -522,36 +538,37 @@ type BriefingTurn = {
 async function briefingTurn(text: string): Promise<BriefingTurn> {
   try {
     const ctrl = briefingController();
-    const intent = await ctrl.detectIntent(text);
-    if (intent === "explicitAsk" || intent === "affirmOffer") {
-      const payload = await ctrl.generate({
-        refresh: true,
-        markSurfaced: true,
-        userText: text,
-      });
-      await ctrl.markPlayed();
+    const decision = await ctrl.handleUserTurn(text);
+    if (decision.action === "play") {
       return {
-        speak: payload.speech,
-        newsHeadlines: payload.briefing.news,
-        display: payload.display,
+        speak: decision.speech,
+        newsHeadlines: decision.newsHeadlines,
+        display: decision.payload.display,
       };
     }
-    if (intent === "declineOffer") {
-      await ctrl.markDeclined();
-      return { speak: ctrl.declineAck };
-    }
-    if (await ctrl.shouldSoftOffer()) {
+    if (decision.action === "playNews") {
       return {
-        offerHint: ctrl.offerSystemHint,
+        speak: decision.speech,
+        newsHeadlines: decision.newsHeadlines,
+        display: formatNewsForDisplay(decision.newsHeadlines),
+      };
+    }
+    if (decision.action === "decline") {
+      return { speak: decision.speech };
+    }
+    if (decision.action === "chat" && decision.appendOffer) {
+      // handleUserTurn already marked the soft offer pending.
+      return {
+        offerHint: decision.systemHint ?? ctrl.offerSystemHint,
         offerCloser: ctrl.offerCloser,
-        shouldMarkOffered: true,
       };
     }
-    ctrl.noteUserTurnSeen();
     return {};
   } catch (err) {
     console.error("[speech-engine] briefing failed:", err);
-    if (/\bbrief/i.test(text)) return { speak: "I couldn't put the briefing together just now." };
+    if (/\bbrief/i.test(text) && !looksLikeAddBriefingModule(text)) {
+      return { speak: "I couldn't put the briefing together just now." };
+    }
     return {};
   }
 }
@@ -643,7 +660,16 @@ function streamReply(key: string, text: string, signal: AbortSignal): AsyncItera
       }
     }
     const lightsHint = await lightsInventoryHint();
-    const extraSystem = [brief.offerHint, lightsHint].filter(Boolean).join("\n\n");
+    const timezone =
+      process.env.BRIEFING_TIMEZONE?.trim() || Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const now = new Date();
+    const planSpeech = speakFitnessPlan(await readFitnessDayPlan(), now, timezone);
+    const planHint = planSpeech.startsWith("I don't")
+      ? ""
+      : `Today's FitnessAlly plan. Use this only when the user asks what they are eating or training. Do not invent meals or workouts. ${planSpeech}`;
+    const talkFocus = await readTalkFocus();
+    const talkHint = talkFocus ? formatTalkFocusSystem(talkFocus) : "";
+    const extraSystem = [brief.offerHint, lightsHint, planHint, talkHint].filter(Boolean).join("\n\n");
     const session = await getTextSession({ sessionKey: key });
     if (signal.aborted) return;
     let streamed = "";

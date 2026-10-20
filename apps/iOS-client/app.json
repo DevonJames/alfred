@@ -21,8 +21,9 @@
       "infoPlist": {
         "CFBundleDisplayName": "Alfred",
         "NSMicrophoneUsageDescription": "Alfred listens only while you're speaking to it, and sends what you say to your own Mac to answer. Nothing is recorded or stored on this phone.",
-        "NSPhotoLibraryUsageDescription": "Attach photos to something you'd like Alfred to remember. They're sent to your Mac and stored there.",
-        "NSCameraUsageDescription": "Scan the claim code on your Mac, or the code on AlfredBot, to link this phone.",
+        "NSPhotoLibraryUsageDescription": "Attach photos for Alfred to remember, or bottle photos for your medicine schedule. They're sent to your Mac and stored there.",
+        "NSPhotoLibraryAddUsageDescription": "Pictures you take during a recording are also saved to your photo library.",
+        "NSCameraUsageDescription": "Scan a claim code to link this phone, photograph medicine bottles, or capture slides while recording a note.",
         "NSLocalNetworkUsageDescription": "Alfred looks for your Mac on your local network first, so your conversation never leaves the house when it doesn't have to.",
         "NSAppTransportSecurity": {
           "NSAllowsLocalNetworking": true
@@ -60,7 +61,15 @@
       [
         "expo-camera",
         {
-          "cameraPermission": "Scan the claim code on your Mac, or the code on AlfredBot, to link this phone."
+          "cameraPermission": "Scan a claim code to link this phone, photograph medicine bottles, or capture slides while recording a note."
+        }
+      ],
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "Attach photos for Alfred to remember, or save pictures taken during a recording.",
+          "savePhotosPermission": "Pictures you take during a recording are also saved to your photo library.",
+          "isAccessMediaLocationEnabled": false
         }
       ],
       "expo-notifications",

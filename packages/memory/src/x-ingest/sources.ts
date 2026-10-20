@@ -52,7 +52,12 @@ export async function addXSource(
       s.folder.toLowerCase() === next.folder.toLowerCase(),
   );
   if (idx >= 0) {
-    sources[idx] = { ...sources[idx]!, ...next, id: sources[idx]!.id };
+    sources[idx] = {
+      ...sources[idx]!,
+      ...next,
+      id: sources[idx]!.id,
+      briefDid: sources[idx]!.briefDid,
+    };
     await saveXSources(profileId, sources);
     return sources[idx]!;
   }
@@ -75,6 +80,18 @@ export async function removeXSource(
   const [removed] = sources.splice(idx, 1);
   await saveXSources(profileId, sources);
   return removed;
+}
+
+export async function setXSourceBriefDid(
+  profileId: string,
+  sourceId: string,
+  briefDid: string,
+): Promise<void> {
+  const sources = await loadXSources(profileId);
+  const idx = sources.findIndex((s) => s.id === sourceId);
+  if (idx < 0) return;
+  sources[idx] = { ...sources[idx]!, briefDid };
+  await saveXSources(profileId, sources);
 }
 
 export function findXSource(sources: XSource[], note: string): XSource | undefined {

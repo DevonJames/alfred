@@ -2,6 +2,8 @@ import type { BriefingData } from "./types.js";
 import type { LaunchInfo } from "./launches.js";
 import type { NewsHeadline } from "./news.js";
 import type { WeatherData } from "./weather.js";
+import { fitnessDisplayLines } from "./fitness.js";
+import { medicineDisplayLines } from "./medicine.js";
 
 /** One row in a briefing HUD section (plain text, or a clickable headline). */
 export interface BriefingDisplayLine {
@@ -27,7 +29,7 @@ export interface BriefingDisplay {
 
 export function formatBriefingForDisplay(
   data: BriefingData,
-  opts?: { now?: Date; timezone?: string },
+  opts?: { now?: Date; timezone?: string; includeHeadlines?: boolean },
 ): BriefingDisplay {
   const now = opts?.now ?? new Date();
   const timezone = opts?.timezone ?? "America/Los_Angeles";
@@ -39,6 +41,14 @@ export function formatBriefingForDisplay(
   const agenda = agendaLines(data, timezone);
   if (agenda.length) sections.push({ id: "agenda", title: "Agenda", lines: asLines(agenda) });
 
+  const fitness = fitnessSections(data);
+  sections.push(...fitness);
+
+  const medicine = medicineLines(data);
+  if (medicine.length) {
+    sections.push({ id: "medicine", title: "Morning medicine", lines: asLines(medicine) });
+  }
+
   const due = dueLines(data);
   if (due.today.length) sections.push({ id: "due", title: "Due Today", lines: asLines(due.today) });
   if (due.open.length) sections.push({ id: "open", title: "Still Open", lines: asLines(due.open) });
@@ -47,11 +57,20 @@ export function formatBriefingForDisplay(
     sections.push({ id: "markets", lines: asLines(data.markets.lines) });
   }
 
-  const launches = launchLines(data.launches);
-  if (launches.length) sections.push({ id: "launches", title: "Launches", lines: asLines(launches) });
+  // Built-in rocket launches are parked. Restore launchLines(...) to turn them back on.
+  // const launches = launchLines(data.launches);
+  // if (launches.length) sections.push({ id: "launches", title: "Launches", lines: asLines(launches) });
+  for (const module of data.modules ?? []) {
+    const lines = module.lines.length ? module.lines : module.speech ? [module.speech] : [];
+    if (!lines.length) continue;
+    sections.push({ id: `module-${module.id}`, title: module.title, lines: asLines(lines) });
+  }
 
-  const headlines = headlineLines(data.news);
-  if (headlines.length) sections.push({ id: "headlines", title: "Headlines", lines: headlines });
+  // Headlines stay off the HUD until the user accepts the spoken offer.
+  if (opts?.includeHeadlines) {
+    const headlines = headlineLines(data.news);
+    if (headlines.length) sections.push({ id: "headlines", title: "Headlines", lines: headlines });
+  }
 
   const notes = noteLines(data);
   if (notes.length) sections.push({ id: "notes", title: "Saved", lines: asLines(notes) });
@@ -59,6 +78,17 @@ export function formatBriefingForDisplay(
   return {
     when: formatWhenLabel(now, timezone) || data.date,
     sections,
+  };
+}
+
+/** HUD after the user accepts the post-briefing headline offer. */
+export function formatNewsForDisplay(news: NewsHeadline[]): BriefingDisplay {
+  const lines = headlineLines(news);
+  return {
+    when: "Headlines",
+    sections: lines.length
+      ? [{ id: "headlines", title: "Headlines", lines }]
+      : [],
   };
 }
 
@@ -121,6 +151,24 @@ function weatherLines(weather: WeatherData): string[] {
     }
   }
   return lines;
+}
+
+function medicineLines(data: BriefingData): string[] {
+  if (!data.medicine?.length) return [];
+  return medicineDisplayLines(data.medicine);
+}
+
+function fitnessSections(data: BriefingData): BriefingDisplaySection[] {
+  if (!data.fitness) return [];
+  const lines = fitnessDisplayLines(data.fitness);
+  const sections: BriefingDisplaySection[] = [];
+  if (lines.training.length) {
+    sections.push({ id: "training", title: "Training", lines: asLines(lines.training) });
+  }
+  if (lines.meals.length) {
+    sections.push({ id: "meals", title: "Meals", lines: asLines(lines.meals) });
+  }
+  return sections;
 }
 
 function agendaLines(data: BriefingData, timezone: string): string[] {

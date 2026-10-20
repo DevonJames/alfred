@@ -33,10 +33,52 @@ export function splitTranscriptForSummary(text: string, maxChars = 24_000): stri
   return parts;
 }
 
+export function formatPhotoContext(
+  photos: Array<{
+    offsetSeconds: number;
+    analysisStatus?: string;
+    analysis?: {
+      summary?: string;
+      fullText?: string;
+      documentType?: string;
+      names?: string[];
+      dates?: string[];
+      places?: string[];
+    };
+  }>,
+): string {
+  if (!photos.length) return "";
+  return photos
+    .map((photo, index) => {
+      const at = formatOffset(photo.offsetSeconds);
+      if (photo.analysisStatus !== "completed" || !photo.analysis) {
+        return `Photo ${index + 1} at ${at}: captured during the recording (analysis ${photo.analysisStatus || "pending"}).`;
+      }
+      const bits = [
+        `Photo ${index + 1} at ${at}${photo.analysis.documentType ? ` (${photo.analysis.documentType})` : ""}:`,
+        photo.analysis.summary?.trim() || "",
+        photo.analysis.fullText?.trim() ? `Text in image:\n${photo.analysis.fullText.trim()}` : "",
+        photo.analysis.names?.length ? `Names: ${photo.analysis.names.join(", ")}` : "",
+        photo.analysis.dates?.length ? `Dates: ${photo.analysis.dates.join(", ")}` : "",
+        photo.analysis.places?.length ? `Places: ${photo.analysis.places.join(", ")}` : "",
+      ];
+      return bits.filter(Boolean).join("\n");
+    })
+    .join("\n\n");
+}
+
+function formatOffset(seconds: number): string {
+  const total = Math.max(0, Math.round(Number.isFinite(seconds) ? seconds : 0));
+  const minutes = Math.floor(total / 60);
+  const secs = total % 60;
+  return `${minutes}:${secs.toString().padStart(2, "0")}`;
+}
+
 function buildPrompt(
   text: string,
   noteType: string,
   participants: string[] = [],
+  photoContext = "",
 ): string {
   const participantsList = participants.length > 0 ? participants.join(", ") : "unknown";
   let typeSpecificInstructions = "";
@@ -84,6 +126,16 @@ IMPORTANT:
 
 TRANSCRIPT:
 ${text}
+${
+  photoContext.trim()
+    ? `
+
+PHOTOS TAKEN DURING THE RECORDING:
+These stills (often slides, whiteboards, or documents) were captured at the timestamps below. Treat their OCR text and analysis as part of the conversation. Fold facts, names, numbers, and action items from the images into the summary, takeaways, next steps, and open questions.
+
+${photoContext.trim()}`
+    : ""
+}
 
 JSON RESPONSE:`;
 }
@@ -175,6 +227,7 @@ export async function summarizeAudioNote(opts: {
   text: string;
   noteType: string;
   participants?: string[];
+  photoContext?: string;
 }): Promise<AudioNoteMetadata> {
   const fallback = (AUDIO_NOTE_TEMPLATES as readonly string[]).includes(opts.noteType)
     ? (opts.noteType as AudioNoteTemplate)
@@ -189,6 +242,7 @@ export async function summarizeAudioNote(opts: {
         text: `Part ${index + 1} of ${sections.length}:\n\n${section}`,
         noteType: opts.noteType,
         participants: opts.participants,
+        photoContext: opts.photoContext,
         fallback,
       });
       if (part.summary || part.takeaways.length) partials.push(part);
@@ -206,6 +260,7 @@ export async function summarizeAudioNote(opts: {
         text: merged,
         noteType: opts.noteType,
         participants: opts.participants,
+        photoContext: opts.photoContext,
         fallback,
       });
     }
@@ -215,6 +270,7 @@ export async function summarizeAudioNote(opts: {
     text: opts.text,
     noteType: opts.noteType,
     participants: opts.participants,
+    photoContext: opts.photoContext,
     fallback,
   });
 }
@@ -223,9 +279,10 @@ async function summarizeOnce(opts: {
   text: string;
   noteType: string;
   participants?: string[];
+  photoContext?: string;
   fallback: AudioNoteTemplate;
 }): Promise<AudioNoteMetadata> {
-  const prompt = buildPrompt(opts.text, opts.noteType, opts.participants ?? []);
+  const prompt = buildPrompt(opts.text, opts.noteType, opts.participants ?? [], opts.photoContext ?? "");
   const grok = grokKey();
   const openai = openaiKey();
   const grokModel = process.env.ALFRED_NOTES_GROK_MODEL?.trim() || "grok-4-fast-reasoning";

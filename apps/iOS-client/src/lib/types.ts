@@ -232,6 +232,192 @@ export interface PublicCandidate {
   score: number;
 }
 
+/** Daily Brief payload from GET /api/briefing (desktop @alfred/briefing). */
+export interface BriefingDisplayLine {
+  text: string;
+  newsIndex?: number;
+  newsTitle?: string;
+  newsUrl?: string;
+}
+
+export interface BriefingDisplaySection {
+  id: string;
+  title?: string;
+  lines: BriefingDisplayLine[];
+}
+
+export interface BriefingDisplay {
+  when: string;
+  sections: BriefingDisplaySection[];
+}
+
+export interface BriefingPayload {
+  briefing?: {
+    greeting?: string;
+    date?: string;
+    weatherText?: string | null;
+    marketsText?: string | null;
+    newsText?: string | null;
+    agendaText?: string | null;
+    remindersText?: string | null;
+  };
+  speech?: string;
+  markdown?: string;
+  display?: BriefingDisplay;
+  generated?: string;
+}
+
+export interface ConversationSummary {
+  id: string;
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+  modality: "voice" | "chat" | "mixed";
+  stack?: string;
+  preview: string;
+  messageCount: number;
+}
+
+export interface ConversationHistoryMessage {
+  id: string;
+  role: "user" | "assistant";
+  text: string;
+  at: string;
+  source: "voice" | "text";
+}
+
+export interface ConversationRecord extends ConversationSummary {
+  messages: ConversationHistoryMessage[];
+}
+
+export interface AgendaCalendarEvent {
+  id: string;
+  title: string;
+  start: string;
+  end: string;
+  allDay: boolean;
+  calendarId: string;
+  calendarTitle: string;
+  sourceTitle: string;
+  location?: string;
+}
+
+export interface AgendaCalendarColumn {
+  id: string;
+  title: string;
+  sourceTitle: string;
+  sourceType?: string;
+  color?: string;
+  access: "none" | "read" | "write";
+  ignoreOverlaps?: boolean;
+  events: AgendaCalendarEvent[];
+}
+
+export interface AgendaBoard {
+  view: "today" | "week";
+  timeZone: string;
+  start: string;
+  end: string;
+  dateLabel?: string;
+  rangeLabel?: string;
+  focusDate: string;
+  todayDate: string;
+  dayOffset?: number;
+  focusLabel?: string;
+  calendars: AgendaCalendarColumn[];
+  error?: string;
+}
+
+export interface AgendaTimeBlock {
+  id: string;
+  name: string;
+  start: string;
+  end: string;
+  repeat: "all" | "weekdays" | "weekends" | "custom";
+  days: number[];
+  calendarId: string;
+  categoryIds: string[];
+  activeOnDate?: boolean;
+}
+
+export interface OpenAppleReminder {
+  id: string;
+  title: string;
+  due: string | null;
+}
+
+export type FitnessItemStatus = "scheduled" | "in_progress" | "completed" | "skipped";
+export type FitnessMealType = "breakfast" | "lunch" | "dinner" | "snack";
+
+export interface FitnessMeal {
+  id: string;
+  name: string;
+  mealType: FitnessMealType;
+  servings?: number;
+  status: FitnessItemStatus;
+  notes?: string;
+}
+
+export interface FitnessWorkout {
+  id: string;
+  name: string;
+  status: FitnessItemStatus;
+  notes?: string;
+}
+
+export interface FitnessDayPlan {
+  date: string;
+  timezone: string;
+  asOf: string;
+  meals: FitnessMeal[];
+  workouts: FitnessWorkout[];
+}
+
+export type MedicinePeriod = "morning" | "midday" | "evening";
+export type MedicineDays = "daily" | number[];
+export type MedicineLogMode = "only" | "all" | "except" | "undo" | "status";
+
+export interface MedicineItem {
+  id: string;
+  name: string;
+  quantity: string;
+  period: MedicinePeriod;
+  instruction: string;
+  days: MedicineDays;
+  labelText: string;
+  needsReview: boolean;
+  imageId?: string;
+  taken: boolean;
+  dueToday: boolean;
+}
+
+export interface MedicineSchedule {
+  dayKey: string;
+  items: MedicineItem[];
+  summary?: string;
+}
+
+export interface BriefingPrefs {
+  launchesMode: "on" | "off" | "request";
+  launchLocationIds: string;
+  includeCrypto: boolean;
+  cryptoId: string;
+  includeMetals: boolean;
+  metalSymbol: "gold" | "silver";
+  includeIngestedNotes: boolean;
+  newsSources: string[];
+  agendaCalendarIds: string[];
+}
+
+export interface BriefingPrefsCatalog {
+  launchSites: Array<{ id: string; label: string }>;
+  crypto: Array<{ id: string; label: string }>;
+  metals: Array<{ id: string; label: string }>;
+  newsSources: string[];
+  calendars: Array<{ id: string; label: string }>;
+  launchesModes: Array<{ id: string; label: string }>;
+}
+
 export interface VerifyReport {
   ok: boolean;
   checked: { memories: number; assertions: number; artifacts: number; drefs: number };
@@ -304,6 +490,33 @@ export interface AudioNoteActionItem {
   dueDate?: string;
 }
 
+export interface AudioNotePhotoAnalysis {
+  summary: string;
+  fullText: string;
+  handwrittenNotes: Array<{ content: string; location?: string } | string>;
+  names: string[];
+  dates: string[];
+  places: string[];
+  objects: string[];
+  documentType?: string;
+  backend?: string;
+  model?: string;
+}
+
+export interface AudioNotePhoto {
+  id: string;
+  artifactId: string;
+  fileEntityId: string | null;
+  filename: string;
+  mimeType: string;
+  offsetSeconds: number;
+  capturedAt: string;
+  url: string;
+  analysisStatus: "pending" | "completed" | "failed";
+  analysis?: AudioNotePhotoAnalysis;
+  analysisError?: string;
+}
+
 export interface AudioNote {
   id: string;
   title: string;
@@ -324,6 +537,7 @@ export interface AudioNote {
   updatedAt: string;
   jobId?: string;
   job?: AudioNoteJob | null;
+  photos?: AudioNotePhoto[];
 }
 
 export interface AudioNoteJob {

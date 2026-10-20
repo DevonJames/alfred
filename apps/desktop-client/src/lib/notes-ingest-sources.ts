@@ -1,5 +1,5 @@
 import { speechFromRun } from "@alfred/agents";
-import { createPlaywrightCaptureAdapter } from "@alfred/browser";
+import { getSharedPlaywrightCaptureAdapter } from "@alfred/browser";
 import {
   addXSource,
   composeNotesCaptureAdapter,
@@ -8,6 +8,7 @@ import {
   loadXSources,
   removeXSource,
   type XCaptureAdapter,
+  type XIngestProgress,
   type XIngestRunResult,
   type XSource,
 } from "@alfred/memory";
@@ -109,7 +110,11 @@ export async function removeNotesIngestSource(
 
 export async function scanNotesIngestSource(
   idOrNote: string,
-  opts?: { profileId?: string; capture?: XCaptureAdapter },
+  opts?: {
+    profileId?: string;
+    capture?: XCaptureAdapter;
+    onProgress?: (progress: XIngestProgress) => void | Promise<void>;
+  },
 ): Promise<{
   run: XIngestRunResult & { speech: string };
   sources: NotesIngestSourceRow[];
@@ -118,9 +123,14 @@ export async function scanNotesIngestSource(
   const key = idOrNote.trim();
   if (!key) throw new Error("Note id is required");
   const profileId = opts?.profileId ?? activeProfileId();
-  const capture = opts?.capture ?? composeNotesCaptureAdapter(createPlaywrightCaptureAdapter());
+  const capture = opts?.capture ?? composeNotesCaptureAdapter(getSharedPlaywrightCaptureAdapter());
   try {
-    const run = await ingestXNotes({ profileId, note: key, capture });
+    const run = await ingestXNotes({
+      profileId,
+      note: key,
+      capture,
+      onProgress: opts?.onProgress,
+    });
     const listed = await listNotesIngestSources(profileId);
     return { run: { ...run, speech: speechFromRun(run) }, sources: listed.sources, schedule: listed.schedule };
   } finally {

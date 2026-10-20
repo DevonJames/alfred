@@ -119,11 +119,75 @@ describe("formatBriefingForSpeech", () => {
     expect(btcAt).toBeGreaterThan(remAt);
     expect(speech).toMatch(/Bitcoin is up 1\.2 percent/);
     expect(speech).toContain("thousand dollars");
-    expect(speech).toContain("SpaceX");
+    // Built-in launches are parked; a user module supplies this section instead.
+    expect(speech).not.toContain("SpaceX");
     expect(speech).toMatch(/noon|midnight|\d+ (thirty )?(am|pm)/i);
     expect(speech).not.toMatch(/\$/);
     expect(speech).not.toMatch(/%/);
     expect(speech).not.toMatch(/\[icon:/);
+    // Headlines are offered, not read, in the main brief.
+    expect(speech).not.toMatch(/Example headline about CA vs TX/i);
     expect(speech).toMatch(/Have a (productive day|good afternoon|pleasant evening)/);
+  });
+
+  it("speaks morning medicine after fitness and before reminders", () => {
+    const speech = formatBriefingForSpeech(
+      {
+        ...sample(),
+        agendaText: "On your agenda today: USPTO.",
+        fitnessText: "On your training plan today: squats.",
+        medicineText: "Morning medicine: Vitamin D, 1 capsule.",
+      },
+      {
+        now: new Date("2026-08-10T16:00:00.000Z"),
+        timezone: "America/Los_Angeles",
+      },
+    );
+    const fitness = speech.indexOf("squats");
+    const medicine = speech.indexOf("Morning medicine");
+    const reminders = speech.indexOf("Call Sarah");
+    expect(fitness).toBeGreaterThan(-1);
+    expect(medicine).toBeGreaterThan(fitness);
+    expect(reminders).toBeGreaterThan(medicine);
+  });
+
+  it("speaks user modules after markets", () => {
+    const speech = formatBriefingForSpeech(
+      {
+        ...sample(),
+        modules: [
+          {
+            id: "rocket-launches",
+            title: "Rocket launches",
+            speech: "There's a SpaceX launch, Starlink, scheduled for Wednesday at noon.",
+            lines: ["SpaceX · Starlink — Wed noon"],
+          },
+        ],
+      },
+      {
+        now: new Date("2026-08-10T16:00:00.000Z"),
+        timezone: "America/Los_Angeles",
+      },
+    );
+    const markets = speech.search(/Bitcoin is up/i);
+    const launch = speech.indexOf("There's a SpaceX launch");
+    expect(markets).toBeGreaterThan(-1);
+    expect(launch).toBeGreaterThan(markets);
+  });
+
+  it("ends with the headline offer instead of reading the news", () => {
+    const speech = formatBriefingForSpeech(
+      {
+        ...sample(),
+        headlineOffer: "Want me to pull the latest headlines?",
+      },
+      {
+        now: new Date("2026-08-10T16:00:00.000Z"),
+        timezone: "America/Los_Angeles",
+      },
+    );
+    expect(speech).toContain("Want me to pull the latest headlines?");
+    expect(speech).not.toMatch(/Example headline about CA vs TX/i);
+    expect(speech).not.toMatch(/Have a productive day/);
   });
 });

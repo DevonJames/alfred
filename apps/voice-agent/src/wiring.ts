@@ -10,6 +10,7 @@ import {
 import { LiveKitMediaBridge } from "@alfred/livekit";
 import { createInMemoryPersistence } from "@alfred/persistence";
 import { conversationHistoryPort } from "./conversation-history.js";
+import { fitnessAllyOwnsVoice } from "./fitness-room.js";
 import {
   DEEPGRAM_FLUX_PROVIDER_ID,
   DeepgramFluxSTTProvider,
@@ -202,6 +203,13 @@ export async function createCascadedVoiceRuntime(opts?: {
     currentTime: brain.currentTime,
     situational: brain.situational,
     lights: brain.lights,
+    fitness: brain.fitness,
+    medicine: brain.medicine,
+    fitnessContext: async () => {
+      if (!fitnessAllyOwnsVoice()) return undefined;
+      const speech = await brain.fitness.focusSpeech();
+      return speech.startsWith("No FitnessAlly") ? undefined : speech;
+    },
     archive: brain.archive,
     conversationHistory: conversationHistoryPort(),
   });

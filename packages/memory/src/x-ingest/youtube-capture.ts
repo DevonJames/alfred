@@ -81,7 +81,7 @@ export function vttToPlainText(vtt: string): string {
     const line = raw.trim();
     if (!line) continue;
     if (line === "WEBVTT" || line.startsWith("WEBVTT ")) continue;
-    if (line.startsWith("NOTE") || line.startsWith("STYLE") || line.startsWith("KIND:")) continue;
+    if (/^(NOTE|STYLE|KIND|LANGUAGE|REGION)\b/i.test(line)) continue;
     if (/^\d+$/.test(line)) continue;
     if (/-->/.test(line)) continue;
     const cleaned = line.replace(/<\/?[^>]+>/g, "").replace(/&nbsp;/g, " ").trim();
@@ -109,6 +109,89 @@ function pickCaptionLang(langs: string[]): string | undefined {
     if (hit) return hit;
   }
   return langs.find((l) => l.toLowerCase().startsWith("en")) ?? langs[0];
+}
+
+const CAPTION_EXT_RANK: Record<string, number> = { vtt: 0, srt: 1, json3: 2, srv3: 3, ttml: 4 };
+
+function bestUrlTrack(tracks: YtCaptionTrack[] | undefined): YtCaptionTrack | undefined {
+  const withUrl = (tracks ?? []).filter((track) => track.url);
+  withUrl.sort(
+    (a, b) =>
+      (CAPTION_EXT_RANK[(a.ext ?? "").toLowerCase()] ?? 9) -
+      (CAPTION_EXT_RANK[(b.ext ?? "").toLowerCase()] ?? 9),
+  );
+  return withUrl[0];
+}
+
+/** Manual captions first, then auto-captions. Tracks without a URL stay on the yt-dlp fallback. */
+function selectDownloadableCaption(info: YtDump): { lang: string; track: YtCaptionTrack } | undefined {
+  for (const map of [info.subtitles, info.automatic_captions]) {
+    if (!map) continue;
+    const langs = Object.keys(map).filter((lang) => bestUrlTrack(map[lang]));
+    const lang = pickCaptionLang(langs);
+    if (!lang) continue;
+    const track = bestUrlTrack(map[lang]);
+    if (track?.url) return { lang, track };
+  }
+  return undefined;
+}
+
+export function json3ToPlainText(raw: string): string {
+  let data: { events?: Array<{ segs?: Array<{ utf8?: string }> }> };
+  try {
+    data = JSON.parse(raw) as { events?: Array<{ segs?: Array<{ utf8?: string }> }> };
+  } catch {
+    return "";
+  }
+  const lines: string[] = [];
+  for (const event of data.events ?? []) {
+    const text = (event.segs ?? [])
+      .map((seg) => seg.utf8 ?? "")
+      .join("")
+      .replace(/\n/g, " ")
+      .trim();
+    if (!text || text === lines[lines.length - 1]) continue;
+    lines.push(text);
+  }
+  return lines.join(" ").replace(/\s+/g, " ").trim();
+}
+
+export function xmlCaptionToPlainText(raw: string): string {
+  return raw
+    .replace(/<br\s*\/?>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;|&apos;/g, "'")
+    .replace(/&nbsp;/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+export function captionBodyToPlainText(body: string, ext?: string): string {
+  const trimmed = body.replace(/^\uFEFF/, "").trim();
+  if (!trimmed) return "";
+  const kind = (ext ?? "").toLowerCase();
+  if (trimmed.startsWith("WEBVTT") || kind === "vtt" || kind === "srt") return vttToPlainText(trimmed);
+  if (kind === "json3" || trimmed.startsWith("{")) {
+    const asJson = json3ToPlainText(trimmed);
+    if (asJson) return asJson;
+  }
+  return xmlCaptionToPlainText(trimmed);
+}
+
+async function defaultCaptionFetcher(url: string): Promise<string> {
+  const res = await fetch(url, {
+    headers: {
+      accept: "text/vtt,application/json,text/xml,text/plain,*/*",
+      "user-agent": "Mozilla/5.0",
+    },
+    signal: AbortSignal.timeout(30_000),
+  });
+  if (!res.ok) throw new Error(`caption download failed: HTTP ${res.status}`);
+  return res.text();
 }
 
 function uploadDateToIso(uploadDate?: string): string | undefined {
@@ -149,6 +232,9 @@ function mapYtDlpMessage(message: string): string {
     return "age-gate";
   }
   if (t.includes("playlist")) return "playlist not supported";
+  if (t.includes("429") || t.includes("too many requests")) {
+    return "YouTube rate-limited the caption download. Try again in a minute.";
+  }
   return message.replace(/\s+/g, " ").trim().slice(0, 240) || "yt-dlp failed";
 }
 
@@ -188,9 +274,39 @@ function emptyCapture(url: string, canonicalUrl: string, failure: string, headli
   };
 }
 
+function videoCapture(url: string, canonicalUrl: string, info: YtDump, transcript: string): XCapture {
+  const author = info.channel || info.uploader || "";
+  const videoId = info.id || youtubeVideoIdFromUrl(url);
+  const publishedAt = uploadDateToIso(info.upload_date);
+  return {
+    url,
+    canonicalUrl,
+    kind: "video",
+    author,
+    authorHandle: info.channel_id,
+    publishedAt,
+    headline: info.title || canonicalUrl,
+    text: transcript,
+    description: info.description || undefined,
+    durationSeconds: typeof info.duration === "number" ? info.duration : undefined,
+    videoId,
+    posts: [
+      {
+        text: transcript,
+        author,
+        publishedAt,
+        url: canonicalUrl,
+      },
+    ],
+    outboundUrls: [],
+    screenshots: [],
+    images: [],
+  };
+}
+
 export async function captureYouTubeVideo(
   url: string,
-  opts?: { runner?: YtDlpRunner },
+  opts?: { runner?: YtDlpRunner; fetcher?: (captionUrl: string) => Promise<string> },
 ): Promise<XCapture> {
   const canonicalUrl = canonicalizeYouTubeUrl(url);
   if (isYouTubePlaylistOrChannelUrl(url) || !youtubeVideoIdFromUrl(url)) {
@@ -218,6 +334,24 @@ export async function captureYouTubeVideo(
   const dumpFail = mapDumpFailure(info);
   if (dumpFail) {
     return emptyCapture(url, canonicalUrl, dumpFail, info.title);
+  }
+
+  const direct = selectDownloadableCaption(info);
+  if (direct?.track.url) {
+    try {
+      const fetcher = opts?.fetcher ?? defaultCaptionFetcher;
+      const body = await fetcher(direct.track.url);
+      const transcript = captionBodyToPlainText(body, direct.track.ext);
+      if (!transcript) return emptyCapture(url, canonicalUrl, "no transcript", info.title);
+      return videoCapture(url, canonicalUrl, info, transcript);
+    } catch (err) {
+      return emptyCapture(
+        url,
+        canonicalUrl,
+        mapYtDlpMessage(err instanceof Error ? err.message : String(err)),
+        info.title,
+      );
+    }
   }
 
   const langs = captionLangs(info);
@@ -251,33 +385,7 @@ export async function captureYouTubeVideo(
       return emptyCapture(url, canonicalUrl, "no transcript", info.title);
     }
 
-    const author = info.channel || info.uploader || "";
-    const videoId = info.id || youtubeVideoIdFromUrl(url);
-    const publishedAt = uploadDateToIso(info.upload_date);
-    return {
-      url,
-      canonicalUrl,
-      kind: "video",
-      author,
-      authorHandle: info.channel_id,
-      publishedAt,
-      headline: info.title || canonicalUrl,
-      text: transcript,
-      description: info.description || undefined,
-      durationSeconds: typeof info.duration === "number" ? info.duration : undefined,
-      videoId,
-      posts: [
-        {
-          text: transcript,
-          author,
-          publishedAt,
-          url: canonicalUrl,
-        },
-      ],
-      outboundUrls: [],
-      screenshots: [],
-      images: [],
-    };
+    return videoCapture(url, canonicalUrl, info, transcript);
   } catch (err) {
     if (err instanceof YtDlpMissingError) {
       return emptyCapture(url, canonicalUrl, YTDLP_MISSING, info.title);

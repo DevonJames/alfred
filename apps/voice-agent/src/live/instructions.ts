@@ -1,7 +1,8 @@
+import { formatTalkFocusSystem, readTalkFocus, TALK_FOCUS_VOICE_CHARS } from "@alfred/memory";
 import type { AlfredBrain } from "../brain.js";
 
 /** Voice-model persona (GPT-Live top-level instructions). Fixed for the session. */
-export function buildLiveVoiceInstructions(brain: AlfredBrain): string {
+export async function buildLiveVoiceInstructions(brain: AlfredBrain): Promise<string> {
   const parts: string[] = [
     brain.config.systemInstructions,
     "You are speaking aloud on the experimental GPT-Live stack. Keep replies short and conversational — no markdown, bullets, or emoji.",
@@ -15,9 +16,11 @@ export function buildLiveVoiceInstructions(brain: AlfredBrain): string {
         ]
       : []),
     "When the user asks you to remember something lasting (people, nicknames, handles, facts), delegate remember_memory. Do not only say you will remember — the tool write is required.",
-    "When the user asks for the daily briefing or accepts an offer, delegate play_daily_briefing. When they decline an offer, delegate decline_briefing_offer.",
+    "When the user asks what they are eating or training today, delegate get_fitness_plan. When they ask about ingredients, spices, amounts, steps, or the recipe or workout they have open, delegate get_fitness_focus before asking which one. Do not invent meals, workouts, ingredients, or exercise steps.",
+    "When the user says they took their medicine or supplements, took everything except one, or asks what is still untaken, delegate log_medicine. Do not invent products. If the tool says a name is ambiguous, ask which one.",
     "When the user asks what's in the news or for headlines, delegate get_news_headlines. When they ask to dig into one of those headlines, delegate summarize_news_article.",
     "When the user asks what time it is or for today's date, delegate get_current_time. Omit place for home.",
+    "When the user asks what is next on their agenda or schedule, or what meeting or event is coming up next, delegate_task with category calendar and their wording. Do not guess from memory or read the first item of the day — the calendar tool uses the wall clock.",
     "When the user asks about earthquakes, delegate get_earthquakes. For severe weather warnings or advisories, delegate get_weather_alerts, not the forecast. For geomagnetic storms or aurora, delegate get_space_weather. For wildfires or volcanoes, delegate get_natural_events. For currency conversion, delegate get_exchange_rate. For Hacker News or what developers are talking about, delegate get_hacker_news.",
   ];
 
@@ -25,6 +28,11 @@ export function buildLiveVoiceInstructions(brain: AlfredBrain): string {
   if (p.soul) parts.push(`SOUL.md (persona / boundaries):\n${p.soul}`);
   if (p.identity) parts.push(`IDENTITY.md (who you are):\n${p.identity}`);
   if (p.user) parts.push(`USER.md (user model):\n${p.user}`);
+
+  const talkFocus = await readTalkFocus();
+  if (talkFocus) {
+    parts.push(formatTalkFocusSystem(talkFocus, TALK_FOCUS_VOICE_CHARS));
+  }
 
   return parts.join("\n\n");
 }
@@ -51,6 +59,7 @@ export async function buildLiveBackendInstructions(brain: AlfredBrain): Promise<
     lightsHint = "";
   }
 
+  const talkFocus = await readTalkFocus();
   const softOffer = await brain.briefing.shouldSoftOffer();
   const offerHint = softOffer
     ? `Soft-offer eligible: after the first short reply of this briefing day, the voice model should ask \"${brain.briefing.offerCloser}\" (or the backend can note appendOffer). Prefer play_daily_briefing / decline_briefing_offer tools over inventing briefing text.`
@@ -59,11 +68,14 @@ export async function buildLiveBackendInstructions(brain: AlfredBrain): Promise<
   return [
     "You handle work the GPT-Live voice model delegates. Use tools when current information or side effects are required.",
     "Return short results the voice model can speak aloud — no markdown.",
-    "Tools: search_memory, remember_memory, update_reminder, list_due_reminders, get_current_time, get_weather_forecast, get_weather_alerts, get_earthquakes, get_space_weather, get_natural_events, get_exchange_rate, get_hacker_news, get_news_headlines, summarize_news_article, get_crypto_price, get_metals_price, control_studio_lights, play_daily_briefing, decline_briefing_offer, show_expression, delegate_task" +
+    "Tools: search_memory, remember_memory, update_reminder, list_due_reminders, get_current_time, get_weather_forecast, get_weather_alerts, get_earthquakes, get_space_weather, get_natural_events, get_exchange_rate, get_hacker_news, get_news_headlines, summarize_news_article, get_crypto_price, get_metals_price, get_fitness_plan, get_fitness_focus, log_medicine, control_studio_lights, play_daily_briefing, decline_briefing_offer, show_expression, delegate_task" +
       (brain.archive ? ", search_archive, open_archive_record, archive_neighbors, ask_archive" : "") +
       ".",
     "show_expression drives AlfredBot's face (smile, frown, wink, curious, …) and optional body cues (nod, tilt, wave). The robot times out to calm. Skip it when the user is on phone or desktop only if you are unsure a robot is in the room — calling it is harmless.",
     "For the current time or today's date, call get_current_time. Omit place for home.",
+    "For what is next on the agenda or schedule, or the next meeting or event, call delegate_task with category calendar and the user's wording. Speak the tool result; do not invent the next item from memory.",
+    "For what the user is eating or training today, call get_fitness_plan. For ingredients, spices, amounts, steps, or the recipe or workout on screen, call get_fitness_focus and answer from that card. Do not ask which recipe when that card is present.",
+    "For medicine or supplements taken today, or what is still untaken, call log_medicine. mode except with names is 'everything except these'. Do not invent products.",
     "For weather without a named place, call get_weather_forecast with no location (home).",
     "For news headlines, call get_news_headlines. For follow-ups like 'the second one' or 'tell me more about that story' after headlines or the daily briefing, call summarize_news_article with index or match.",
     "For Bitcoin/crypto prices, call get_crypto_price. For gold or silver, call get_metals_price.",
@@ -75,5 +87,8 @@ export async function buildLiveBackendInstructions(brain: AlfredBrain): Promise<
     offerHint,
     dueBlock,
     lightsHint ? `Studio lights inventory: ${lightsHint}` : "Studio lights: none discovered yet.",
-  ].join("\n\n");
+    talkFocus ? formatTalkFocusSystem(talkFocus) : "",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
 }

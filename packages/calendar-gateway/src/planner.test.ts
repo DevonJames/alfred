@@ -339,6 +339,55 @@ describe("interpretCalendarTask", () => {
 });
 
 describe("runCalendarTask", () => {
+  it("answers what's next from the wall clock, not the first event of the day", async () => {
+    const standup: CalendarEvent = {
+      id: "evt-am",
+      title: "Standup",
+      start: "2026-09-26T13:00:00.000Z",
+      end: "2026-09-26T13:30:00.000Z",
+      allDay: false,
+      calendarId: "devon",
+      calendarTitle: "Devon Personal",
+      sourceTitle: "Personal iCloud",
+    };
+    const dentist: CalendarEvent = {
+      id: "evt-pm",
+      title: "Dentist",
+      start: "2026-09-26T20:00:00.000Z",
+      end: "2026-09-26T21:00:00.000Z",
+      allDay: false,
+      calendarId: "devon",
+      calendarTitle: "Devon Personal",
+      sourceTitle: "Personal iCloud",
+    };
+    const gateway: CalendarGateway = {
+      async catalog() {
+        return [];
+      },
+      async events() {
+        return [standup, dentist];
+      },
+      async create() {
+        throw new Error("no create");
+      },
+      async update() {
+        throw new Error("no update");
+      },
+      async delete() {
+        throw new Error("no delete");
+      },
+    };
+    const speech = await runCalendarTask({
+      task: "What's next on my agenda?",
+      now,
+      timeZone,
+      calendars: [devon],
+      gateway,
+    });
+    expect(speech).toMatch(/Next up is Dentist/);
+    expect(speech).not.toMatch(/Standup/);
+  });
+
   it("deletes one matching event and leaves two matches untouched", async () => {
     const deleted: string[] = [];
     const dentist: CalendarEvent = {

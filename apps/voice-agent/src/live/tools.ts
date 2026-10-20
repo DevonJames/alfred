@@ -2,6 +2,7 @@
  * LiveKit Agents function tools wrapping Alfred brain ports
  * (same capabilities as cascade VoiceSessionController committed tools).
  */
+import { formatNewsForDisplay, type BriefingDisplay } from "@alfred/briefing";
 import { llm } from "@livekit/agents";
 import {
   buildExpressionEvent,
@@ -17,7 +18,11 @@ export type ExpressionPublisher = (event: ExpressionEvent) => void;
 
 export function createAlfredLiveTools(
   brain: AlfredBrain,
-  opts: { publishExpression?: ExpressionPublisher } = {},
+  opts: {
+    publishExpression?: ExpressionPublisher;
+    /** Show the structured briefing/headline card instead of word-by-word captions. */
+    showStructuredCaption?: (speech: string, display: BriefingDisplay) => void;
+  } = {},
 ) {
   const tools = {
     search_memory: llm.tool({
@@ -208,6 +213,7 @@ export function createAlfredLiveTools(
       execute: async () => {
         try {
           const result = await brain.news.getHeadlines();
+          opts.showStructuredCaption?.(result.speech, formatNewsForDisplay(result.headlines));
           return result.speech;
         } catch (err) {
           console.error("[voice:live] get_news_headlines failed:", err);
@@ -408,6 +414,38 @@ export function createAlfredLiveTools(
       },
     }),
 
+    get_fitness_plan: llm.tool({
+      description:
+        "Read today's FitnessAlly meals and workouts. Call when the user asks what they are eating or training today. Do not invent meals or workouts.",
+      parameters: z.object({}),
+      execute: async () => brain.fitness.planSpeech(),
+    }),
+
+    get_fitness_focus: llm.tool({
+      description:
+        "Read the FitnessAlly recipe or workout on the user's screen, including the batch size they selected. Call for ingredients, spices, amounts, steps, or the open recipe or workout. Answer from the card. Do not ask which recipe when a card is present.",
+      parameters: z.object({}),
+      execute: async () => brain.fitness.focusSpeech(),
+    }),
+
+    log_medicine: llm.tool({
+      description:
+        "Update today's medicine and supplement checklist. Call when the user took their pills or supplements, took everything except one, undid one, or asks what is still untaken. Do not invent products. If the result says a name is ambiguous, ask which one.",
+      parameters: z.object({
+        mode: z.enum(["only", "all", "except", "undo", "status"]),
+        period: z.enum(["morning", "midday", "evening"]).optional(),
+        names: z.array(z.string()).optional(),
+      }),
+      execute: async (args) => {
+        try {
+          return await brain.medicine.log(args);
+        } catch (err) {
+          console.error("[voice:live] log_medicine failed:", err);
+          return "I couldn't update the medicine log just now.";
+        }
+      },
+    }),
+
     play_daily_briefing: llm.tool({
       description:
         "Generate and return today's daily briefing speech when the user asks for the briefing or affirms a soft offer (e.g. 'brief me', 'yes', 'go ahead' after being offered the briefing).",
@@ -422,7 +460,7 @@ export function createAlfredLiveTools(
           const decision = await brain.briefing.handleUserTurn(
             userText?.trim() || "brief me",
           );
-          if (decision.action === "play") {
+          if (decision.action === "play" || decision.action === "playNews") {
             if (decision.newsHeadlines?.length) {
               brain.news.rememberHeadlines(decision.newsHeadlines);
             }
@@ -436,7 +474,9 @@ export function createAlfredLiveTools(
             markSurfaced: true,
             userText: userText?.trim(),
           });
-          await brain.briefing.markPlayed();
+          await brain.briefing.markPlayed(undefined, {
+            offerNews: Boolean(payload.briefing.news?.length),
+          });
           if (payload.briefing.news?.length) {
             brain.news.rememberHeadlines(payload.briefing.news);
           }

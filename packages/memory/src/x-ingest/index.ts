@@ -1,4 +1,4 @@
-export { archiveNoteName, addXSource, findXSource, loadXSources, removeXSource, saveXSources } from "./sources.js";
+export { archiveNoteName, addXSource, findXSource, loadXSources, removeXSource, saveXSources, setXSourceBriefDid } from "./sources.js";
 export {
   archiveDisplayUrl,
   canonicalizeInboxUrl,
@@ -30,7 +30,18 @@ export {
   type NotesRunner,
 } from "./notes.js";
 export { appendXIngestDigest, invalidateBriefingCacheFile, loadXIngestDigest } from "./digest.js";
-export { ingestXNotes, ingestXUrl } from "./ingest.js";
+export { ingestXNotes, ingestXUrl, isXBrowserStormFailure } from "./ingest.js";
+export { sanitizeXIngestError } from "./errors.js";
+export {
+  defaultNoteBriefWriter,
+  fallbackNoteBriefMarkdown,
+  plainNoteText,
+  writeNoteInboxBrief,
+  NOTE_BRIEF_ENTITY_CLASS,
+  type NoteBriefDraft,
+  type NoteBriefWriter,
+  type NoteBriefWriteResult,
+} from "./note-brief.js";
 export { looksLikeXIngest, parseLearnedAtWindow, parseXIngestIntent } from "./intent.js";
 export { captureContentHash, writeXCaptureToOip } from "./oip-write.js";
 export {
@@ -43,6 +54,7 @@ export {
   ingestDayKey,
 } from "./paths.js";
 export type {
+  XBrowserSession,
   XCapture,
   XCaptureAdapter,
   XCaptureKind,
@@ -51,6 +63,7 @@ export type {
   XIngestDigestItem,
   XIngestIntent,
   XIngestItemResult,
+  XIngestProgress,
   XIngestRunResult,
   XIngestStatus,
   XLedgerEntry,

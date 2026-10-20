@@ -3,6 +3,8 @@ import { loadBriefingConfig, type BriefingConfig } from "./config.js";
 import { getBriefingDayKey } from "./day.js";
 import { generateBriefing, type GenerateBriefingOptions } from "./generate.js";
 import type { BriefingAgendaSlice } from "./agenda.js";
+import { loadCurrentFitnessDayPlan } from "./fitness-store.js";
+import { loadUntakenMorningMedicine } from "./medicine-store.js";
 import type { TaskReminder } from "./reminders.js";
 import type { GreetingLlm } from "./greeting.js";
 import { detectBriefingIntent, type BriefingIntentKind } from "./intent.js";
@@ -11,7 +13,7 @@ import { BriefingStateStore, isSoftOfferEligible, type BriefingOfferState } from
 import type { BriefingPayload } from "./types.js";
 import { BriefingCache } from "./cache.js";
 import type { NewsHeadline } from "./news.js";
-import { normalizeNewsHeadlines } from "./news.js";
+import { formatNewsSpeech, normalizeNewsHeadlines } from "./news.js";
 
 export const BRIEFING_OFFER_CLOSER = "Would you like the daily briefing now?";
 export const BRIEFING_DECLINE_ACK = "Alright.";
@@ -23,7 +25,12 @@ export type BriefingTurnDecision =
       action: "play";
       speech: string;
       payload: BriefingPayload;
-      /** Headlines spoken in this briefing — seed news follow-ups. */
+      /** Headlines ready after the brief (spoken only if the user accepts the offer). */
+      newsHeadlines: NewsHeadline[];
+    }
+  | {
+      action: "playNews";
+      speech: string;
       newsHeadlines: NewsHeadline[];
     }
   | { action: "decline"; speech: string }
@@ -91,7 +98,10 @@ export class BriefingController {
 
   async detectIntent(text: string): Promise<BriefingIntentKind> {
     const st = await this.syncOfferStateFromDisk();
-    return detectBriefingIntent(text, st.offerPending);
+    return detectBriefingIntent(text, {
+      offerPending: st.offerPending,
+      newsOfferPending: st.newsOfferPending,
+    });
   }
 
   async shouldSoftOffer(now = new Date()): Promise<boolean> {
@@ -128,14 +138,23 @@ export class BriefingController {
     });
   }
 
-  async markPlayed(now = new Date()): Promise<void> {
+  async markPlayed(
+    now = new Date(),
+    opts?: { offerNews?: boolean },
+  ): Promise<void> {
     const config = await this.resolveConfig();
     const dayKey = getBriefingDayKey(now, config.timezone, config.dayStart);
     this.firstTurnOfProcess = false;
     await this.state.update({
       lastPlayedDay: dayKey,
       offerPending: false,
+      newsOfferPending: opts?.offerNews === true,
     });
+  }
+
+  async markNewsOfferResolved(): Promise<void> {
+    this.firstTurnOfProcess = false;
+    await this.state.update({ newsOfferPending: false });
   }
 
   /**
@@ -153,6 +172,7 @@ export class BriefingController {
       lastDeclinedDay: null,
       lastPlayedDay: null,
       offerPending: false,
+      newsOfferPending: false,
       softOfferGeneration: nextGen,
     });
     await this.invalidateTodayCache(now);
@@ -182,6 +202,11 @@ export class BriefingController {
       includeLaunches,
       taskReminders: this.taskReminders,
       agendaEvents: this.agendaEvents,
+      fitnessPlan: (at) => loadCurrentFitnessDayPlan(at, config.timezone, config.dayStart),
+      medicineItems: (at) =>
+        loadUntakenMorningMedicine(at, config.timezone, config.dayStart, {
+          profileId: config.profileId,
+        }),
     });
   }
 
@@ -201,13 +226,41 @@ export class BriefingController {
         now,
         userText: text,
       });
-      await this.markPlayed(now);
       const newsHeadlines = normalizeNewsHeadlines(payload.briefing.news);
+      await this.markPlayed(now, { offerNews: newsHeadlines.length > 0 });
       return { action: "play", speech: payload.speech, payload, newsHeadlines };
+    }
+
+    if (intent === "affirmNewsOffer") {
+      const payload = await this.generate({
+        refresh: false,
+        markSurfaced: false,
+        now,
+        userText: text,
+      });
+      const newsHeadlines = normalizeNewsHeadlines(payload.briefing.news);
+      await this.markNewsOfferResolved();
+      if (!newsHeadlines.length) {
+        return {
+          action: "playNews",
+          speech: "I couldn't pull any headlines just now.",
+          newsHeadlines: [],
+        };
+      }
+      return {
+        action: "playNews",
+        speech: formatNewsSpeech(newsHeadlines, { inviteFollowUp: true }),
+        newsHeadlines,
+      };
     }
 
     if (intent === "declineOffer") {
       await this.markDeclined(now);
+      return { action: "decline", speech: this.declineAck };
+    }
+
+    if (intent === "declineNewsOffer") {
+      await this.markNewsOfferResolved();
       return { action: "decline", speech: this.declineAck };
     }
 

@@ -235,6 +235,23 @@ export function looksLikeClockQuestion(text: string): boolean {
 }
 
 /**
+ * True when the user wants the next upcoming item from now —
+ * not a full-day rundown and not a remaining-time clock question.
+ */
+export function looksLikeNextAgendaQuestion(text: string): boolean {
+  const value = text.trim();
+  if (!value || looksLikeClockQuestion(value)) return false;
+  if (/\bbrief(?:ing|ed|s)?\b/i.test(value) || /\bdaily\s+brief\b/i.test(value)) return false;
+  if (/\bwhat(?:'s|s| is)\s+next\b/i.test(value)) return true;
+  if (/\bwhat(?:'s|s| is)\s+coming\s+up\b/i.test(value)) return true;
+  if (/\bup\s+next\b/i.test(value)) return true;
+  if (/\bnext\s+(on\s+)?(my\s+)?(agenda|schedule|calendar)\b/i.test(value)) return true;
+  if (/\bwhat do i have\s+next\b/i.test(value)) return true;
+  if (/\b(my|the)\s+next\s+(meeting|event|appointment)\b/i.test(value)) return true;
+  return false;
+}
+
+/**
  * True when the user is asking what is on their calendar / agenda / day —
  * not a daily briefing, and not a rearrange or clock-remaining question.
  */
@@ -247,6 +264,7 @@ export function looksLikeAgendaQuestion(text: string): boolean {
   if (/\brundown\b/i.test(value)) return false;
   if (/\bwhat(?:'s|s| is)\s+on\s+my\s+plate\b/i.test(value)) return false;
 
+  if (looksLikeNextAgendaQuestion(value)) return true;
   if (/\bwhat(?:'s|s| is)\s+on\s+(my\s+)?(calendar|schedule|agenda)\b/i.test(value)) return true;
   if (/\b(my|the|today'?s|tonight'?s|tomorrow'?s)\s+(agenda|schedule|calendar)\b/i.test(value)) {
     return true;
@@ -263,6 +281,62 @@ export function looksLikeAgendaQuestion(text: string): boolean {
   }
   if (/\bwhat(?:'s|s| is)\s+(on\s+)?(for\s+)?(today|tonight|tomorrow)\b/i.test(value)) return true;
   return false;
+}
+
+/** Timed events sorted by start, excluding all-day items. */
+export function timedAgendaEvents(events: AgendaContextEvent[]): AgendaContextEvent[] {
+  return events
+    .filter((event) => !event.allDay && Number.isFinite(Date.parse(event.start)))
+    .sort((a, b) => a.start.localeCompare(b.start));
+}
+
+/**
+ * Next upcoming timed event strictly after `now`, or null when nothing remains
+ * in the provided list. In-progress items are not "next".
+ */
+export function pickNextAgendaEvent(
+  events: AgendaContextEvent[],
+  now: Date,
+): AgendaContextEvent | null {
+  const nowMs = now.getTime();
+  return timedAgendaEvents(events).find((event) => Date.parse(event.start) > nowMs) ?? null;
+}
+
+/**
+ * Deterministic answer for "what's next on my agenda", using the wall clock.
+ * Null when the utterance is not that kind of question.
+ */
+export function answerNextAgendaItem(input: {
+  text: string;
+  now: Date;
+  timeZone: string;
+  events: AgendaContextEvent[];
+}): string | null {
+  if (!looksLikeNextAgendaQuestion(input.text)) return null;
+  const nowMs = input.now.getTime();
+  const timed = timedAgendaEvents(input.events);
+  const active = timed.filter(
+    (event) => Date.parse(event.start) <= nowMs && nowMs < Date.parse(event.end),
+  );
+  const current = active.sort((a, b) => Date.parse(b.start) - Date.parse(a.start))[0];
+  const upcoming = pickNextAgendaEvent(timed, input.now);
+  if (upcoming) {
+    const at = clockLabel(new Date(upcoming.start), input.timeZone);
+    const todayParts = zonedParts(input.now, input.timeZone);
+    const eventParts = zonedParts(new Date(upcoming.start), input.timeZone);
+    const dayOffset = dayNumber(eventParts) - dayNumber(todayParts);
+    const day = relativeDayLabel(dayOffset);
+    const when = dayOffset === 0 ? `at ${at}` : `${day} at ${at}`;
+    const until = spanWords(Date.parse(upcoming.start) - nowMs);
+    if (current) {
+      return `You're in ${current.title} until ${clockLabel(new Date(current.end), input.timeZone)}. Next up is ${upcoming.title} ${when}, in ${until}.`;
+    }
+    return `Next up is ${upcoming.title} ${when}, in ${until}.`;
+  }
+  if (current) {
+    return `You're in ${current.title} until ${clockLabel(new Date(current.end), input.timeZone)}. Nothing else is scheduled after that.`;
+  }
+  return "Nothing left on your agenda from now.";
 }
 
 /** Remaining time or time-until, from the clock and the events on that day. Null when this is not that kind of question. */
@@ -324,6 +398,176 @@ export function answerAgendaClock(input: {
   return null;
 }
 
+/** A request to total scheduled time. The model decides which events match. */
+export function looksLikeHoursQuestion(text: string): boolean {
+  const value = text.trim();
+  if (!value || looksLikeClockQuestion(value)) return false;
+  if (/\b(until|till|left|longer)\b/i.test(value)) return false;
+  if (/\bhours?\b/i.test(value) && /\b(per day|each day|by day|broken out|day by day|break (?:it|them|that) (?:into|down|out))\b/i.test(value)) {
+    return true;
+  }
+  if (!/\b(hours?|hrs)\b/i.test(value)) return false;
+  return /\b(how many|how much|total|count|add up|sum)\b/i.test(value);
+}
+
+/** Days to move from today. Null when the request never names a week. The latest mention wins. */
+export function hoursWeekShift(text: string, earlier = ""): number | null {
+  return weekShift(text) ?? weekShift(earlier);
+}
+
+function weekShift(text: string): number | null {
+  const mentions = [...text.toLowerCase().matchAll(/\b(next week|last week|this week|the week|week)\b/g)];
+  const last = mentions[mentions.length - 1]?.[1];
+  if (!last) return null;
+  if (last === "next week") return 7;
+  if (last === "last week") return -7;
+  return 0;
+}
+
+export interface HoursEvent extends AgendaContextEvent {
+  id: string;
+}
+
+/** The model names the events. This only checks that the ids came back as a list. */
+export function parseHoursPick(raw: string): { label: string; ids: string[] } | null {
+  const text = raw.trim().replace(/^```(?:json)?\s*/i, "").replace(/```$/i, "").trim();
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  if (start < 0 || end <= start) return null;
+  try {
+    const body = JSON.parse(text.slice(start, end + 1)) as { label?: unknown; ids?: unknown };
+    if (!Array.isArray(body.ids)) return null;
+    const ids = body.ids.filter((id): id is string => typeof id === "string" && id.trim().length > 0).map((id) => id.trim());
+    const label = typeof body.label === "string" ? body.label.trim().replace(/\s+/g, " ") : "";
+    return { label: label.length > 40 ? "" : label, ids };
+  } catch {
+    return null;
+  }
+}
+
+export function hoursPeriod(text: string): string {
+  const mentions = [...text.toLowerCase().matchAll(/\b(next week|last week|tomorrow|tonight|today|this week|the week)\b/g)];
+  const last = mentions[mentions.length - 1]?.[1];
+  if (last === "next week") return "next week";
+  if (last === "last week") return "last week";
+  if (last === "tomorrow") return "tomorrow";
+  if (last === "today" || last === "tonight") return "today";
+  if (last === "this week" || last === "the week") return "this week";
+  if (/\bweek\b/i.test(text)) return "this week";
+  const weekday = namedWeekday(text);
+  if (weekday != null) return ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][weekday] ?? "that day";
+  return "then";
+}
+
+function dayKeyAt(ms: number, timeZone: string): string {
+  return isoDate(zonedParts(new Date(ms), timeZone));
+}
+
+function nextDayStart(ms: number, timeZone: string): number {
+  const next = addDays(zonedParts(new Date(ms), timeZone), 1, timeZone);
+  return zonedDateTime(timeZone, next.year, next.month, next.day).getTime();
+}
+
+function weekdayName(key: string, timeZone: string): string {
+  const [year, month, day] = key.split("-").map(Number);
+  return new Intl.DateTimeFormat("en-US", { timeZone, weekday: "long" }).format(
+    zonedDateTime(timeZone, year ?? 0, month ?? 1, day ?? 1),
+  );
+}
+
+function statedDailyMinutes(title: string): number | null {
+  const match = title.match(/(\d+(?:\.\d+)?)\s*-?\s*hours?\b/i);
+  if (!match) return null;
+  const hours = Number(match[1]);
+  if (!Number.isFinite(hours) || hours <= 0 || hours > 24) return null;
+  return Math.round(hours * 60);
+}
+
+function mergeMinutes(spans: { start: number; end: number }[]): number {
+  const sorted = spans.filter((span) => span.end > span.start).sort((a, b) => a.start - b.start || a.end - b.end);
+  let total = 0;
+  let start = 0;
+  let end = 0;
+  let open = false;
+  for (const span of sorted) {
+    if (!open || span.start > end) {
+      if (open) total += end - start;
+      start = span.start;
+      end = span.end;
+      open = true;
+    } else if (span.end > end) {
+      end = span.end;
+    }
+  }
+  if (open) total += end - start;
+  return Math.round(total / 60_000);
+}
+
+/**
+ * Add up the events the model selected. Overlaps among those events count once.
+ * Events whose ids were not selected are left out.
+ */
+export function sumMatchedHours(input: {
+  timeZone: string;
+  label: string;
+  period: string;
+  events: HoursEvent[];
+  ids: string[];
+}): string {
+  const chosen = new Set(input.ids);
+  const subject = input.label.trim();
+  const byDay = new Map<string, { start: number; end: number }[]>();
+  const addSpan = (key: string, start: number, end: number) => {
+    if (end <= start) return;
+    const list = byDay.get(key) ?? [];
+    list.push({ start, end });
+    byDay.set(key, list);
+  };
+  const selected = input.events.filter((event) => chosen.has(event.id));
+  for (const event of selected) {
+    if (event.allDay) continue;
+    const startMs = Date.parse(event.start);
+    const endMs = Date.parse(event.end);
+    if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) continue;
+    let cursor = startMs;
+    for (let guard = 0; cursor < endMs && guard < 8; guard += 1) {
+      const key = dayKeyAt(cursor, input.timeZone);
+      const dayEnd = nextDayStart(cursor, input.timeZone);
+      addSpan(key, Math.max(cursor, startMs), Math.min(endMs, dayEnd));
+      cursor = dayEnd;
+    }
+  }
+  for (const event of selected) {
+    if (!event.allDay) continue;
+    const daily = statedDailyMinutes(event.title);
+    if (daily == null) continue;
+    const startMs = Date.parse(event.start);
+    const endMs = Date.parse(event.end);
+    if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) continue;
+    let cursor = startMs;
+    for (let guard = 0; cursor < endMs && guard < 8; guard += 1) {
+      const key = dayKeyAt(cursor, input.timeZone);
+      const dayEnd = nextDayStart(cursor, input.timeZone);
+      if (cursor < endMs && !(byDay.get(key)?.length)) addSpan(key, cursor, Math.min(endMs, cursor + daily * 60_000, dayEnd));
+      cursor = dayEnd;
+    }
+  }
+  const days = [...byDay.entries()]
+    .map(([key, spans]) => ({ key, minutes: mergeMinutes(spans) }))
+    .filter((day) => day.minutes > 0)
+    .sort((a, b) => a.key.localeCompare(b.key));
+  const period = input.period;
+  const of = subject ? ` of ${subject}` : "";
+  if (!days.length) {
+    return subject
+      ? `You don't have any ${subject} hours scheduled ${period}.`
+      : `You don't have any hours scheduled ${period}.`;
+  }
+  const total = days.reduce((sum, day) => sum + day.minutes, 0);
+  const lines = days.map((day) => `${weekdayName(day.key, input.timeZone)}: ${spanWords(day.minutes * 60_000)}`);
+  return `You have ${spanWords(total * 60_000)}${of} scheduled ${period}.\n${lines.join("\n")}`;
+}
+
 function clockLabel(now: Date, timeZone: string): string {
   return new Intl.DateTimeFormat("en-US", {
     timeZone,
@@ -351,14 +595,24 @@ export function describeAgendaView(input: {
   const eventLines = input.events.slice(0, 40).map((event) => {
     const start = Date.parse(event.start);
     const end = Date.parse(event.end);
-    const active = nowMs != null && !event.allDay && start <= nowMs && nowMs < end;
-    const progress = active ? ` — in progress, ${spanWords(end - nowMs)} left` : "";
-    return `- ${formatEventWhen(event, input.timeZone)} — ${event.title} (${event.calendarTitle}, ${event.sourceTitle})${progress}`;
+    let status = "";
+    if (nowMs != null && !event.allDay && Number.isFinite(start) && Number.isFinite(end)) {
+      if (start <= nowMs && nowMs < end) status = ` — in progress, ${spanWords(end - nowMs)} left`;
+      else if (end <= nowMs) status = " — already ended";
+      else status = ` — upcoming, in ${spanWords(start - nowMs)}`;
+    }
+    return `- ${formatEventWhen(event, input.timeZone)} — ${event.title} (${event.calendarTitle}, ${event.sourceTitle})${status}`;
   });
   const viewName = input.view === "week" ? "Week" : (input.focusLabel ?? "Today");
   const clock = input.now ? `The clock reads ${clockLabel(input.now, input.timeZone)}.` : "";
+  const next = input.now ? pickNextAgendaEvent(input.events, input.now) : null;
+  const nextLine = next
+    ? `Next upcoming timed event from the clock: ${next.title} at ${clockLabel(new Date(next.start), input.timeZone)}.`
+    : input.now
+      ? "There is no upcoming timed event left in this view after the clock."
+      : "";
   return [
-    "The user is asking about their calendar / agenda. Answer from the events below — speak a short rundown when they ask what is on today or their schedule. Do not invent events. Do not play the daily briefing unless they asked for a briefing.",
+    "The user is asking about their calendar / agenda. Answer from the events below — speak a short rundown when they ask what is on today or their schedule. Do not invent events. Do not play the daily briefing unless they asked for a briefing. Do not add up hours yourself. Call calculate for any other arithmetic.",
     [ `View: ${viewName}. ${input.rangeLabel}. Timezone: ${input.timeZone}.`, clock ]
       .filter(Boolean)
       .join(" "),
@@ -368,8 +622,9 @@ export function describeAgendaView(input: {
     `Calendars: ${calendarLine}.`,
     "Events in this view:",
     eventLines.length ? eventLines.join("\n") : "None.",
+    nextLine,
     `Today is ${longDate(zonedParts(input.now ?? new Date(), input.timeZone), input.timeZone)}. A question about now, today, or how much longer uses that date and the clock, not another day that is also in this view.`,
-    `Use this view when answering. The clock above is the current time; use it for the time of day and for how long until an event. Do not say the clock is unavailable.${
+    `Use this view when answering. The clock above is the current time; use it for the time of day and for how long until an event. When they ask what is next on their agenda or schedule, answer with the next upcoming timed event after the clock — never the first event of the day if it has already passed. Skip events marked already ended. Do not say the clock is unavailable.${
       input.view === "today" ? " When they do not name a day, they mean today." : ""
     } Change calendars only through delegate_task with category calendar. Put the user's own wording in taskDescription, including a clock time such as 8:00-8:45 AM and the calendar name. If they answer a question about the time or the calendar, call delegate_task again with that answer and the original request.`,
   ].join("\n");

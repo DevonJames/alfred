@@ -1,6 +1,6 @@
 const CHANNEL = "alfred.shell";
 
-/** @typedef {"voice" | "brief" | "notes" | "graph" | "graphBeta" | "vectors" | "ingest" | "claim" | "gateway" | "agenda" | "reminders"} Screen */
+/** @typedef {"voice" | "brief" | "notes" | "graph" | "graphBeta" | "vectors" | "ingest" | "claim" | "gateway" | "agenda" | "reminders" | "weeklyPlan" | "medicine"} Screen */
 
 const SCREENS = {
   voice: { title: "Talk", src: null },
@@ -8,6 +8,8 @@ const SCREENS = {
   notes: { title: "Notes", src: "/notes" },
   gateway: { title: "Gateway", src: "/gateway" },
   agenda: { title: "Agenda", src: "/agenda" },
+  weeklyPlan: { title: "Weekly plan", src: "/agenda/standard-plan" },
+  medicine: { title: "Medicine", src: "/medicine" },
   reminders: { title: "Reminders", src: "/reminders" },
   graph: { title: "Graph", src: "/memory/graph" },
   graphBeta: { title: "Graph (beta)", src: "/memory/graph-beta" },
@@ -16,8 +18,8 @@ const SCREENS = {
   claim: { title: "Claim", src: "/connect/claim" },
 };
 
-const MEMORY_SCREENS = new Set(["graph", "graphBeta", "vectors"]);
-const SETTINGS_SCREENS = new Set(["brief", "gateway", "notes", "ingest", "claim"]);
+const MEMORY_SCREENS = new Set(["graph", "graphBeta", "vectors", "ingest"]);
+const SETTINGS_SCREENS = new Set(["weeklyPlan", "medicine", "brief", "gateway", "notes", "claim"]);
 
 const nav = document.getElementById("shell-nav");
 const voiceFrame = document.getElementById("voice-frame");
@@ -58,6 +60,8 @@ function screenFromHash() {
   const raw = (location.hash || "#voice").replace(/^#/, "").toLowerCase();
   if (raw === "graphbeta" || raw === "graph-beta") return "graphBeta";
   if (raw === "vectors" || raw === "vector" || raw === "vector-explorer") return "vectors";
+  if (raw === "weeklyplan" || raw === "weekly-plan") return "weeklyPlan";
+  if (raw === "medicine" || raw === "medicines" || raw === "supplements") return "medicine";
   if (raw === "graph" || raw === "ingest" || raw === "claim" || raw === "voice" || raw === "brief" || raw === "notes" || raw === "gateway" || raw === "agenda" || raw === "reminders")
     return raw;
   return "voice";
@@ -89,8 +93,16 @@ function syncNavActive(next) {
   }
 }
 
+/** Only a graph page URL may replace the iframe address, so a node link survives the shell. */
+function graphNodeHref(raw) {
+  if (typeof raw !== "string" || !raw.startsWith("/") || raw.startsWith("//")) return "";
+  const path = localPath(raw.split("?")[0].split("#")[0]);
+  if (path !== "/memory/graph") return "";
+  return raw.split("#")[0];
+}
+
 function applyScreen(next, opts = {}) {
-  const { persistHash = true, force = false } = opts;
+  const { persistHash = true, force = false, href = "" } = opts;
   const previous = screen;
   screen = next;
   if (persistHash) setHash(next);
@@ -115,7 +127,9 @@ function applyScreen(next, opts = {}) {
       (next === "brief" && current.startsWith("/briefing")) ||
       (next === "notes" && current.startsWith("/notes")) ||
       (next === "gateway" && current.startsWith("/gateway")) ||
-      (next === "agenda" && current.startsWith("/agenda")) ||
+      (next === "weeklyPlan" && current.startsWith("/agenda/standard-plan")) ||
+      (next === "medicine" && current.startsWith("/medicine")) ||
+      (next === "agenda" && current.startsWith("/agenda") && !current.startsWith("/agenda/standard-plan")) ||
       (next === "reminders" && current.startsWith("/reminders")) ||
       (next === "graphBeta" && isGraphBetaPath(current)) ||
       (next === "graph" && isClassicGraphPath(current)) ||
@@ -124,7 +138,8 @@ function applyScreen(next, opts = {}) {
       (next === "claim" && current.startsWith("/connect/claim"));
     const canonical = src ? localPath(src) : "";
     const onCanonical = !canonical || current === canonical || current === `${canonical}/`;
-    if (src && (!already || (force && !onCanonical))) contentFrame.src = url(src);
+    const frameSrc = href || src;
+    if (frameSrc && (href || !already || (force && !onCanonical))) contentFrame.src = url(frameSrc);
   }
 
   updatePipVisibility();
@@ -199,7 +214,20 @@ function onShellMessage(event) {
   if (!data || data.channel !== CHANNEL) return;
 
   if (data.type === "navigate" && data.screen in SCREENS) {
-    applyScreen(data.screen);
+    const href = data.screen === "graph" ? graphNodeHref(data.href) : "";
+    applyScreen(data.screen, href ? { href } : {});
+    return;
+  }
+
+  if (data.type === "talk-focus") {
+    applyScreen("voice");
+    const send = () => {
+      if (voiceFrame.contentWindow) {
+        voiceFrame.contentWindow.postMessage(data, location.origin);
+      }
+    };
+    send();
+    window.setTimeout(send, 400);
     return;
   }
 
@@ -301,6 +329,8 @@ contentFrame.addEventListener("load", () => {
     else if (path.startsWith("/connect/claim")) applyScreen("claim", { persistHash: true });
     else if (path.startsWith("/notes")) applyScreen("notes", { persistHash: true });
     else if (path.startsWith("/gateway")) applyScreen("gateway", { persistHash: true });
+    else if (path === "/agenda/standard-plan" || path.startsWith("/agenda/standard-plan/")) applyScreen("weeklyPlan", { persistHash: true });
+    else if (path === "/medicine" || path.startsWith("/medicine/")) applyScreen("medicine", { persistHash: true });
     else if (path.startsWith("/agenda")) applyScreen("agenda", { persistHash: true });
     else if (path.startsWith("/reminders")) applyScreen("reminders", { persistHash: true });
     else if (path === "/" || path === "") applyScreen("voice");

@@ -1,7 +1,7 @@
 # GPT-Live experimental voice stack
 
 **Status:** experimental opt-in. Does **not** replace the cascade (`pnpm voice`).  
-**Voice:** OpenAI Ripple for now (distinct from ElevenLabs Alfred); custom clone later via OpenAI sales.
+**Voice:** a saved OpenAI prompt-to-voice (default Alfred description). Set `ALFRED_GPT_LIVE_VOICE` to a builtin name such as `ripple` to opt out. Recording-based clones still need OpenAI approval.
 
 ## Run
 
@@ -56,13 +56,20 @@ That unique-room design matters because LiveKit **only applies token agent dispa
 | `LIVEKIT_URL` / `API_KEY` / `API_SECRET` | — | Same as cascade |
 | `ALFRED_VOICE_STACK` | unset (= cascade) | Set `live` for client token dispatch |
 | `LIVEKIT_AGENT_NAME` | `alfred-live` | Explicit Agents dispatch name |
-| `ALFRED_GPT_LIVE_VOICE` | `ripple` | GPT-Live voice (custom Alfred clone later via OpenAI sales) |
+| `ALFRED_GPT_LIVE_VOICE` | unset | Builtin name (`ripple`, `marin`, …). Unset uses prompt-to-voice |
+| `ALFRED_GPT_LIVE_VOICE_ID` | unset | Saved `voice_…` id. Skips creation |
+| `ALFRED_GPT_LIVE_VOICE_PROMPT` | built-in Alfred description | Text description for `/v1/audio/voices` (`type: prompt`) |
+| `ALFRED_GPT_LIVE_VOICE_NAME` | `Alfred` | Name stored on the saved voice |
+| `ALFRED_GPT_LIVE_VOICE_CACHE` | `data/gpt-live/voice.json` | Reuses one voice id so sessions do not create a new voice each time |
 | `ALFRED_GPT_LIVE_BACKEND_MODEL` | `gpt-5.6-luna` | Responses backend |
+
+Prompt-to-voice is free to create and billed as a normal GPT-Live session when spoken. The description is also appended to the session instructions, which OpenAI recommends for voice performance. Changing the prompt creates a new saved voice (100 per organization).
 
 Memory / persona / briefing env vars are shared with cascade.
 
 ## Refs
 
+- https://developers.openai.com/api/docs/guides/custom-voices
 - https://docs.livekit.io/agents/models/realtime/plugins/gpt-live/
 - https://docs.livekit.io/agents/server/agent-dispatch/
 - Weekend robot affect: [expressive-mode-robot.md](./expressive-mode-robot.md)

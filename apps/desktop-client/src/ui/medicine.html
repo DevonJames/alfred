@@ -1,0 +1,463 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Alfred // medicine</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Syne:wght@700;800&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg: #0b0f14;
+        --fg: #e8eef5;
+        --muted: #8b9bb0;
+        --line: #1c2733;
+        --accent: #7ee0c3;
+        --mint: #3dffc4;
+        --warn: #e0c07e;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family: "IBM Plex Mono", ui-monospace, monospace;
+        background:
+          radial-gradient(1200px 600px at 20% -10%, #163049 0%, transparent 55%),
+          radial-gradient(900px 500px at 100% 20%, #1a2a22 0%, transparent 50%), var(--bg);
+        color: var(--fg);
+        padding: 2rem 1.25rem 3rem;
+      }
+      main { width: min(44rem, 100%); margin: 0 auto; }
+      .brand {
+        font-family: Syne, sans-serif;
+        font-weight: 800;
+        font-size: clamp(1.75rem, 5vw, 2.25rem);
+        letter-spacing: 0.04em;
+        line-height: 1;
+        margin: 0 0 0.35rem;
+      }
+      .sub {
+        color: var(--muted);
+        font-size: 0.72rem;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        margin: 0 0 1.25rem;
+      }
+      .hint {
+        color: var(--muted);
+        font-size: 0.75rem;
+        line-height: 1.45;
+        margin: 0 0 0.9rem;
+      }
+      section {
+        border: 1px solid var(--line);
+        background: rgba(12, 18, 26, 0.55);
+        padding: 1.1rem 1.15rem 1.2rem;
+        margin-bottom: 1rem;
+      }
+      h2 {
+        margin: 0;
+        font-size: 0.7rem;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        color: var(--accent);
+        font-weight: 600;
+      }
+      .period-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.75rem;
+        margin-bottom: 0.85rem;
+      }
+      .item {
+        display: grid;
+        grid-template-columns: auto auto 1fr auto auto;
+        gap: 0.7rem;
+        align-items: center;
+        padding: 0.7rem 0;
+        border-top: 1px solid var(--line);
+      }
+      .item:first-of-type { border-top: 0; padding-top: 0; }
+      .item img {
+        width: 2.6rem;
+        height: 2.6rem;
+        object-fit: cover;
+        border: 1px solid var(--line);
+        background: #101820;
+      }
+      .name { font-size: 0.86rem; }
+      .meta { color: var(--muted); font-size: 0.72rem; margin-top: 0.2rem; line-height: 1.4; }
+      .review { color: var(--warn); }
+      .edit {
+        grid-column: 1 / -1;
+        display: grid;
+        gap: 0.55rem;
+      }
+      label.field { display: grid; gap: 0.3rem; }
+      label.field span {
+        color: var(--muted);
+        font-size: 0.65rem;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+      }
+      input[type="text"], select, textarea {
+        width: 100%;
+        border: 1px solid var(--line);
+        background: #101820;
+        color: var(--fg);
+        font: inherit;
+        font-size: 0.8rem;
+        padding: 0.55rem 0.65rem;
+      }
+      textarea { min-height: 7rem; resize: vertical; }
+      .days { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+      .days label {
+        display: flex;
+        align-items: center;
+        gap: 0.3rem;
+        color: var(--muted);
+        font-size: 0.72rem;
+      }
+      button {
+        appearance: none;
+        border: 1px solid var(--line);
+        background: transparent;
+        color: var(--muted);
+        font: inherit;
+        font-size: 0.68rem;
+        font-weight: 600;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        padding: 0.45rem 0.6rem;
+        cursor: pointer;
+      }
+      button.primary, button.save {
+        border-color: rgba(61, 255, 196, 0.45);
+        background: rgba(61, 255, 196, 0.1);
+        color: var(--mint);
+      }
+      button:disabled { opacity: 0.5; cursor: default; }
+      button.danger { color: var(--warn); }
+      .composer input[type="file"] { color: var(--muted); font: inherit; font-size: 0.75rem; margin-bottom: 0.7rem; }
+      .actions { display: flex; align-items: center; gap: 0.75rem; margin-top: 0.8rem; }
+      #status.ok { color: var(--mint); }
+      #status.err { color: var(--warn); }
+      #status { font-size: 0.75rem; }
+      .hidden { display: none !important; }
+      input[type="checkbox"] { accent-color: var(--mint); }
+      .not-today { color: var(--muted); font-size: 0.68rem; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1 class="brand">Medicine &amp; Supplements</h1>
+      <p class="sub">Schedule</p>
+      <p class="hint">
+        Photos identify the bottle. Your note decides when and how much. Alfred does not change a dose.
+      </p>
+      <p class="hint hidden" id="empty-hint">
+        Upload bottle photos and describe the plan — morning, every day, before a certain hour — to build the schedule.
+      </p>
+      <div id="groups"></div>
+      <section class="composer">
+        <h2 style="margin-bottom: 0.85rem">Add more</h2>
+        <p class="hint">
+          Additional photos and a note update matching items and add new ones. Nothing is removed unless you delete it.
+        </p>
+        <input id="images" type="file" accept="image/*" multiple />
+        <textarea id="plan" placeholder="Vitamin D and magnesium every morning with breakfast, before 10. Fish oil at mid-day."></textarea>
+        <div class="actions">
+          <button type="button" class="save" id="add">Add to schedule</button>
+          <span id="status"></span>
+        </div>
+      </section>
+    </main>
+    <script src="/alfred-base.js"></script>
+    <script src="/embed-bridge.js"></script>
+    <script>
+      const api = (path) => (typeof alfredUrl === "function" ? alfredUrl(path) : path);
+      const PERIODS = [
+        { id: "morning", label: "Morning" },
+        { id: "midday", label: "Mid-day" },
+        { id: "evening", label: "Evening" },
+      ];
+      const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+      let items = [];
+
+      function setStatus(msg, kind) {
+        const el = document.getElementById("status");
+        el.textContent = msg;
+        el.className = kind || "";
+      }
+
+      function daysLabel(days) {
+        if (!Array.isArray(days) || days.length === 0 || days.length === 7) return "Every day";
+        const set = new Set(days);
+        if (set.size === 5 && [1, 2, 3, 4, 5].every((day) => set.has(day))) return "Weekdays";
+        if (set.size === 2 && set.has(0) && set.has(6)) return "Weekends";
+        return days.map((day) => DAY_LABELS[day] || "").filter(Boolean).join(" ");
+      }
+
+      function periodLabel(id) {
+        return PERIODS.find((period) => period.id === id)?.label || id;
+      }
+
+      async function reload() {
+        const res = await fetch(api("/medicine/schedule"));
+        if (!res.ok) throw new Error(`Failed to load (${res.status})`);
+        const data = await res.json();
+        items = Array.isArray(data.items) ? data.items : [];
+        paint();
+      }
+
+      function paint() {
+        const groups = document.getElementById("groups");
+        groups.innerHTML = "";
+        document.getElementById("empty-hint").classList.toggle("hidden", items.length > 0);
+        for (const period of PERIODS) {
+          const rows = items.filter((item) => item.period === period.id);
+          if (!rows.length) continue;
+          const section = document.createElement("section");
+          const head = document.createElement("div");
+          head.className = "period-head";
+          const title = document.createElement("h2");
+          title.textContent = period.label;
+          const mark = document.createElement("button");
+          mark.type = "button";
+          mark.textContent = "Mark all taken";
+          mark.addEventListener("click", () => log({ mode: "all", period: period.id }));
+          head.append(title, mark);
+          section.append(head);
+          for (const item of rows) section.append(renderItem(item));
+          groups.append(section);
+        }
+      }
+
+      function renderItem(item) {
+        const row = document.createElement("div");
+        row.className = "item";
+        const check = document.createElement("input");
+        check.type = "checkbox";
+        check.checked = Boolean(item.taken);
+        check.disabled = !item.dueToday;
+        check.setAttribute("aria-label", `Taken today: ${item.name}`);
+        check.title = item.dueToday ? "Taken today" : "Not scheduled today";
+        check.addEventListener("change", () => {
+          log(check.checked ? { mode: "only", ids: [item.id] } : { mode: "undo", ids: [item.id] });
+        });
+        row.append(check);
+        if (item.imageId) {
+          const img = document.createElement("img");
+          img.alt = "";
+          img.src = api(`/medicine/images/${item.imageId}`);
+          row.append(img);
+        } else {
+          const spacer = document.createElement("span");
+          row.append(spacer);
+        }
+        const copy = document.createElement("div");
+        const name = document.createElement("div");
+        name.className = "name";
+        name.textContent = item.name;
+        const meta = document.createElement("div");
+        meta.className = "meta";
+        const bits = [item.quantity, periodLabel(item.period), item.instruction, daysLabel(item.days)].filter(Boolean);
+        meta.textContent = bits.join(" · ");
+        copy.append(name, meta);
+        if (!item.dueToday) {
+          const note = document.createElement("div");
+          note.className = "not-today";
+          note.textContent = "Not today";
+          copy.append(note);
+        }
+        if (item.needsReview) {
+          const review = document.createElement("div");
+          review.className = "meta review";
+          review.textContent = "Check the label — name or quantity was unclear.";
+          copy.append(review);
+        }
+        const edit = document.createElement("button");
+        edit.type = "button";
+        edit.textContent = "Edit";
+        edit.addEventListener("click", () => openEdit(row, item));
+        const remove = document.createElement("button");
+        remove.type = "button";
+        remove.className = "danger";
+        remove.textContent = "Delete";
+        remove.addEventListener("click", () => removeItem(item));
+        row.append(copy, edit, remove);
+        return row;
+      }
+
+      function openEdit(row, item) {
+        row.innerHTML = "";
+        const form = document.createElement("form");
+        form.className = "edit";
+        form.append(
+          field("Name", "name", item.name),
+          field("Quantity", "quantity", item.quantity || ""),
+          periodField(item.period),
+          field("Instruction", "instruction", item.instruction || ""),
+          daysField(item.days),
+        );
+        const actions = document.createElement("div");
+        actions.className = "actions";
+        const save = document.createElement("button");
+        save.type = "submit";
+        save.className = "primary";
+        save.textContent = "Save";
+        const cancel = document.createElement("button");
+        cancel.type = "button";
+        cancel.textContent = "Cancel";
+        cancel.addEventListener("click", paint);
+        actions.append(save, cancel);
+        form.append(actions);
+        form.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          const data = new FormData(form);
+          const selected = [...form.querySelectorAll('input[name="day"]:checked')].map((input) =>
+            Number(input.value),
+          );
+          if (!selected.length) {
+            setStatus("Pick at least one day.", "err");
+            return;
+          }
+          await send(
+            api(`/medicine/items/${item.id}`),
+            "PATCH",
+            {
+              name: String(data.get("name") || ""),
+              quantity: String(data.get("quantity") || ""),
+              period: String(data.get("period") || item.period),
+              instruction: String(data.get("instruction") || ""),
+              days: selected.length === 7 ? "daily" : selected,
+            },
+            "Saved.",
+          );
+        });
+        row.append(form);
+      }
+
+      function field(label, name, value) {
+        const wrap = document.createElement("label");
+        wrap.className = "field";
+        const span = document.createElement("span");
+        span.textContent = label;
+        const input = document.createElement("input");
+        input.type = "text";
+        input.name = name;
+        input.value = value;
+        wrap.append(span, input);
+        return wrap;
+      }
+
+      function periodField(selected) {
+        const wrap = document.createElement("label");
+        wrap.className = "field";
+        const span = document.createElement("span");
+        span.textContent = "Time of day";
+        const select = document.createElement("select");
+        select.name = "period";
+        for (const period of PERIODS) {
+          const option = document.createElement("option");
+          option.value = period.id;
+          option.textContent = period.label;
+          option.selected = period.id === selected;
+          select.append(option);
+        }
+        wrap.append(span, select);
+        return wrap;
+      }
+
+      function daysField(days) {
+        const wrap = document.createElement("div");
+        wrap.className = "field";
+        const span = document.createElement("span");
+        span.textContent = "Days";
+        const row = document.createElement("div");
+        row.className = "days";
+        const selected = Array.isArray(days) ? new Set(days) : new Set([0, 1, 2, 3, 4, 5, 6]);
+        DAY_LABELS.forEach((label, index) => {
+          const labelEl = document.createElement("label");
+          const input = document.createElement("input");
+          input.type = "checkbox";
+          input.name = "day";
+          input.value = String(index);
+          input.checked = selected.has(index);
+          labelEl.append(input, document.createTextNode(label));
+          row.append(labelEl);
+        });
+        wrap.append(span, row);
+        return wrap;
+      }
+
+      async function removeItem(item) {
+        if (!confirm(`Delete ${item.name} from the schedule?`)) return;
+        await send(api(`/medicine/items/${item.id}`), "DELETE", null, "Deleted.");
+      }
+
+      async function log(body) {
+        await send(api("/medicine/log"), "POST", body, "");
+      }
+
+      async function send(url, method, body, okMessage) {
+        setStatus("Saving…");
+        try {
+          const res = await fetch(url, {
+            method,
+            headers: body ? { "Content-Type": "application/json" } : undefined,
+            body: body ? JSON.stringify(body) : undefined,
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+          if (Array.isArray(data.items)) {
+            items = data.items;
+            paint();
+          } else {
+            await reload();
+          }
+          setStatus(okMessage || data.speech || "", okMessage || data.speech ? "ok" : "");
+        } catch (err) {
+          setStatus(err instanceof Error ? err.message : String(err), "err");
+          await reload().catch(() => {});
+        }
+      }
+
+      document.getElementById("add").addEventListener("click", async () => {
+        const button = document.getElementById("add");
+        const plan = document.getElementById("plan").value.trim();
+        const files = document.getElementById("images").files;
+        if (!plan && (!files || !files.length)) {
+          setStatus("Add a photo or a note.", "err");
+          return;
+        }
+        button.disabled = true;
+        setStatus("Reading bottles…");
+        try {
+          const body = new FormData();
+          body.set("plan", plan);
+          for (const file of files || []) body.append("images", file);
+          const res = await fetch(api("/medicine/analyze"), { method: "POST", body });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+          items = Array.isArray(data.items) ? data.items : items;
+          document.getElementById("plan").value = "";
+          document.getElementById("images").value = "";
+          paint();
+          setStatus(data.summary || "Saved.", "ok");
+        } catch (err) {
+          setStatus(err instanceof Error ? err.message : String(err), "err");
+        } finally {
+          button.disabled = false;
+        }
+      });
+
+      reload().catch((err) => setStatus(err instanceof Error ? err.message : String(err), "err"));
+    </script>
+  </body>
+</html>

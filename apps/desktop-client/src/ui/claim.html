@@ -177,8 +177,13 @@
           <span id="pairingPin">————</span>
         </div>
         <p class="hint" id="pinHint" style="margin-top: 0.5rem; margin-bottom: 0">
-          Enter this PIN in the iOS app to finish pairing.
+          Type this PIN in the app that asked for it.
         </p>
+      </div>
+
+      <div class="field" id="devicesField" hidden>
+        <div class="label">Paired devices</div>
+        <div class="value" id="pairedDevices" style="white-space: pre-line"></div>
       </div>
 
       <p class="status {{RELAY_CLASS}}">{{RELAY_STATUS}}</p>
@@ -235,10 +240,24 @@
           if (pending) {
             pinField.hidden = false;
             pinEl.textContent = pending.pairing_pin;
+            const kind = pending.device_type ? " (" + pending.device_type + ")" : "";
             hint.textContent =
-              "PIN for “" + pending.name + "” — enter it in the iOS app (expires soon).";
+              "PIN for “" + pending.name + "”" + kind + " — type it in that app (expires soon).";
           } else {
             pinField.hidden = true;
+          }
+          const devicesField = document.getElementById("devicesField");
+          const pairedEl = document.getElementById("pairedDevices");
+          const paired = (data.devices || []).filter((d) => d.is_paired);
+          if (devicesField && pairedEl) {
+            if (paired.length) {
+              devicesField.hidden = false;
+              pairedEl.textContent = paired
+                .map((d) => d.name + (d.device_type ? " · " + d.device_type : ""))
+                .join("\n");
+            } else {
+              devicesField.hidden = true;
+            }
           }
         } catch {
           // ignore poll errors

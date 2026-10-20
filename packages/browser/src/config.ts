@@ -19,10 +19,40 @@ export function defaultBrowserUserDataDir(): string {
   return path.join(resolveRepoRoot(), "data", "browser", "alfred-profile");
 }
 
+export function parseBrowserChannel(raw: string | undefined): BrowserChannel | undefined {
+  const value = raw?.trim().toLowerCase();
+  if (value === "brave" || value === "chromium" || value === "chrome") return value;
+  return undefined;
+}
+
 export function resolveBrowserChannel(): BrowserChannel {
-  const raw = (process.env.ALFRED_BROWSER_CHANNEL ?? "chrome").toLowerCase();
-  if (raw === "brave" || raw === "chromium" || raw === "chrome") return raw;
-  return "chrome";
+  return parseBrowserChannel(process.env.ALFRED_BROWSER_CHANNEL) ?? "chrome";
+}
+
+export function browserDisplayName(channel: BrowserChannel): string {
+  if (channel === "brave") return "Brave";
+  if (channel === "chromium") return "Chromium";
+  return "Chrome";
+}
+
+export function chromeExecutable(): string | undefined {
+  const candidates = [
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "/usr/bin/google-chrome",
+    "/usr/bin/google-chrome-stable",
+  ];
+  return candidates.find((p) => existsSync(p));
+}
+
+export function installedBrowserChannels(): Array<{
+  id: BrowserChannel;
+  name: string;
+  installed: boolean;
+}> {
+  return [
+    { id: "chrome", name: "Chrome", installed: Boolean(chromeExecutable()) },
+    { id: "brave", name: "Brave", installed: Boolean(braveExecutable()) },
+  ];
 }
 
 export function resolveCuaMode(): CuaMode {
@@ -47,7 +77,7 @@ export function loadBrowserConfig(overrides: Partial<BrowserConfig> = {}): Brows
     channel,
     executablePath:
       overrides.executablePath ?? (channel === "brave" ? braveExecutable() : undefined),
-    headless: overrides.headless ?? process.env.ALFRED_BROWSER_HEADLESS !== "0",
+    headless: overrides.headless ?? process.env.ALFRED_BROWSER_HEADLESS === "1",
     cua: overrides.cua ?? resolveCuaMode(),
   };
 }

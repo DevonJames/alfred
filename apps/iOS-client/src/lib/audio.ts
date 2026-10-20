@@ -5,7 +5,12 @@
  * back what the Mac says — it does not transcribe, reason, or decide. All of
  * that stays in the desktop's Conversation Core (§9.1).
  */
-import { RecordingPresets, requestRecordingPermissionsAsync, setAudioModeAsync } from "expo-audio";
+import {
+  RecordingPresets,
+  requestRecordingPermissionsAsync,
+  setAudioModeAsync,
+  setIsAudioActiveAsync,
+} from "expo-audio";
 import type { LiveKitNativeModule } from "./voice/livekit-types";
 import { loadLiveKitNative } from "./voice/optional-module";
 
@@ -25,25 +30,35 @@ export async function configureAudioSession(): Promise<void> {
 
 /** Release the recording route so playback isn't stuck on the earpiece path. */
 export async function releaseAudioSession(): Promise<void> {
-  await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true });
+  await setAudioModeAsync({
+    allowsRecording: false,
+    allowsBackgroundRecording: false,
+    playsInSilentMode: true,
+    shouldPlayInBackground: false,
+    interruptionMode: "mixWithOthers",
+    shouldRouteThroughEarpiece: false,
+  });
 }
 
 /**
- * Notes recording must own AVAudioSession. Talk/LiveKit and a leftover
- * expo-av recorder both leave the session in a state where prepare fails
- * with "recorder not prepared".
+ * Notes recording must own AVAudioSession and keep the mic through lock,
+ * auto-lock, and app switch. expo-audio pauses every recorder on background
+ * unless `allowsBackgroundRecording` is true (UIBackgroundModes audio is
+ * already in Info.plist).
  */
 export async function prepareNoteRecordingSession(): Promise<void> {
   const native = loadLiveKitNative<LiveKitNativeModule>();
   await native?.AudioSession?.stopAudioSession?.().catch(() => undefined);
   await setAudioModeAsync({
     allowsRecording: true,
+    allowsBackgroundRecording: true,
     playsInSilentMode: true,
-    // Mix so switching apps does not deactivate our session and mute the mic.
-    interruptionMode: "mixWithOthers",
+    // Exclusive so another app's audio session cannot pause our recorder.
+    interruptionMode: "doNotMix",
     shouldPlayInBackground: true,
     shouldRouteThroughEarpiece: false,
   });
+  await setIsAudioActiveAsync(true);
   await new Promise((resolve) => setTimeout(resolve, 150));
 }
 
@@ -51,6 +66,7 @@ export async function prepareNoteRecordingSession(): Promise<void> {
 export async function prepareNotePlaybackSession(): Promise<void> {
   await setAudioModeAsync({
     allowsRecording: false,
+    allowsBackgroundRecording: false,
     playsInSilentMode: true,
     interruptionMode: "mixWithOthers",
     shouldPlayInBackground: false,

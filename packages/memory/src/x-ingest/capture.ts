@@ -12,6 +12,7 @@ export function composeNotesCaptureAdapter(
       if (isYouTubeUrl(url)) return captureYouTubeVideo(url, youtube);
       return web.capture(url);
     },
+    probeSession: web.probeSession ? () => web.probeSession!() : undefined,
     close: () => web.close?.() ?? Promise.resolve(),
   };
 }

@@ -1,0 +1,708 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Alfred // Weekly plan</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Syne:wght@700;800&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg: #071018;
+        --fg: #e8eef5;
+        --muted: #8b9bb0;
+        --line: #1c2733;
+        --mint: #3dffc4;
+        --accent: #7ee0c3;
+        --warn: #e0c07e;
+      }
+      * { box-sizing: border-box; }
+      [hidden] { display: none !important; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family: "IBM Plex Mono", ui-monospace, monospace;
+        background:
+          radial-gradient(900px 420px at 10% -10%, #163049 0%, transparent 55%),
+          var(--bg);
+        color: var(--fg);
+        padding: 1.5rem 1.1rem 3rem;
+      }
+      main { width: min(46rem, 100%); margin: 0 auto; }
+      h1 {
+        font-family: Syne, sans-serif;
+        font-weight: 800;
+        font-size: 1.8rem;
+        margin: 0 0 0.35rem;
+      }
+      h2 {
+        font-family: Syne, sans-serif;
+        font-size: 1.15rem;
+        margin: 1.2rem 0 0.4rem;
+      }
+      a { color: var(--accent); }
+      .hint, .status, .claimed { color: var(--muted); font-size: 0.75rem; line-height: 1.45; }
+      .status { min-height: 1.2rem; color: var(--warn); }
+      .claimed.warn { color: var(--warn); }
+      .card {
+        border: 1px solid var(--line);
+        background: rgba(8, 14, 22, 0.72);
+        padding: 0.9rem 1rem 1rem;
+        margin: 0.75rem 0;
+      }
+      label { display: block; font-size: 0.68rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin: 0.55rem 0 0.25rem; }
+      input, select, button {
+        font: inherit;
+        color: var(--fg);
+        background: #101820;
+        border: 1px solid var(--line);
+        padding: 0.4rem 0.5rem;
+      }
+      input[type="text"], input[type="number"] { width: 100%; }
+      .row { display: flex; gap: 0.6rem; flex-wrap: wrap; align-items: end; }
+      .row > div { flex: 1; min-width: 8rem; }
+      button { cursor: pointer; }
+      button.primary { color: #042018; background: var(--mint); border-color: var(--mint); }
+      .actions { display: flex; gap: 0.5rem; margin-top: 0.8rem; flex-wrap: wrap; }
+      .review-line { margin: 0.35rem 0; }
+      .review-line span { color: var(--muted); }
+      .pie {
+        display: flex;
+        gap: 1.1rem;
+        align-items: flex-start;
+        flex-wrap: wrap;
+        margin: 0.4rem 0 1rem;
+      }
+      .pie svg { width: 11rem; height: 11rem; flex: 0 0 auto; }
+      .pie ul { list-style: none; margin: 0; padding: 0; flex: 1; min-width: 14rem; font-size: 0.72rem; }
+      .pie li { display: flex; gap: 0.45rem; align-items: baseline; margin: 0.18rem 0; }
+      .pie .swatch { width: 0.65rem; height: 0.65rem; margin-top: 0.18rem; flex: 0 0 auto; }
+      .pie .open { color: var(--muted); }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Weekly plan</h1>
+      <p class="hint">
+        A week is 168 hours. Name what claims them, including sleep.
+        <a id="back" href="/agenda">Agenda</a>
+        ·
+        <a id="blocks" href="/agenda/settings">Time blocks</a>
+      </p>
+      <p class="status" id="status"></p>
+      <div id="app"></div>
+    </main>
+    <script src="/alfred-base.js"></script>
+    <script src="/embed-bridge.js"></script>
+    <script>
+      function api(path) {
+        return typeof alfredUrl === "function" ? alfredUrl(path) : path;
+      }
+      document.getElementById("back").href = api("/agenda");
+      document.getElementById("blocks").href = api("/agenda/settings");
+
+      const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+      const WEEK_HOURS = 168;
+      let mode = "wizard";
+      let step = 0;
+      let painted = false;
+      let plan = { categories: [] };
+
+      function setStatus(text) {
+        document.getElementById("status").textContent = text || "";
+      }
+
+      function formatHours(hours) {
+        const rounded = Math.round(Number(hours) * 10) / 10;
+        if (!Number.isFinite(rounded)) return "0";
+        return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
+      }
+
+      function claimedOf(category) {
+        const hours = Number(category.hours) || 0;
+        if (category.cadence === "day") return hours * 7;
+        if (category.cadence === "fortnight") return hours / 2;
+        if (category.cadence === "month") return (hours * 12) / 52;
+        return hours;
+      }
+
+      function claimedTotal() {
+        return plan.categories.reduce((sum, category) => sum + claimedOf(category), 0);
+      }
+
+      function budgetText() {
+        const claimed = claimedTotal();
+        if (claimed > WEEK_HOURS + 0.001) {
+          return `Claimed ${formatHours(claimed)} hours, ${formatHours(claimed - WEEK_HOURS)} over the ${WEEK_HOURS} hour week.`;
+        }
+        return `Claimed ${formatHours(claimed)} of ${WEEK_HOURS} hours. ${formatHours(WEEK_HOURS - claimed)} left.`;
+      }
+
+      function blankCategory() {
+        return {
+          id: crypto.randomUUID(),
+          name: "",
+          cadence: "week",
+          hours: 1,
+          monthAnchor: { kind: "month-edge", edge: "first" },
+        };
+      }
+
+      function anchorKind(anchor) {
+        if (!anchor) return "first";
+        if (anchor.kind === "month-edge") return anchor.edge === "last" ? "last" : "first";
+        if (anchor.kind === "month-day") return "day";
+        return "nth";
+      }
+
+      function readAnchor(card) {
+        const kind = card.querySelector(".anchor-kind");
+        if (!kind) return null;
+        if (kind.value === "last") return { kind: "month-edge", edge: "last" };
+        if (kind.value === "day") {
+          const day = Math.min(31, Math.max(1, Math.round(Number(card.querySelector(".anchor-day").value) || 1)));
+          return { kind: "month-day", day };
+        }
+        if (kind.value === "nth") {
+          const n = Number(card.querySelector(".anchor-n").value);
+          const weekday = Number(card.querySelector(".anchor-weekday").value);
+          return { kind: "nth-weekday", n, weekday };
+        }
+        return { kind: "month-edge", edge: "first" };
+      }
+
+      function syncFromDom() {
+        for (const card of document.querySelectorAll(".category")) {
+          const category = plan.categories.find((item) => item.id === card.dataset.id);
+          if (!category) continue;
+          const name = card.querySelector(".name");
+          const cadence = card.querySelector(".cadence");
+          const hours = card.querySelector(".hours");
+          if (name) category.name = name.value;
+          if (cadence) category.cadence = cadence.value;
+          if (hours) category.hours = hours.value === "" ? 0 : Number(hours.value);
+          const anchor = readAnchor(card);
+          if (anchor) category.monthAnchor = anchor;
+        }
+      }
+
+      function namedCategories() {
+        return plan.categories.filter((category) => category.name.trim());
+      }
+
+      function categoryCard(category, options) {
+        const card = document.createElement("div");
+        card.className = "card category";
+        card.dataset.id = category.id;
+        const nameLabel = document.createElement("label");
+        nameLabel.textContent = "Category";
+        const name = document.createElement("input");
+        name.className = "name";
+        name.type = "text";
+        name.value = category.name || "";
+        name.placeholder = "Work";
+        name.maxLength = 80;
+        const row = document.createElement("div");
+        row.className = "row";
+        const cadenceWrap = document.createElement("div");
+        const cadenceLabel = document.createElement("label");
+        cadenceLabel.textContent = "Hours are";
+        const cadence = document.createElement("select");
+        cadence.className = "cadence";
+        for (const [value, label] of [
+          ["day", "Per day"],
+          ["week", "Per week"],
+          ["fortnight", "Per each 2 weeks"],
+          ["month", "Per month"],
+        ]) {
+          const option = document.createElement("option");
+          option.value = value;
+          option.textContent = label;
+          if (category.cadence === value) option.selected = true;
+          cadence.appendChild(option);
+        }
+        cadenceWrap.append(cadenceLabel, cadence);
+        const hoursWrap = document.createElement("div");
+        const hoursLabel = document.createElement("label");
+        hoursLabel.textContent = "Hours";
+        const hours = document.createElement("input");
+        hours.className = "hours";
+        hours.type = "number";
+        hours.min = "0.5";
+        hours.max = hourCap(category.cadence);
+        hours.step = "0.5";
+        hours.value = String(category.hours || 1);
+        hoursWrap.append(hoursLabel, hours);
+        row.append(cadenceWrap, hoursWrap);
+        const equivalent = document.createElement("p");
+        equivalent.className = "hint";
+        const refreshEquivalent = () => {
+          const draft = { cadence: cadence.value, hours: Number(hours.value) || 0 };
+          equivalent.textContent = `${formatHours(claimedOf(draft))} hours in the week.`;
+          hours.max = hourCap(cadence.value);
+        };
+        cadence.addEventListener("change", () => {
+          refreshEquivalent();
+          if (options.onChange) options.onChange();
+        });
+        hours.addEventListener("input", () => {
+          refreshEquivalent();
+          if (options.onHours) options.onHours();
+        });
+        refreshEquivalent();
+        card.append(nameLabel, name, row, equivalent);
+        if (options.anchors) card.appendChild(anchorFields(category));
+        if (options.removable) {
+          const remove = document.createElement("button");
+          remove.type = "button";
+          remove.textContent = "Remove";
+          remove.addEventListener("click", () => {
+            syncFromDom();
+            plan.categories = plan.categories.filter((item) => item.id !== category.id);
+            paint();
+          });
+          card.appendChild(remove);
+        }
+        name.addEventListener("input", () => {
+          if (options.onHours) options.onHours();
+        });
+        return card;
+      }
+
+      function anchorFields(category) {
+        const anchor = category.monthAnchor || { kind: "month-edge", edge: "first" };
+        const wrap = document.createElement("div");
+        const label = document.createElement("label");
+        label.textContent = "Preferred day";
+        const kind = document.createElement("select");
+        kind.className = "anchor-kind";
+        for (const [value, text] of [
+          ["first", "First day of the month"],
+          ["last", "Last day of the month"],
+          ["day", "A day of the month"],
+          ["nth", "A weekday of the month"],
+        ]) {
+          const option = document.createElement("option");
+          option.value = value;
+          option.textContent = text;
+          if (anchorKind(anchor) === value) option.selected = true;
+          kind.appendChild(option);
+        }
+        const day = document.createElement("input");
+        day.className = "anchor-day";
+        day.type = "number";
+        day.min = "1";
+        day.max = "31";
+        day.step = "1";
+        day.value = String(anchor.kind === "month-day" ? anchor.day : 1);
+        const nthRow = document.createElement("div");
+        nthRow.className = "row";
+        const n = document.createElement("select");
+        n.className = "anchor-n";
+        for (const [value, text] of [
+          ["1", "1st"],
+          ["2", "2nd"],
+          ["3", "3rd"],
+          ["4", "4th"],
+          ["5", "5th"],
+          ["-1", "Last"],
+        ]) {
+          const option = document.createElement("option");
+          option.value = value;
+          option.textContent = text;
+          if (anchor.kind === "nth-weekday" && String(anchor.n) === value) option.selected = true;
+          n.appendChild(option);
+        }
+        const weekday = document.createElement("select");
+        weekday.className = "anchor-weekday";
+        dayNames.forEach((text, index) => {
+          const option = document.createElement("option");
+          option.value = String(index);
+          option.textContent = text;
+          if (anchor.kind === "nth-weekday" && anchor.weekday === index) option.selected = true;
+          weekday.appendChild(option);
+        });
+        nthRow.append(n, weekday);
+        const syncVisibility = () => {
+          day.hidden = kind.value !== "day";
+          nthRow.hidden = kind.value !== "nth";
+        };
+        kind.addEventListener("change", syncVisibility);
+        syncVisibility();
+        wrap.append(label, kind, day, nthRow);
+        return wrap;
+      }
+
+      function claimedLine() {
+        const line = document.createElement("p");
+        line.className = "claimed";
+        line.id = "claimed";
+        const refresh = () => {
+          syncFromDom();
+          line.textContent = budgetText();
+          line.classList.toggle("warn", claimedTotal() > WEEK_HOURS + 0.001);
+        };
+        line.refresh = refresh;
+        refresh();
+        return line;
+      }
+
+      function wireClaimed(root) {
+        const line = root.querySelector("#claimed");
+        if (!line) return;
+        for (const input of root.querySelectorAll(".hours, .name, .cadence")) {
+          input.addEventListener("input", () => line.refresh());
+          input.addEventListener("change", () => line.refresh());
+        }
+      }
+
+      function hourCap(cadence) {
+        if (cadence === "day") return "24";
+        if (cadence === "fortnight") return "336";
+        if (cadence === "month") return "744";
+        return "168";
+      }
+
+      function pieSlice(cx, cy, radius, start, end) {
+        const sweep = end - start;
+        if (sweep >= Math.PI * 2 - 0.0001) {
+          const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+          circle.setAttribute("cx", String(cx));
+          circle.setAttribute("cy", String(cy));
+          circle.setAttribute("r", String(radius));
+          return circle;
+        }
+        const x1 = cx + radius * Math.sin(start);
+        const y1 = cy - radius * Math.cos(start);
+        const x2 = cx + radius * Math.sin(end);
+        const y2 = cy - radius * Math.cos(end);
+        const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+        path.setAttribute(
+          "d",
+          `M ${cx} ${cy} L ${x1} ${y1} A ${radius} ${radius} 0 ${sweep > Math.PI ? 1 : 0} 1 ${x2} ${y2} Z`,
+        );
+        return path;
+      }
+
+      function pieChart() {
+        const slices = namedCategories()
+          .map((category, index) => ({
+            name: category.name.trim(),
+            hours: claimedOf(category),
+            color: `hsl(${(index * 47) % 360} 58% 62%)`,
+          }))
+          .filter((slice) => slice.hours > 0);
+        const claimed = slices.reduce((sum, slice) => sum + slice.hours, 0);
+        const open = Math.max(0, WEEK_HOURS - claimed);
+        if (open > 0.05) slices.push({ name: "Unaccounted", hours: open, color: "#243044", open: true });
+        const total = slices.reduce((sum, slice) => sum + slice.hours, 0) || 1;
+        const wrap = document.createElement("div");
+        wrap.className = "pie";
+        const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+        svg.setAttribute("viewBox", "0 0 100 100");
+        svg.setAttribute("role", "img");
+        svg.setAttribute("aria-label", "How the 168 hours are divided");
+        let cursor = 0;
+        for (const slice of slices) {
+          const sweep = (slice.hours / total) * Math.PI * 2;
+          const shape = pieSlice(50, 50, 48, cursor, cursor + sweep);
+          shape.setAttribute("fill", slice.color);
+          if (slice.open) shape.setAttribute("stroke", "#5c6b7c");
+          svg.appendChild(shape);
+          cursor += sweep;
+        }
+        const list = document.createElement("ul");
+        for (const slice of slices) {
+          const item = document.createElement("li");
+          if (slice.open) item.className = "open";
+          const swatch = document.createElement("span");
+          swatch.className = "swatch";
+          swatch.style.background = slice.color;
+          if (slice.open) swatch.style.boxShadow = "inset 0 0 0 1px #5c6b7c";
+          const text = document.createElement("span");
+          text.textContent = `${slice.name} · ${formatHours(slice.hours)}h`;
+          item.append(swatch, text);
+          list.appendChild(item);
+        }
+        wrap.append(svg, list);
+        return wrap;
+      }
+
+      function cadenceLabel(category) {
+        if (category.cadence === "day") return `${formatHours(category.hours)}h a day`;
+        if (category.cadence === "fortnight") return `${formatHours(category.hours)}h each 2 weeks`;
+        if (category.cadence === "month") return `${formatHours(category.hours)}h a month`;
+        return `${formatHours(category.hours)}h a week`;
+      }
+
+      function ordinal(day) {
+        const mod = day % 100;
+        if (mod >= 11 && mod <= 13) return `${day}th`;
+        if (day % 10 === 1) return `${day}st`;
+        if (day % 10 === 2) return `${day}nd`;
+        if (day % 10 === 3) return `${day}rd`;
+        return `${day}th`;
+      }
+
+      function anchorLabel(anchor) {
+        if (!anchor) return "";
+        if (anchor.kind === "month-edge") return anchor.edge === "last" ? "Last day of the month" : "First day of the month";
+        if (anchor.kind === "month-day") return `The ${ordinal(anchor.day)} of the month`;
+        const nth = anchor.n === -1 ? "Last" : ["", "1st", "2nd", "3rd", "4th", "5th"][anchor.n] || `${anchor.n}th`;
+        return `${nth} ${dayNames[anchor.weekday] || "day"}`;
+      }
+
+      function validate(categories) {
+        const names = new Set();
+        for (const category of categories) {
+          const name = category.name.trim();
+          if (!name) return "Each category needs a name.";
+          const key = name.toLowerCase();
+          if (names.has(key)) return `Two categories are named ${name}.`;
+          names.add(key);
+          const hours = Number(category.hours);
+          const cap = Number(hourCap(category.cadence));
+          if (!hours || hours < 0.5 || hours > cap || Math.round(hours * 2) !== hours * 2) {
+            return `${name} needs hours in half-hour steps.`;
+          }
+          if (category.cadence === "month" && !category.monthAnchor) return `${name} needs a day of the month.`;
+        }
+        return "";
+      }
+
+      async function save() {
+        syncFromDom();
+        const categories = namedCategories();
+        const error = validate(categories);
+        if (error) {
+          setStatus(error);
+          return;
+        }
+        setStatus("");
+        const res = await fetch(api("/agenda/standard-plan"), {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            categories: categories.map((category) => ({
+              id: category.id,
+              name: category.name.trim(),
+              cadence: category.cadence,
+              hours: Number(category.hours),
+              ...(category.cadence === "month" ? { monthAnchor: category.monthAnchor } : {}),
+            })),
+          }),
+        });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          setStatus(body.error || "Could not save");
+          return;
+        }
+        plan = {
+          categories: (body.categories || []).map((category) => ({
+            ...category,
+            monthAnchor: category.monthAnchor || { kind: "month-edge", edge: "first" },
+          })),
+        };
+        mode = "editor";
+        painted = false;
+        setStatus("Saved.");
+        paint();
+      }
+
+      function paintWizard() {
+        const root = document.getElementById("app");
+        root.replaceChildren();
+        const label = document.createElement("p");
+        label.className = "hint";
+        label.textContent = `Step ${step + 1} of 3`;
+        root.appendChild(label);
+        if (step === 0) {
+          const title = document.createElement("h2");
+          title.textContent = "What claims the hours?";
+          const hint = document.createElement("p");
+          hint.className = "hint";
+          hint.textContent = "Include sleep. A week is 168 hours, and nothing is subtracted before you start.";
+          root.append(title, hint);
+          if (!plan.categories.length) plan.categories.push(blankCategory());
+          for (const category of plan.categories) {
+            root.appendChild(categoryCard(category, { removable: plan.categories.length > 1, onChange: paint, onHours: () => {} }));
+          }
+          const add = document.createElement("button");
+          add.type = "button";
+          add.textContent = "Add a category";
+          add.addEventListener("click", () => {
+            syncFromDom();
+            plan.categories.push(blankCategory());
+            paint();
+          });
+          root.appendChild(add);
+          root.appendChild(claimedLine());
+        } else if (step === 1) {
+          const title = document.createElement("h2");
+          title.textContent = "When should monthly activities land?";
+          root.appendChild(title);
+          const monthly = plan.categories.filter((category) => category.cadence === "month" && category.name.trim());
+          if (!monthly.length) {
+            const empty = document.createElement("p");
+            empty.className = "hint";
+            empty.textContent = "No monthly categories. Continue to review.";
+            root.appendChild(empty);
+          }
+          for (const category of monthly) {
+            const card = categoryCard(category, { anchors: true, removable: false });
+            card.querySelector(".name").readOnly = true;
+            card.querySelector(".cadence").disabled = true;
+            root.appendChild(card);
+          }
+        } else {
+          const title = document.createElement("h2");
+          title.textContent = "Review";
+          root.append(title, claimedLine(), pieChart());
+          for (const category of namedCategories()) {
+            const line = document.createElement("p");
+            line.className = "review-line";
+            const weekly = document.createElement("span");
+            weekly.textContent = ` · ${formatHours(claimedOf(category))}h in the week`;
+            line.append(document.createTextNode(`${category.name.trim()} · ${cadenceLabel(category)}`), weekly);
+            if (category.cadence === "month") {
+              line.append(document.createTextNode(` · ${anchorLabel(category.monthAnchor)}`));
+            }
+            root.appendChild(line);
+          }
+        }
+        const actions = document.createElement("div");
+        actions.className = "actions";
+        if (step > 0) {
+          const back = document.createElement("button");
+          back.type = "button";
+          back.textContent = "Back";
+          back.addEventListener("click", () => {
+            syncFromDom();
+            setStatus("");
+            step -= 1;
+            paint();
+          });
+          actions.appendChild(back);
+        }
+        if (step < 2) {
+          const next = document.createElement("button");
+          next.type = "button";
+          next.className = "primary";
+          next.textContent = "Next";
+          next.addEventListener("click", () => {
+            syncFromDom();
+            if (step === 0) {
+              const ready = namedCategories();
+              if (!ready.length) {
+                setStatus("Add at least one category.");
+                return;
+              }
+              const error = validate(ready);
+              if (error) {
+                setStatus(error);
+                return;
+              }
+              plan.categories = ready;
+            }
+            if (step === 1) {
+              const error = validate(namedCategories());
+              if (error) {
+                setStatus(error);
+                return;
+              }
+            }
+            setStatus("");
+            step += 1;
+            paint();
+          });
+          actions.appendChild(next);
+        } else {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.className = "primary";
+          button.textContent = "Save";
+          button.addEventListener("click", () => { void save(); });
+          actions.appendChild(button);
+        }
+        root.appendChild(actions);
+        wireClaimed(root);
+      }
+
+      function paintEditor() {
+        const root = document.getElementById("app");
+        root.replaceChildren();
+        const intro = document.createElement("p");
+        intro.className = "hint";
+        intro.textContent = "A week is 168 hours. Sleep is a category, the same as the rest. These hours are what the week plan fills into time blocks.";
+        root.append(intro, claimedLine(), pieChart());
+        const title = document.createElement("h2");
+        title.textContent = "Categories";
+        root.appendChild(title);
+        if (!plan.categories.length) {
+          const empty = document.createElement("p");
+          empty.className = "hint";
+          empty.textContent = "No categories yet.";
+          root.appendChild(empty);
+        }
+        for (const category of plan.categories) {
+          root.appendChild(categoryCard(category, {
+            anchors: category.cadence === "month",
+            removable: true,
+            onChange: paint,
+            onHours: () => {},
+          }));
+        }
+        const actions = document.createElement("div");
+        actions.className = "actions";
+        const add = document.createElement("button");
+        add.type = "button";
+        add.textContent = "Add a category";
+        add.addEventListener("click", () => {
+          syncFromDom();
+          plan.categories.push(blankCategory());
+          paint();
+        });
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "primary";
+        button.textContent = "Save";
+        button.addEventListener("click", () => { void save(); });
+        actions.append(add, button);
+        root.appendChild(actions);
+        wireClaimed(root);
+      }
+
+      function paint() {
+        if (painted) syncFromDom();
+        painted = true;
+        if (mode === "editor") paintEditor();
+        else paintWizard();
+      }
+
+      async function load() {
+        const res = await fetch(api("/agenda/standard-plan/data"));
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          setStatus(body.error || "Could not load the weekly plan");
+          paint();
+          return;
+        }
+        plan = {
+          categories: (body.categories || []).map((category) => ({
+            ...category,
+            monthAnchor: category.monthAnchor || { kind: "month-edge", edge: "first" },
+          })),
+        };
+        mode = body.saved ? "editor" : "wizard";
+        painted = false;
+        paint();
+      }
+
+      load().catch((err) => setStatus(String(err)));
+    </script>
+  </body>
+</html>

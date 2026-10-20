@@ -1,3 +1,4 @@
+import { answerNextAgendaItem, looksLikeNextAgendaQuestion } from "./agenda.js";
 import type { CalendarEvent, CalendarGateway } from "./helper.js";
 import { interpretCalendarTask } from "./planner.js";
 import type { CalendarRow } from "./policy.js";
@@ -78,11 +79,36 @@ export async function runCalendarTask(input: {
   const lines: string[] = [];
   for (const command of plan.commands) {
     if (command.op === "list") {
+      const nextAsk = looksLikeNextAgendaQuestion(input.task);
+      // "What's next" needs wall-clock now and a look-ahead past midnight when today is done.
+      const start = command.start;
+      const end = nextAsk
+        ? new Date(Math.max(Date.parse(command.end), input.now.getTime() + 7 * 86_400_000)).toISOString()
+        : command.end;
       const events = await input.gateway.events({
-        start: command.start,
-        end: command.end,
+        start,
+        end,
         calendarId: command.calendarId,
       });
+      if (nextAsk) {
+        const nextAnswer = answerNextAgendaItem({
+          text: input.task,
+          now: input.now,
+          timeZone: input.timeZone,
+          events: events.map((event) => ({
+            title: event.title,
+            start: event.start,
+            end: event.end,
+            allDay: event.allDay,
+            calendarTitle: event.calendarTitle,
+            sourceTitle: event.sourceTitle,
+          })),
+        });
+        if (nextAnswer) {
+          lines.push(nextAnswer);
+          continue;
+        }
+      }
       if (events.length === 0) {
         lines.push("Nothing on the calendars you have opened for that stretch.");
         continue;

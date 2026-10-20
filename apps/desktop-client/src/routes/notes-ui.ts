@@ -9,6 +9,7 @@ import {
   handleGetJob,
   handleGetNote,
   handleListNotes,
+  handlePhoto,
   handleRetryDetails,
   handleRetryTranscript,
 } from "../lib/notes/handlers.js";
@@ -27,6 +28,7 @@ notesUiRouter.post("/from-audio", handleFromAudio);
 notesUiRouter.post("/from-audio-async", handleFromAudioAsync);
 notesUiRouter.get("/jobs/:jobId", handleGetJob);
 notesUiRouter.get("/:id/audio", handleAudio);
+notesUiRouter.get("/:id/photos/:photoId", handlePhoto);
 notesUiRouter.post("/:id/retry-details", handleRetryDetails);
 notesUiRouter.post("/:id/retry-transcript", handleRetryTranscript);
 notesUiRouter.get("/:id", handleGetNote);

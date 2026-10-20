@@ -1,6 +1,10 @@
 import { formatAgendaMarkdown, formatAgendaSpeech } from "./agenda.js";
+import { formatFitnessMarkdown } from "./fitness.js";
+import { formatMedicineMarkdown } from "./medicine.js";
 import type { BriefingData } from "./types.js";
-import { formatLaunchesMarkdown, formatLaunchesSpeech } from "./launches.js";
+// Built-in rocket launches are parked. Restore formatLaunchesSpeech / formatLaunchesMarkdown
+// below to turn them back on.
+// import { formatLaunchesMarkdown, formatLaunchesSpeech } from "./launches.js";
 import {
   formatMarketsMarkdown,
   formatMarketsSpeechFromQuotes,
@@ -51,6 +55,9 @@ export function formatBriefingForSpeech(
   const agenda = data.agendaText ?? (data.agenda ? formatAgendaSpeech(data.agenda, timezone) : null);
   if (agenda) parts.push(agenda);
 
+  if (data.fitnessText) parts.push(data.fitnessText);
+  if (data.medicineText) parts.push(data.medicineText);
+
   // Personal follow-ups right after the agenda, before markets / news.
   const rem = data.taskReminders?.length
     ? formatTaskSpeech(data.taskReminders)
@@ -73,16 +80,22 @@ export function formatBriefingForSpeech(
   });
   if (markets) parts.push(markets);
 
-  const launches = formatLaunchesSpeech(data.launches);
-  if (launches) parts.push(launches);
+  // const launches = formatLaunchesSpeech(data.launches);
+  // if (launches) parts.push(launches);
+  for (const module of data.modules ?? []) {
+    if (module.speech.trim()) parts.push(module.speech.trim());
+  }
 
-  const news = formatNewsSpeech(data.news, { inviteFollowUp: true });
-  if (news) parts.push(news);
-
+  // Headlines are offered at the end, not read in the main brief.
   const xIngest = data.xIngestText || data.xIngest?.speech;
   if (xIngest) parts.push(xIngest);
 
-  parts.push(closingLine(now, timezone));
+  const offer = data.headlineOffer?.trim();
+  if (offer) {
+    parts.push(offer);
+  } else {
+    parts.push(closingLine(now, timezone));
+  }
 
   return sanitizeForSpeech(parts.join(" "));
 }
@@ -95,10 +108,17 @@ export function formatBriefingAsMarkdown(
   const sections: string[] = [`# Daily Briefing — ${data.date}`, "", data.greeting];
   if (data.weather) sections.push("", formatWeatherMarkdown(data.weather));
   if (data.agenda) sections.push("", formatAgendaMarkdown(data.agenda, timezone));
+  if (data.fitness) sections.push("", formatFitnessMarkdown(data.fitness));
+  if (data.medicine?.length) sections.push("", formatMedicineMarkdown(data.medicine));
   if (data.taskReminders?.length) sections.push("", formatTaskMarkdown(data.taskReminders));
   else if (data.reminders.length) sections.push("", formatRemindersMarkdown(data.reminders));
   if (data.markets.lines.length) sections.push("", formatMarketsMarkdown(data.markets.lines));
-  if (data.launches.length) sections.push("", formatLaunchesMarkdown(data.launches));
+  // if (data.launches.length) sections.push("", formatLaunchesMarkdown(data.launches));
+  for (const module of data.modules ?? []) {
+    if (!module.lines.length && !module.speech) continue;
+    const lines = module.lines.length ? module.lines : [module.speech];
+    sections.push("", `**${module.title}**`, "", ...lines.map((line) => `- ${line}`));
+  }
   if (data.news.length) sections.push("", formatNewsMarkdown(data.news));
   if (data.xIngest?.items.length) sections.push("", formatXIngestMarkdown({ items: data.xIngest.items }));
   sections.push("", `_Generated ${data.generated}_`);

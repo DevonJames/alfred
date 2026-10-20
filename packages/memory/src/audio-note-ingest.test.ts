@@ -2,7 +2,13 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { ingestAudioNote, updateAudioNoteProgress } from "./audio-note-ingest.js";
+import {
+  attachAudioNotePhoto,
+  audioNoteFromEpisode,
+  completeAudioNote,
+  ingestAudioNote,
+  updateAudioNoteProgress,
+} from "./audio-note-ingest.js";
 import { OipLocalMemoryProvider } from "./oip-local/provider.js";
 
 const FAKE_M4A = Buffer.from("fake-m4a-bytes");
@@ -115,5 +121,71 @@ describe("ingestAudioNote", () => {
     expect(episode?.schema?.transcript).toBe("Kitchen has new appliances.");
     expect(episode?.schema?.processingStatus).toBe("processing");
     expect(episode?.schema?.durationSeconds).toBe(5400);
+  });
+
+  it("attaches a still and keeps it when the note completes", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "alfred-audionote-photo-"));
+    dirs.push(root);
+    process.env.ALFRED_MEMORY_OIP_PATH = path.join(root, "oip");
+    process.env.ALFRED_PERSONA_DIR = path.join(root, "persona");
+
+    const started = await ingestAudioNote({
+      filename: "lecture.m4a",
+      bytes: FAKE_M4A,
+      mimeType: "audio/mp4",
+      title: "Lecture",
+      transcript: "",
+      metadata: {
+        summary: "",
+        takeaways: [],
+        nextSteps: [],
+        openQuestions: [],
+        attendees: [],
+        template: "meeting",
+      },
+    });
+
+    const photo = await attachAudioNotePhoto({
+      episodeId: started.episodeId,
+      filename: "slide.jpg",
+      bytes: Buffer.from("fake-jpeg"),
+      mimeType: "image/jpeg",
+      offsetSeconds: 94,
+      analysis: {
+        summary: "A slide about pricing.",
+        fullText: "Q3 pricing change ships Friday",
+        handwrittenNotes: [],
+        names: [],
+        dates: ["Friday"],
+        places: [],
+        objects: ["slide"],
+        documentType: "screenshot",
+      },
+      analysisStatus: "completed",
+    });
+
+    expect(photo.offsetSeconds).toBe(94);
+    expect(photo.analysis?.fullText).toContain("pricing");
+
+    await completeAudioNote({
+      episodeId: started.episodeId,
+      transcript: "We walked through the pricing slide.",
+      metadata: {
+        summary: "Walked through the pricing slide.",
+        takeaways: ["Pricing ships Friday"],
+        nextSteps: [],
+        openQuestions: [],
+        attendees: [],
+        template: "meeting",
+      },
+    });
+
+    const provider = new OipLocalMemoryProvider(path.join(root, "oip"));
+    const episode = await provider.resolveRef(started.episodeId);
+    const parsed = audioNoteFromEpisode(episode!);
+    expect(parsed.photos).toHaveLength(1);
+    expect(parsed.photos[0]?.offsetSeconds).toBe(94);
+    expect(parsed.photos[0]?.analysis?.fullText).toContain("Q3 pricing");
+    expect(parsed.summary).toBe("Walked through the pricing slide.");
   });
 });

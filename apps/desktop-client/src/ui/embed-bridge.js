@@ -22,14 +22,16 @@
     if (path.startsWith("/memory/ingest")) return "ingest";
     if (path.startsWith("/notes") && !pathname.includes(".")) return "notes";
     if (path.startsWith("/gateway") && !pathname.includes(".")) return "gateway";
+    if (path === "/agenda/standard-plan" || path.startsWith("/agenda/standard-plan/")) return "weeklyPlan";
+    if (path === "/medicine" || path.startsWith("/medicine/")) return "medicine";
     if (path.startsWith("/agenda") && !pathname.includes(".")) return "agenda";
     if (path.startsWith("/connect/claim") && !pathname.includes(".")) return "claim";
     return null;
   }
 
-  function requestNavigate(screen) {
+  function requestNavigate(screen, href) {
     window.parent.postMessage(
-      { channel: CHANNEL, type: "navigate", screen },
+      { channel: CHANNEL, type: "navigate", screen, href: href || "" },
       window.location.origin,
     );
   }
@@ -58,7 +60,7 @@
       // the screen name would leave the click with nowhere to go.
       if (screen === here && nextPath !== currentPath) return;
       event.preventDefault();
-      requestNavigate(screen);
+      requestNavigate(screen, nextPath + parsed.search);
     },
     true,
   );

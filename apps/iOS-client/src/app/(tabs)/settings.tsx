@@ -26,7 +26,17 @@ import {
 import { unlinkDesktop } from "@/lib/cloud-api";
 import { cn } from "@/lib/cn";
 import { useConnection } from "@/lib/connection";
-import { desktopErrorMessage, getSettings, isNotBuiltYet, patchSettings, rebuildIndexes, revokePairing, verifyMemory } from "@/lib/desktop-api";
+import {
+  desktopErrorMessage,
+  getBriefingPrefs,
+  getSettings,
+  isNotBuiltYet,
+  patchSettings,
+  putBriefingPrefs,
+  rebuildIndexes,
+  revokePairing,
+  verifyMemory,
+} from "@/lib/desktop-api";
 import { rediscover } from "@/lib/discovery";
 import { useMirror } from "@/lib/memory-cache";
 import { syncMirror, useMirrorSync } from "@/lib/mirror-sync";
@@ -40,7 +50,7 @@ import {
 } from "@/lib/robot-audio";
 import { storageIsSecure } from "@/lib/secure-store";
 import { useSession } from "@/lib/session";
-import type { DesktopSettings } from "@/lib/types";
+import type { BriefingPrefs, BriefingPrefsCatalog, DesktopSettings } from "@/lib/types";
 
 const PRIVACY: { key: DesktopSettings["privacyMode"]; title: string; detail: string; rank: number }[] = [
   {
@@ -76,6 +86,7 @@ export default function Settings() {
   const paired = useConnection((s) => Boolean(s.deviceToken));
 
   const [confirm, setConfirm] = useState<"unpair" | "unlink" | "reset" | null>(null);
+  const [briefPrefsOpen, setBriefPrefsOpen] = useState(false);
   const [robotAudio, setRobotAudio] = useState(false);
   const [robotClaimed, setRobotClaimed] = useState(false);
   const [robotTalk, setRobotTalk] = useState(false);
@@ -117,6 +128,20 @@ export default function Settings() {
 
   const verify = useMutation({ mutationFn: verifyMemory });
   const rebuild = useMutation({ mutationFn: rebuildIndexes });
+
+  const briefPrefs = useQuery({
+    queryKey: ["briefing", "prefs"],
+    queryFn: getBriefingPrefs,
+    enabled: connected && briefPrefsOpen,
+  });
+
+  const saveBriefPrefs = useMutation({
+    mutationFn: (patch: Partial<BriefingPrefs>) => putBriefingPrefs(patch),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["briefing", "prefs"] });
+      queryClient.invalidateQueries({ queryKey: ["briefing", "daily"] });
+    },
+  });
 
   const leave = useMutation({
     mutationFn: async (action: "unpair" | "unlink" | "reset") => {
@@ -257,6 +282,23 @@ export default function Settings() {
                   pickers don't apply.
                 </Text>
               ) : null}
+            </View>
+
+            <View className="mt-8">
+              <Label>Daily Brief</Label>
+              <Text className="mt-1.5 text-xs leading-5 text-faint">
+                Markets, launches, news sources, and which calendars feed the Brief tab.
+              </Text>
+              <Pressable
+                testID="open-brief-prefs"
+                onPress={() => setBriefPrefsOpen(true)}
+                className="mt-3 active:opacity-70"
+              >
+                <Card>
+                  <Text className="text-base text-bone">Brief preferences</Text>
+                  <Text className="mt-1 text-xs text-faint">Edit what shows up in Brief</Text>
+                </Card>
+              </Pressable>
             </View>
 
             <View className="mt-8">
@@ -552,6 +594,28 @@ export default function Settings() {
       </ScrollView>
 
       <Sheet
+        testID="brief-prefs-sheet"
+        visible={briefPrefsOpen}
+        title="Brief preferences"
+        onClose={() => setBriefPrefsOpen(false)}
+      >
+        {briefPrefs.isLoading ? <Loading /> : null}
+        {briefPrefs.isError ? (
+          <Notice>
+            {desktopErrorMessage(briefPrefs.error, "Couldn't load Brief preferences.")}
+          </Notice>
+        ) : null}
+        {briefPrefs.data ? (
+          <BriefPrefsEditor
+            prefs={briefPrefs.data.prefs}
+            catalog={briefPrefs.data.catalog}
+            busy={saveBriefPrefs.isPending}
+            onSave={(patch) => saveBriefPrefs.mutate(patch)}
+          />
+        ) : null}
+      </Sheet>
+
+      <Sheet
         testID="leave-sheet"
         visible={confirm !== null}
         title={
@@ -612,6 +676,131 @@ function Row({ label, value, last }: { label: string; value: string; last?: bool
       <Text numberOfLines={1} className="ml-4 flex-1 text-right text-sm text-bone">
         {value}
       </Text>
+    </View>
+  );
+}
+
+function BriefPrefsEditor({
+  prefs,
+  catalog,
+  busy,
+  onSave,
+}: {
+  prefs: BriefingPrefs;
+  catalog: BriefingPrefsCatalog;
+  busy: boolean;
+  onSave: (patch: Partial<BriefingPrefs>) => void;
+}) {
+  const toggleNews = (source: string) => {
+    const has = prefs.newsSources.includes(source);
+    const newsSources = has
+      ? prefs.newsSources.filter((s) => s !== source)
+      : [...prefs.newsSources, source].slice(0, 10);
+    onSave({ newsSources });
+  };
+
+  const toggleCalendar = (id: string) => {
+    const has = prefs.agendaCalendarIds.includes(id);
+    const agendaCalendarIds = has
+      ? prefs.agendaCalendarIds.filter((c) => c !== id)
+      : [...prefs.agendaCalendarIds, id].slice(0, 40);
+    onSave({ agendaCalendarIds });
+  };
+
+  return (
+    <View testID="brief-prefs-editor" className="pb-6">
+      <Label>Launches</Label>
+      <View className="mt-2 flex-row flex-wrap gap-2">
+        {catalog.launchesModes.map((mode) => {
+          const active = prefs.launchesMode === mode.id;
+          return (
+            <Pressable
+              key={mode.id}
+              disabled={busy}
+              onPress={() => onSave({ launchesMode: mode.id as BriefingPrefs["launchesMode"] })}
+              className={cn(
+                "rounded-full border px-3 py-1.5",
+                active ? "border-brass/50 bg-brass/15" : "border-line"
+              )}
+            >
+              <Text className={cn("text-xs", active ? "text-brass" : "text-muted")}>{mode.label}</Text>
+            </Pressable>
+          );
+        })}
+      </View>
+
+      <Label className="mt-5">Markets</Label>
+      <View className="mt-2 space-y-2">
+        <Pressable
+          disabled={busy}
+          onPress={() => onSave({ includeCrypto: !prefs.includeCrypto })}
+          className="flex-row items-center justify-between rounded-2xl border border-line px-3 py-3"
+        >
+          <Text className="text-sm text-bone">Crypto</Text>
+          <Text className="text-xs text-brass">{prefs.includeCrypto ? "On" : "Off"}</Text>
+        </Pressable>
+        <Pressable
+          disabled={busy}
+          onPress={() => onSave({ includeMetals: !prefs.includeMetals })}
+          className="flex-row items-center justify-between rounded-2xl border border-line px-3 py-3"
+        >
+          <Text className="text-sm text-bone">Metals</Text>
+          <Text className="text-xs text-brass">{prefs.includeMetals ? "On" : "Off"}</Text>
+        </Pressable>
+        <Pressable
+          disabled={busy}
+          onPress={() => onSave({ includeIngestedNotes: !prefs.includeIngestedNotes })}
+          className="flex-row items-center justify-between rounded-2xl border border-line px-3 py-3"
+        >
+          <Text className="text-sm text-bone">Ingested notes</Text>
+          <Text className="text-xs text-brass">{prefs.includeIngestedNotes ? "On" : "Off"}</Text>
+        </Pressable>
+      </View>
+
+      <Label className="mt-5">News sources</Label>
+      <View className="mt-2 flex-row flex-wrap gap-2">
+        {catalog.newsSources.slice(0, 12).map((source) => {
+          const active = prefs.newsSources.includes(source);
+          return (
+            <Pressable
+              key={source}
+              disabled={busy}
+              onPress={() => toggleNews(source)}
+              className={cn(
+                "rounded-full border px-3 py-1.5",
+                active ? "border-brass/50 bg-brass/15" : "border-line"
+              )}
+            >
+              <Text className={cn("text-xs", active ? "text-brass" : "text-muted")}>{source}</Text>
+            </Pressable>
+          );
+        })}
+      </View>
+
+      <Label className="mt-5">Agenda calendars in Brief</Label>
+      <Text className="mt-1 text-xs text-faint">Events from these calendars appear in Daily Brief.</Text>
+      <View className="mt-2 space-y-2">
+        {catalog.calendars.length === 0 ? (
+          <Text className="text-sm text-muted">No readable calendars yet — set Gateway access on the Mac.</Text>
+        ) : (
+          catalog.calendars.map((cal) => {
+            const active = prefs.agendaCalendarIds.includes(cal.id);
+            return (
+              <Pressable
+                key={cal.id}
+                disabled={busy}
+                onPress={() => toggleCalendar(cal.id)}
+                className={cn(
+                  "rounded-2xl border px-3 py-2.5",
+                  active ? "border-brass/50 bg-brass/10" : "border-line"
+                )}
+              >
+                <Text className={cn("text-sm", active ? "text-brass" : "text-bone")}>{cal.label}</Text>
+              </Pressable>
+            );
+          })
+        )}
+      </View>
     </View>
   );
 }

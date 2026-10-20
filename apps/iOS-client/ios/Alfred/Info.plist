@@ -56,7 +56,7 @@
 	<key>NSCalendarsUsageDescription</key>
 	<string>Allow $(PRODUCT_NAME) to access your calendars</string>
 	<key>NSCameraUsageDescription</key>
-	<string>Scan the claim QR code shown on your Mac to link this phone to Alfred.</string>
+	<string>Scan a claim code to link this phone, or photograph medicine and supplement bottles for your schedule.</string>
 	<key>NSContactsUsageDescription</key>
 	<string>Allow $(PRODUCT_NAME) to access your contacts</string>
 	<key>NSFaceIDUsageDescription</key>
@@ -76,7 +76,7 @@
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>Allow $(PRODUCT_NAME) to save photos</string>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>Attach photos to something you'd like Alfred to remember. They're sent to your Mac and stored there.</string>
+	<string>Attach photos for Alfred to remember, or bottle photos for your medicine schedule. They're sent to your Mac and stored there.</string>
 	<key>NSRemindersFullAccessUsageDescription</key>
 	<string>Allow $(PRODUCT_NAME) to access your reminders</string>
 	<key>NSRemindersUsageDescription</key>

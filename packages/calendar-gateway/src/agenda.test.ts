@@ -2,8 +2,15 @@ import { describe, expect, it } from "vitest";
 import {
   agendaWindow,
   answerAgendaClock,
+  answerNextAgendaItem,
   describeAgendaView,
   looksLikeAgendaQuestion,
+  looksLikeNextAgendaQuestion,
+  hoursWeekShift,
+  looksLikeHoursQuestion,
+  parseHoursPick,
+  pickNextAgendaEvent,
+  sumMatchedHours,
 } from "./agenda.js";
 
 const timeZone = "America/New_York";
@@ -93,6 +100,7 @@ describe("describeAgendaView", () => {
     expect(withClock).toMatch(/The clock reads 2:00 PM/);
     expect(withClock).toMatch(/Today is Saturday, September 26/);
     expect(withClock).toMatch(/how long until an event/);
+    expect(withClock).toMatch(/next upcoming timed event after the clock/);
   });
 
   it("describes the unified layout", () => {
@@ -178,11 +186,163 @@ describe("looksLikeAgendaQuestion", () => {
     expect(looksLikeAgendaQuestion("Any meetings today?")).toBe(true);
     expect(looksLikeAgendaQuestion("Am I free this afternoon?")).toBe(true);
     expect(looksLikeAgendaQuestion("What's on for tomorrow?")).toBe(true);
+    expect(looksLikeAgendaQuestion("What's next on my agenda?")).toBe(true);
   });
 
   it("leaves the daily briefing alone", () => {
     expect(looksLikeAgendaQuestion("Give me the daily briefing")).toBe(false);
     expect(looksLikeAgendaQuestion("Please give me today's daily briefing.")).toBe(false);
     expect(looksLikeAgendaQuestion("What's on my plate?")).toBe(false);
+  });
+});
+
+describe("answerNextAgendaItem", () => {
+  const day = [
+    {
+      title: "Standup",
+      start: "2026-09-26T13:00:00.000Z",
+      end: "2026-09-26T13:30:00.000Z",
+      calendarTitle: "Work",
+      sourceTitle: "iCloud",
+    },
+    {
+      title: "Dentist",
+      start: "2026-09-26T20:00:00.000Z",
+      end: "2026-09-26T21:00:00.000Z",
+      calendarTitle: "Personal",
+      sourceTitle: "iCloud",
+    },
+    {
+      title: "Morning run",
+      start: "2026-09-27T12:00:00.000Z",
+      end: "2026-09-27T12:45:00.000Z",
+      calendarTitle: "Personal",
+      sourceTitle: "iCloud",
+    },
+  ];
+
+  it("matches next-item phrasing", () => {
+    expect(looksLikeNextAgendaQuestion("What's next on my agenda?")).toBe(true);
+    expect(looksLikeNextAgendaQuestion("What is coming up next?")).toBe(true);
+    expect(looksLikeNextAgendaQuestion("What's my next meeting?")).toBe(true);
+    expect(looksLikeNextAgendaQuestion("What's on my agenda today?")).toBe(false);
+  });
+
+  it("skips past events and names the next timed item from the wall clock", () => {
+    // 10:00 PM Eastern on Sep 26 — standup and dentist are over; morning run is tomorrow.
+    const late = new Date("2026-09-27T02:00:00.000Z");
+    expect(pickNextAgendaEvent(day, late)?.title).toBe("Morning run");
+    const answer = answerNextAgendaItem({
+      text: "What's next on my agenda?",
+      now: late,
+      timeZone,
+      events: day,
+    });
+    expect(answer).toMatch(/Next up is Morning run/);
+    expect(answer).toMatch(/Tomorrow/);
+    expect(answer).not.toMatch(/Standup/);
+  });
+
+  it("names an upcoming item later the same day", () => {
+    // 2:00 PM Eastern — standup done, dentist still ahead.
+    const answer = answerNextAgendaItem({
+      text: "What's next on my agenda?",
+      now,
+      timeZone,
+      events: day,
+    });
+    expect(answer).toBe("Next up is Dentist at 4:00 PM, in 2 hours.");
+  });
+
+  it("says nothing is left when the list is exhausted", () => {
+    const answer = answerNextAgendaItem({
+      text: "What's next?",
+      now: new Date("2026-09-28T02:00:00.000Z"),
+      timeZone,
+      events: day,
+    });
+    expect(answer).toBe("Nothing left on your agenda from now.");
+  });
+});
+
+describe("sumMatchedHours", () => {
+  const work = (id: string, title: string, start: string, end: string) => ({
+    id,
+    title,
+    start,
+    end,
+    calendarTitle: "Devon work",
+    sourceTitle: "Personal iCloud",
+  });
+
+  it("adds only the events the model selected, and counts an overlap once", () => {
+    expect(looksLikeHoursQuestion("count my total work hours this week please")).toBe(true);
+    expect(looksLikeHoursQuestion("how much longer am I at work")).toBe(false);
+    expect(looksLikeHoursQuestion("break it into hours per day please")).toBe(true);
+    expect(hoursWeekShift("how many hours of work am I working next week")).toBe(7);
+    expect(hoursWeekShift("break it into hours per day", "User: how many hours next week")).toBe(7);
+    expect(hoursWeekShift("how many hours this week", "User: how many hours next week")).toBe(0);
+    expect(parseHoursPick('{"label":"work","ids":["mon","meeting"]}')).toEqual({
+      label: "work",
+      ids: ["mon", "meeting"],
+    });
+    const events = [
+      work("mon", "USPTO", "2026-10-19T13:00:00.000Z", "2026-10-19T22:45:00.000Z"),
+      work("meeting", "Meeting", "2026-10-19T21:00:00.000Z", "2026-10-19T22:00:00.000Z"),
+      work("tue", "USPTO", "2026-10-20T12:00:00.000Z", "2026-10-20T22:45:00.000Z"),
+      work("wed", "USPTO", "2026-10-21T13:00:00.000Z", "2026-10-21T21:00:00.000Z"),
+      work("thu", "USPTO", "2026-10-22T13:00:00.000Z", "2026-10-22T22:00:00.000Z"),
+      work("fri", "USPTO", "2026-10-23T13:00:00.000Z", "2026-10-23T22:00:00.000Z"),
+      work("sat", "USPTO", "2026-10-24T13:00:00.000Z", "2026-10-24T22:30:00.000Z"),
+      {
+        id: "story",
+        title: "Library Storytime",
+        start: "2026-10-19T17:00:00.000Z",
+        end: "2026-10-19T17:30:00.000Z",
+        calendarTitle: "Family",
+        sourceTitle: "Family iCloud",
+      },
+    ];
+    const answer = sumMatchedHours({
+      timeZone,
+      label: "work",
+      period: "this week",
+      events,
+      ids: ["mon", "meeting", "tue", "wed", "thu", "fri", "sat"],
+    });
+    expect(answer).toBe(
+      [
+        "You have 56 hours of work scheduled this week.",
+        "Monday: 9 hours and 45 minutes",
+        "Tuesday: 10 hours and 45 minutes",
+        "Wednesday: 8 hours",
+        "Thursday: 9 hours",
+        "Friday: 9 hours",
+        "Saturday: 9 hours and 30 minutes",
+      ].join("\n"),
+    );
+  });
+
+  it("uses an all-day note's stated hours when that is what was selected", () => {
+    const answer = sumMatchedHours({
+      timeZone,
+      label: "work",
+      period: "next week",
+      events: [
+        {
+          id: "banner",
+          title: "12-hour days @ uspto",
+          start: "2026-10-26T04:00:00.000Z",
+          end: "2026-10-28T03:59:00.000Z",
+          allDay: true,
+          calendarTitle: "Devon Personal",
+          sourceTitle: "Personal iCloud",
+        },
+      ],
+      ids: ["banner"],
+    });
+    expect(answer).toBe(
+      ["You have 24 hours of work scheduled next week.", "Monday: 12 hours", "Tuesday: 12 hours"].join("\n"),
+    );
   });
 });

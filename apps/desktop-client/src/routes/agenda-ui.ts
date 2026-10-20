@@ -25,19 +25,57 @@ import {
 } from "../lib/agenda-turn.js";
 import {
   blockRunsOn,
-  formatClock,
+  cleanAgendaBlock,
   loadAgendaBlocks,
-  nextFittingDay,
   parseClock,
-  placeInBlock,
   saveAgendaBlocks,
   shiftDate,
   type AgendaTimeBlock,
-  type BlockRepeat,
-  type BusySpan,
 } from "../lib/agenda-blocks.js";
+import { placeReminderInBlock } from "../lib/agenda-place.js";
 import { listOpenReminders } from "../lib/message-commitments.js";
+import { draftPlan } from "../lib/agenda-llm.js";
+import {
+  applyChatItems,
+  assignDefaultPlanDate,
+  cleanClientLine,
+  defaultPlanDate,
+  formatPlanGaps,
+  messageNamesDate,
+  nextHourStart,
+  ensureRequestedPlanItem,
+  openPlanGaps,
+  clockOnPlanDate,
+  lineFitsBlock,
+  linesToCommit,
+  loadStoredPlan,
+  mergePlan,
+  parsePlanReply,
+  planPeriod,
+  planScope,
+  saveStoredPlan,
+  sortPlanLines,
+  type PlanChatTurn,
+  type PlanLine,
+} from "../lib/agenda-plan.js";
 import { isSpeechEngineStack, primeVerbatimSpeech } from "../lib/speech-engine.js";
+import {
+  busyFromLines,
+  coveredMinutes,
+  draftFromSlice,
+  fillBlockHours,
+  hoursToMinutes,
+  loadStandardPlan,
+  monthAnchorLabel,
+  parseStandardPlan,
+  placeSession,
+  planIsSaved,
+  splitMinutes,
+  resolveMonthDate,
+  saveStandardPlan,
+  totalClaimedHours,
+  type PlanCategory,
+} from "../lib/standard-plan.js";
 
 const uiDir = resolve(dirname(fileURLToPath(import.meta.url)), "../ui");
 
@@ -220,13 +258,188 @@ agendaUiRouter.put("/blocks", async (c) => {
   if (!Array.isArray(body.blocks)) return c.json({ error: "Expected blocks" }, 400);
   const blocks: AgendaTimeBlock[] = [];
   for (const raw of body.blocks) {
-    const block = cleanBlock(raw);
+    const block = cleanAgendaBlock(raw);
     if (!block) return c.json({ error: "Each block needs a name, a time range, and a calendar." }, 400);
     blocks.push(block);
   }
+  const known = new Set((await loadStandardPlan(profileId())).categories.map((category) => category.id));
+  const hosted = blocks.map((block) => ({
+    ...block,
+    categoryIds: block.categoryIds.filter((id) => known.has(id)),
+  }));
   const existing = await loadAgendaBlocks(profileId());
-  await saveAgendaBlocks({ blocks, placed: existing.placed }, profileId());
-  return c.json({ ok: true, blocks });
+  await saveAgendaBlocks({ blocks: hosted, placed: existing.placed }, profileId());
+  return c.json({ ok: true, blocks: hosted });
+});
+
+/** GET /agenda/standard-plan — setup wizard, then the editor. */
+agendaUiRouter.get("/standard-plan", async (c) => {
+  const html = await readFile(resolve(uiDir, "standard-plan.html"), "utf8");
+  return c.html(html);
+});
+
+/** GET /agenda/standard-plan/data — the saved week, plus where each category lands in `date`'s week. */
+agendaUiRouter.get("/standard-plan/data", async (c) => {
+  const plan = await loadStandardPlan(profileId());
+  const date = c.req.query("date") ?? "";
+  return c.json({
+    weeklyHours: plan.weeklyHours,
+    categories: plan.categories,
+    claimedHours: totalClaimedHours(plan.categories),
+    saved: planIsSaved(plan),
+    ...(await weekAnnotations(plan.categories, date)),
+  });
+});
+
+agendaUiRouter.put("/standard-plan", async (c) => {
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "Invalid JSON" }, 400);
+  }
+  const parsed = parseStandardPlan(body);
+  if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+  await saveStandardPlan(parsed.plan, profileId());
+  return c.json({
+    ok: true,
+    weeklyHours: parsed.plan.weeklyHours,
+    categories: parsed.plan.categories,
+    claimedHours: totalClaimedHours(parsed.plan.categories),
+    saved: true,
+  });
+});
+
+/** POST /agenda/standard-plan/fill — draft weekly categories, or one every-two-weeks category, into this week. */
+agendaUiRouter.post("/standard-plan/fill", async (c) => {
+  let body: { date?: unknown; items?: unknown; categoryId?: unknown };
+  try {
+    body = (await c.req.json()) as typeof body;
+  } catch {
+    return c.json({ error: "Invalid JSON" }, 400);
+  }
+  const only = typeof body.categoryId === "string" ? body.categoryId.trim() : "";
+  try {
+    const view = await loadPlanView("week", typeof body.date === "string" ? body.date : "");
+    const plan = await loadStandardPlan(profileId());
+    if (only) {
+      const chosen = plan.categories.find((category) => category.id === only);
+      if (!chosen || (chosen.cadence !== "fortnight" && chosen.cadence !== "week")) {
+        return c.json({ error: "That category is not planned across a week." }, 400);
+      }
+    }
+    const items = postedPlanLines(body.items, view.period.dates) ?? view.items;
+    const skip = new Set(view.skipOverlapIds);
+    const unplaced: { name: string; minutes: number; reason: "unassigned" | "full" }[] = [];
+    const drafts = [];
+    for (const category of plan.categories) {
+      if (only ? category.id !== only : category.cadence !== "week") continue;
+      const hosts = blocksHosting(view.blocks, category.id);
+      if (!hosts.length) {
+        unplaced.push({ name: category.name, minutes: hoursToMinutes(category.hours), reason: "unassigned" });
+        continue;
+      }
+      const placed = spreadCategory({
+        category,
+        hosts,
+        dates: view.period.dates,
+        items,
+        skip,
+      });
+      drafts.push(...placed.drafts);
+      if (placed.unplaced > 0) unplaced.push({ name: category.name, minutes: placed.unplaced, reason: "full" });
+    }
+    return c.json({ ok: true, drafts, unplaced });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return c.json({ error: message }, 500);
+  }
+});
+
+/** POST /agenda/standard-plan/place — draft one daily or monthly session into its block. */
+agendaUiRouter.post("/standard-plan/place", async (c) => {
+  let body: { categoryId?: unknown; date?: unknown; items?: unknown };
+  try {
+    body = (await c.req.json()) as typeof body;
+  } catch {
+    return c.json({ error: "Invalid JSON" }, 400);
+  }
+  const categoryId = typeof body.categoryId === "string" ? body.categoryId.trim() : "";
+  const date = typeof body.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(body.date) ? body.date : "";
+  if (!categoryId || !date) return c.json({ error: "Choose a category and a day." }, 400);
+  try {
+    const view = await loadPlanView("week", date);
+    const plan = await loadStandardPlan(profileId());
+    const category = plan.categories.find((item) => item.id === categoryId);
+    if (!category || category.cadence === "week" || category.cadence === "fortnight") {
+      return c.json({ error: "That category is planned with the week." }, 400);
+    }
+    const hosts = blocksHosting(view.blocks, category.id);
+    if (!hosts.length) return c.json({ error: `${category.name} is not on a time block yet.` }, 400);
+    const items = postedPlanLines(body.items, view.period.dates) ?? view.items;
+    const skip = new Set(view.skipOverlapIds);
+    const running = hosts.filter((block) => blockRunsOn(block, date));
+    if (!running.length) {
+      const nextDate = view.period.dates.find((iso) => iso > date && hosts.some((block) => blockRunsOn(block, iso)));
+      return c.json({
+        ok: false,
+        choice: "off-day",
+        message: `${hostLabel(hosts)} does not run on ${dayLabel(date)}.`,
+        next: nextDate ? { date: nextDate, label: dayLabel(nextDate) } : null,
+      });
+    }
+    const shares = splitMinutes(hoursToMinutes(category.hours), running.length);
+    const drafts = [];
+    let carry = 0;
+    let failure: { status: string; message: string; next: { date: string; label: string } | null } | null = null;
+    for (let index = 0; index < running.length; index += 1) {
+      const block = running[index]!;
+      const ask = (shares[index] ?? 0) + carry;
+      carry = 0;
+      if (ask <= 0) continue;
+      const placed = placeSession({
+        date,
+        block,
+        minutes: ask,
+        dates: view.period.dates,
+        busyOn: (iso) => busyFromLines(items, iso, skip),
+      });
+      if (placed.status === "fit" && placed.startMin != null && placed.endMin != null) {
+        const draft = draftFromSlice({
+          categoryName: category.name,
+          calendarId: block.calendarId,
+          date,
+          startMin: placed.startMin,
+          endMin: placed.endMin,
+        });
+        drafts.push(draft);
+        items.push(draft);
+        continue;
+      }
+      const last = index === running.length - 1;
+      if (!last) {
+        carry = ask;
+        continue;
+      }
+      const next = placed.next ? { date: placed.next.date, label: dayLabel(placed.next.date) } : null;
+      failure = {
+        status: placed.status,
+        message:
+          placed.status === "overlap"
+            ? `This overlaps ${placed.overlapTitle ?? "another event"}.`
+            : placed.status === "too-short"
+              ? `${block.name} is shorter than this duration.`
+              : "That day is not in this week.",
+        next,
+      };
+    }
+    if (drafts.length) return c.json({ ok: true, drafts, draft: drafts[0] });
+    if (failure) return c.json({ ok: false, choice: failure.status, message: failure.message, next: failure.next });
+    return c.json({ error: `${category.name} did not fit.` }, 400);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return c.json({ error: message }, 500);
+  }
 });
 
 agendaUiRouter.get("/calendars", async (c) => {
@@ -242,6 +455,224 @@ agendaUiRouter.get("/calendars", async (c) => {
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return c.json({ calendars: [], error: message }, 200);
+  }
+});
+
+agendaUiRouter.get("/plan", async (c) => {
+  try {
+    const loaded = await loadPlanView(planScope(c.req.query("scope")), c.req.query("date") ?? "");
+    return c.json(loaded);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return c.json({ error: message }, 500);
+  }
+});
+
+agendaUiRouter.post("/plan", async (c) => {
+  let body: { scope?: unknown; date?: unknown; items?: unknown };
+  try {
+    body = (await c.req.json()) as typeof body;
+  } catch {
+    return c.json({ error: "Invalid JSON" }, 400);
+  }
+  try {
+    const view = await loadPlanView(planScope(body.scope), typeof body.date === "string" ? body.date : "");
+    const items = Array.isArray(body.items)
+      ? body.items.flatMap((item) => {
+          const line = cleanClientLine(item);
+          return line && view.period.dates.includes(line.date) ? [line] : [];
+        })
+      : [];
+    await saveStoredPlan(
+      { scope: view.period.scope, anchor: view.period.anchor, items, chat: view.chat },
+      view.period.start,
+      profileId(),
+    );
+    return c.json({ ok: true });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return c.json({ error: message }, 500);
+  }
+});
+
+agendaUiRouter.post("/plan/chat", async (c) => {
+  let body: { scope?: unknown; date?: unknown; text?: unknown; items?: unknown; selected?: unknown };
+  try {
+    body = (await c.req.json()) as typeof body;
+  } catch {
+    return c.json({ error: "Invalid JSON" }, 400);
+  }
+  const text = typeof body.text === "string" ? body.text.trim() : "";
+  if (!text) return c.json({ error: "Say what you want in this plan." }, 400);
+  try {
+    const view = await loadPlanView(planScope(body.scope), typeof body.date === "string" ? body.date : "");
+    const edited = Array.isArray(body.items) ? body.items.flatMap((item) => {
+      const line = cleanClientLine(item);
+      return line && view.period.dates.includes(line.date) ? [line] : [];
+    }) : view.items;
+    const calendars = view.calendars;
+    const writableIds = new Set(calendars.map((calendar) => calendar.id));
+    const skipOverlapIds = new Set(view.skipOverlapIds);
+    const zone = agendaTimeZone();
+    const today = dateKeyInZone(new Date(), zone);
+    const selected =
+      view.period.scope === "day"
+        ? view.period.dates[0] ?? null
+        : typeof body.selected === "string" && view.period.dates.includes(body.selected)
+          ? body.selected
+          : null;
+    const fallbackDay = defaultPlanDate({ message: text, dates: view.period.dates, today, selected });
+    const nowMin = minutesInZone(new Date().toISOString(), zone);
+    const fromMin = fallbackDay === today ? nextHourStart(nowMin) : 0;
+    const clockLabel = new Intl.DateTimeFormat("en-US", {
+      timeZone: zone,
+      hour: "numeric",
+      minute: "2-digit",
+    }).format(new Date());
+    const blocks = view.blocks
+      .flatMap((block) =>
+        view.period.dates
+          .filter((date) => blockRunsOn(block, date))
+          .map((date) => `${date} ${block.name} ${block.start}–${block.end} calendar ${block.calendarId}`),
+      )
+      .join("\n");
+    const history: PlanChatTurn[] = view.chat.slice(-11);
+    history.push({ role: "user", text });
+    const raw = await draftPlan({
+      message: text,
+      periodLabel: view.period.label,
+      dates: view.period.dates,
+      blocks,
+      calendars: calendars.map((calendar) => `${calendar.id} ${calendar.title}`).join("\n"),
+      items: planItemsForModel(edited, skipOverlapIds),
+      defaultDate: fallbackDay ?? undefined,
+      open: fallbackDay ? formatPlanGaps(openPlanGaps(edited, fallbackDay, skipOverlapIds, fromMin)) : undefined,
+      clock: fallbackDay === today ? `${clockLabel}. New items start at the next open hour.` : undefined,
+      history: history
+        .slice(0, -1)
+        .map((turn) => `${turn.role}: ${turn.text}`)
+        .join("\n"),
+    });
+    const parsed = raw ? parsePlanReply(raw) : null;
+    if (!parsed) {
+      return c.json({ error: "I couldn't turn that into separate items.", items: edited, chat: view.chat });
+    }
+    const ensured = ensureRequestedPlanItem({
+      current: edited,
+      incoming: assignDefaultPlanDate(edited, parsed.items, messageNamesDate(text) ? null : fallbackDay),
+      today,
+      day: fallbackDay,
+      nowMin,
+      message: text,
+      reply: parsed.reply,
+      skipOverlapIds,
+    });
+    const incoming = ensured.items.flatMap((item) => {
+      if (!view.period.dates.includes(item.date)) return [];
+      const existing = edited.some((line) => line.eventId && line.eventId === item.eventId);
+      let calendarId = resolvePlanCalendar(item.calendarId ?? "", calendars, view.blocks, item.date, item.start);
+      if (calendarId && !writableIds.has(calendarId) && !existing) {
+        calendarId = resolvePlanCalendar("", calendars, view.blocks, item.date, item.start);
+      }
+      if (!calendarId && !existing) calendarId = calendars[0]?.id ?? "";
+      return [{ ...item, calendarId }];
+    });
+    const items = applyChatItems(edited, incoming, () => randomUUID());
+    const reply = ensured.reply || "Updated the plan.";
+    const chat: PlanChatTurn[] = history.slice(-15);
+    chat.push({ role: "assistant", text: reply });
+    await saveStoredPlan({ scope: view.period.scope, anchor: view.period.anchor, items, chat }, view.period.start, profileId());
+    return c.json({ reply, items, chat, period: view.period, blocks: view.blocks, calendars });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return c.json({ error: message }, 500);
+  }
+});
+
+agendaUiRouter.post("/plan/commit", async (c) => {
+  let body: { scope?: unknown; date?: unknown; items?: unknown };
+  try {
+    body = (await c.req.json()) as typeof body;
+  } catch {
+    return c.json({ error: "Invalid JSON" }, 400);
+  }
+  try {
+    const view = await loadPlanView(planScope(body.scope), typeof body.date === "string" ? body.date : "");
+    const lines = Array.isArray(body.items)
+      ? body.items.flatMap((item) => {
+          const line = cleanClientLine(item);
+          return line && view.period.dates.includes(line.date) ? [line] : [];
+        })
+      : [];
+    const writable = new Set(view.calendars.map((calendar) => calendar.id));
+    const { create, update } = linesToCommit(lines);
+    const file = calendarPolicyPath(profileId());
+    const gateway = createEventKitGateway(file);
+    const zone = agendaTimeZone();
+    const errors: string[] = [];
+    let created = 0;
+    let updated = 0;
+    const written = new Map<string, string>();
+    for (const line of create) {
+      if (!writable.has(line.calendarId)) {
+        errors.push(`${line.title} needs a calendar you can write.`);
+        continue;
+      }
+      const span = planSpan(line, zone);
+      if (!span) {
+        errors.push(`${line.title} needs an end after its start.`);
+        continue;
+      }
+      const event = await gateway.create({
+        calendarId: line.calendarId,
+        title: line.title,
+        start: span.start,
+        end: span.end,
+      });
+      written.set(line.key, event.id);
+      created += 1;
+    }
+    for (const line of update) {
+      if (!line.eventId || !writable.has(line.calendarId)) {
+        errors.push(`${line.title} stays as it is because that calendar is not open for writes.`);
+        continue;
+      }
+      const span = planSpan(line, zone);
+      if (!span) {
+        errors.push(`${line.title} needs an end after its start.`);
+        continue;
+      }
+      await gateway.update({
+        eventId: line.eventId,
+        title: line.title,
+        start: span.start,
+        end: span.end,
+        calendarId: line.calendarId,
+      });
+      updated += 1;
+    }
+    const items = lines.map((line) => {
+      const eventId = written.get(line.key) ?? line.eventId;
+      return { ...line, eventId, origin: eventId ? ("calendar" as const) : line.origin, dirty: false };
+    });
+    await saveStoredPlan(
+      { scope: view.period.scope, anchor: view.period.anchor, items, chat: view.chat },
+      view.period.start,
+      profileId(),
+    );
+    return c.json({
+      created,
+      updated,
+      errors,
+      items,
+      period: view.period,
+      blocks: view.blocks,
+      calendars: view.calendars,
+      chat: view.chat,
+    });
+  } catch (err) {
+    const message = err instanceof CalendarHelperError ? err.message : err instanceof Error ? err.message : String(err);
+    return c.json({ error: message }, 500);
   }
 });
 
@@ -279,161 +710,237 @@ agendaUiRouter.post("/place", async (c) => {
   } catch {
     return c.json({ error: "Invalid JSON" }, 400);
   }
-  const reminderId = typeof body.reminderId === "string" ? body.reminderId.trim() : "";
-  const blockId = typeof body.blockId === "string" ? body.blockId.trim() : "";
-  const duration = typeof body.durationMinutes === "number" ? Math.round(body.durationMinutes) : Number.NaN;
-  const selected = typeof body.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(body.date) ? body.date : null;
-  const choice = body.choice === "overlap" || body.choice === "next" ? body.choice : null;
-  if (!reminderId || !blockId || !Number.isFinite(duration) || duration < 5 || duration > 12 * 60) {
-    return c.json({ error: "Choose a reminder, a time block, and a duration." }, 400);
-  }
-  const zone = agendaTimeZone();
-  const today = dateKeyInZone(new Date(), zone);
-  const stored = await loadAgendaBlocks(profileId());
-  const block = stored.blocks.find((item) => item.id === blockId);
-  if (!block) return c.json({ error: "That time block is gone. Set it up again." }, 400);
-  const blockStart = parseClock(block.start);
-  const blockEnd = parseClock(block.end);
-  if (blockStart == null || blockEnd == null) return c.json({ error: "That time block has no hours." }, 400);
-  let reminder: { id: string; title: string; due: string | null };
-  try {
-    const found = (await listOpenReminders()).find((item) => item.id === reminderId && !item.completed);
-    if (!found) return c.json({ error: "That reminder is no longer open." }, 404);
-    reminder = { id: found.id, title: found.title, due: dueDateKey(found.due, zone) };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return c.json({ error: message }, 400);
-  }
-  const target = selected || reminder.due || today;
-  const file = calendarPolicyPath(profileId());
-  const gateway = createEventKitGateway(file);
-  const access = await calendarAccess(file);
-  const destination = access.writable.find((calendar) => calendar.id === block.calendarId);
-  if (!destination) return c.json({ error: "The calendar for this block is not open for writes." }, 403);
-  const rangeStart = zonedDateTime(zone, ...splitDate(target), 0, 0);
-  const rangeEnd = zonedDateTime(zone, ...splitDate(shiftDate(target, 15)), 0, 0);
-  let events: CalendarEvent[] = [];
-  try {
-    events = await gateway.events({ start: rangeStart.toISOString(), end: rangeEnd.toISOString() });
-    events = events.filter((event) => !access.skipOverlapIds.has(event.calendarId));
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return c.json({ error: message }, 500);
-  }
-  const eventsOn = (isoDate: string) =>
-    events.flatMap((event) => {
-      const span = spanOnDay(event, isoDate, zone);
-      return span ? [span] : [];
-    });
-  const describe = (isoDate: string, startMin: number) => ({
-    date: isoDate,
-    start: formatClock(startMin),
-    end: formatClock(startMin + duration),
-    label: dayLabel(isoDate),
+  const result = await placeReminderInBlock({
+    reminderId: typeof body.reminderId === "string" ? body.reminderId.trim() : "",
+    blockId: typeof body.blockId === "string" ? body.blockId.trim() : "",
+    durationMinutes:
+      typeof body.durationMinutes === "number" ? Math.round(body.durationMinutes) : Number.NaN,
+    date: typeof body.date === "string" ? body.date : null,
+    choice: body.choice === "overlap" || body.choice === "next" ? body.choice : null,
   });
-
-  if (!blockRunsOn(block, target) && choice !== "next") {
-    const next = nextFittingDay({
-      fromDate: shiftDate(target, 1),
-      block,
-      duration,
-      eventsOn,
-      reminderIds: stored.placed,
-    });
-    return c.json({
-      ok: false,
-      choice: "off-day",
-      message: `${block.name} does not run on ${dayLabel(target)}.`,
-      next: next ? describe(next.date, next.startMin) : null,
-    });
+  if (!result.ok) {
+    return c.json(result.body, result.status as 200 | 400 | 403 | 404 | 500);
   }
-
-  const attemptDate = !blockRunsOn(block, target) ? null : target;
-  const placed = attemptDate
-    ? placeInBlock({
-        blockStart,
-        blockEnd,
-        duration,
-        events: eventsOn(attemptDate),
-        reminderIds: stored.placed,
-      })
-    : null;
-
-  const commit = async (isoDate: string, startMin: number) => {
-    try {
-      const event = await createPlaced(gateway, destination.id, reminder.title, isoDate, startMin, duration, zone);
-      stored.placed.push(event.id);
-      await saveAgendaBlocks(stored, profileId());
-      return c.json({ ok: true, ...describe(isoDate, startMin), event });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      return c.json({ error: message }, 500);
-    }
-  };
-
-  if (choice === "next" || !placed || placed.status !== "fit") {
-    if (choice === "overlap" && placed?.status === "overlap") {
-      return commit(target, placed.startMin);
-    }
-    if (choice !== "next" && placed && placed.status !== "fit") {
-      const next = nextFittingDay({
-        fromDate: shiftDate(target, 1),
-        block,
-        duration,
-        eventsOn,
-        reminderIds: stored.placed,
-      });
-      return c.json({
-        ok: false,
-        choice: placed.status,
-        message:
-          placed.status === "overlap"
-            ? `This overlaps ${placed.overlapTitle}.`
-            : `${block.name} is shorter than this duration.`,
-        overlapTitle: placed.overlapTitle,
-        next: next ? describe(next.date, next.startMin) : null,
-      });
-    }
-    const next = nextFittingDay({
-      fromDate: shiftDate(target, 1),
-      block,
-      duration,
-      eventsOn,
-      reminderIds: stored.placed,
-    });
-    if (!next) return c.json({ error: `No open ${block.name} in the next two weeks.` }, 400);
-    return commit(next.date, next.startMin);
-  }
-
-  return commit(target, placed.startMin);
+  return c.json({
+    ok: true,
+    event: result.event,
+    date: result.date,
+    start: result.start,
+    end: result.end,
+    label: result.label,
+  });
 });
 
-function cleanBlock(raw: unknown): AgendaTimeBlock | null {
-  if (!raw || typeof raw !== "object") return null;
-  const row = raw as Record<string, unknown>;
-  const name = typeof row.name === "string" ? row.name.trim() : "";
-  const start = typeof row.start === "string" ? row.start : "";
-  const end = typeof row.end === "string" ? row.end : "";
-  const calendarId = typeof row.calendarId === "string" ? row.calendarId.trim() : "";
-  const repeat = row.repeat;
-  const days = Array.isArray(row.days)
-    ? [...new Set(row.days.filter((day): day is number => typeof day === "number" && day >= 0 && day <= 6))]
-    : [];
-  const startMin = parseClock(start);
-  const endMin = parseClock(end);
-  if (!name || !calendarId || startMin == null || endMin == null || startMin >= endMin) return null;
-  if (repeat !== "all" && repeat !== "weekdays" && repeat !== "weekends" && repeat !== "custom") return null;
-  if (repeat === "custom" && !days.length) return null;
-  const id = typeof row.id === "string" && row.id.trim() ? row.id.trim() : randomUUID();
+function blocksHosting(blocks: AgendaTimeBlock[], categoryId: string): AgendaTimeBlock[] {
+  return blocks.filter((block) => block.categoryIds.includes(categoryId));
+}
+
+function hostLabel(blocks: AgendaTimeBlock[]): string {
+  if (blocks.length === 1) return blocks[0]!.name;
+  return "Those blocks";
+}
+
+function spreadCategory(input: {
+  category: PlanCategory;
+  hosts: AgendaTimeBlock[];
+  dates: string[];
+  items: PlanLine[];
+  skip: Set<string>;
+}): { drafts: ReturnType<typeof draftFromSlice>[]; unplaced: number } {
+  const drafts: ReturnType<typeof draftFromSlice>[] = [];
+  let already = 0;
+  for (const block of input.hosts) {
+    const start = parseClock(block.start);
+    const end = parseClock(block.end);
+    if (start == null || end == null) continue;
+    const running = input.dates.filter((date) => blockRunsOn(block, date));
+    already += coveredMinutes(input.items, input.category.name, running, start, end, input.skip);
+  }
+  let remaining = Math.max(0, hoursToMinutes(input.category.hours) - already);
+  if (remaining <= 0) return { drafts, unplaced: 0 };
+  const shares = splitMinutes(remaining, input.hosts.length);
+  let carry = 0;
+  for (let index = 0; index < input.hosts.length; index += 1) {
+    const block = input.hosts[index]!;
+    const ask = (shares[index] ?? 0) + carry;
+    carry = 0;
+    if (ask <= 0) continue;
+    const start = parseClock(block.start);
+    const end = parseClock(block.end);
+    if (start == null || end == null) {
+      carry = ask;
+      continue;
+    }
+    const running = input.dates.filter((date) => blockRunsOn(block, date));
+    const filled = fillBlockHours({
+      dates: running,
+      blockStart: start,
+      blockEnd: end,
+      requests: [{ categoryId: input.category.id, minutes: ask }],
+      busyOn: (date) => busyFromLines(input.items, date, input.skip),
+    });
+    for (const slice of filled.slices) {
+      const draft = draftFromSlice({
+        categoryName: input.category.name,
+        calendarId: block.calendarId,
+        date: slice.date,
+        startMin: slice.startMin,
+        endMin: slice.endMin,
+      });
+      drafts.push(draft);
+      input.items.push(draft);
+    }
+    carry = filled.unplaced.reduce((sum, left) => sum + left.minutes, 0);
+  }
+  return { drafts, unplaced: carry };
+}
+
+function postedPlanLines(raw: unknown, dates: string[]): PlanLine[] | null {
+  if (!Array.isArray(raw)) return null;
+  return raw.flatMap((item) => {
+    const line = cleanClientLine(item);
+    return line && dates.includes(line.date) ? [line] : [];
+  });
+}
+
+async function weekAnnotations(categories: PlanCategory[], date: string) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return {};
+  const period = planPeriod("week", date);
+  const blocks = (await loadAgendaBlocks(profileId())).blocks;
+  const months = [...new Set(period.dates.map((iso) => iso.slice(0, 7)))];
   return {
-    id,
-    name: name.slice(0, 80),
-    start,
-    end,
-    repeat: repeat as BlockRepeat,
-    days,
-    calendarId,
+    week: {
+      dates: period.dates,
+      label: period.label,
+      rows: categories.map((category) => {
+        const hosts = blocksHosting(blocks, category.id);
+        const month = category.cadence === "month" && category.monthAnchor ? monthInWeek(category.monthAnchor, period.dates, months) : null;
+        return {
+          id: category.id,
+          blockId: hosts[0]?.id ?? null,
+          blockName: hosts.length ? hosts.map((block) => block.name).join(" · ") : null,
+          runs: period.dates.filter((iso) => hosts.some((block) => blockRunsOn(block, iso))),
+          monthDate: month?.date ?? null,
+          monthMissing: month?.missing ?? false,
+          monthClamped: month?.clamped ?? false,
+          monthInWeek: month?.inWeek ?? false,
+          monthLabel: category.monthAnchor ? monthAnchorLabel(category.monthAnchor) : null,
+        };
+      }),
+    },
   };
+}
+
+function monthInWeek(
+  anchor: NonNullable<PlanCategory["monthAnchor"]>,
+  dates: string[],
+  months: string[],
+): { date: string | null; clamped: boolean; missing: boolean; inWeek: boolean } {
+  const resolved = months.map((token) => {
+    const [year, month] = token.split("-").map(Number);
+    return resolveMonthDate(anchor, year ?? 0, month ?? 1);
+  });
+  const inside = resolved.find((item) => item.date && dates.includes(item.date));
+  if (inside?.date) return { date: inside.date, clamped: inside.clamped, missing: false, inWeek: true };
+  const any = resolved.find((item) => item.date);
+  if (any?.date) return { date: any.date, clamped: any.clamped, missing: false, inWeek: false };
+  return { date: null, clamped: false, missing: true, inWeek: false };
+}
+
+async function loadPlanView(scope: ReturnType<typeof planScope>, date: string) {
+  const zone = agendaTimeZone();
+  const anchor = /^\d{4}-\d{2}-\d{2}$/.test(date)
+    ? date
+    : new Intl.DateTimeFormat("en-CA", { timeZone: zone, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+  const period = planPeriod(scope, anchor);
+  const file = calendarPolicyPath(profileId());
+  const gateway = createEventKitGateway(file);
+  const [discovered, policy, blockFile, stored] = await Promise.all([
+    gateway.catalog(),
+    loadCalendarPolicy(file),
+    loadAgendaBlocks(profileId()),
+    loadStoredPlan(scope, period.start, profileId()),
+  ]);
+  const readable = readableCalendars(mergeCalendarAccess(discovered, policy).sources);
+  const open = new Set(readable.map((calendar) => calendar.id));
+  const [year, month, day] = period.start.split("-").map(Number);
+  const after = shiftDate(period.end, 1).split("-").map(Number);
+  const events = await gateway.events({
+    start: zonedDateTime(zone, year ?? 0, month ?? 1, day ?? 1, 0, 0).toISOString(),
+    end: zonedDateTime(zone, after[0] ?? 0, after[1] ?? 1, after[2] ?? 1, 0, 0).toISOString(),
+  });
+  const calendarLines = events.flatMap((event) => {
+    if (!open.has(event.calendarId)) return [];
+    const line = eventPlanLine(event, zone);
+    return line && period.dates.includes(line.date) ? [line] : [];
+  });
+  const saved = (stored?.items ?? []).filter((line) => period.dates.includes(line.date));
+  return {
+    period,
+    blocks: blockFile.blocks,
+    calendars: readable
+      .filter((calendar) => calendar.access === "write")
+      .map((calendar) => ({ id: calendar.id, title: calendar.title, sourceTitle: calendar.sourceTitle })),
+    items: sortPlanLines(mergePlan(calendarLines, saved)),
+    chat: stored?.chat ?? [],
+    skipOverlapIds: readable.filter((calendar) => calendar.ignoreOverlaps).map((calendar) => calendar.id),
+  };
+}
+
+function eventPlanLine(event: CalendarEvent, zone: string): PlanLine {
+  const date = dateInZone(event.start, zone);
+  return {
+    key: event.id,
+    eventId: event.id,
+    date,
+    start: event.allDay ? "00:00" : clockLabel(event.start, zone),
+    end: event.allDay ? "23:59" : clockLabel(event.end, zone),
+    title: event.title,
+    calendarId: event.calendarId,
+    origin: "calendar",
+    dirty: false,
+  };
+}
+
+function clockLabel(iso: string, zone: string): string {
+  const minutes = minutesInZone(iso, zone);
+  return `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
+}
+
+function planSpan(line: PlanLine, zone: string): { start: string; end: string } | null {
+  const start = clockOnPlanDate(line.date, line.start, zone);
+  let end = clockOnPlanDate(line.date, line.end, zone);
+  if (end.getTime() <= start.getTime()) end = new Date(end.getTime() + 86_400_000);
+  if (end.getTime() <= start.getTime()) return null;
+  return { start: start.toISOString(), end: end.toISOString() };
+}
+
+function planItemsForModel(lines: PlanLine[], skipOverlapIds: ReadonlySet<string>): string {
+  const describe = (line: PlanLine) =>
+    `key=${line.key} eventId=${line.eventId ?? ""} ${line.date} ${line.start}–${line.end} calendar=${line.calendarId} ${line.title}`;
+  const blocking = lines.filter((line) => !skipOverlapIds.has(line.calendarId)).map(describe);
+  const skipped = lines.filter((line) => skipOverlapIds.has(line.calendarId)).map(describe);
+  return [
+    `Blocking items:\n${blocking.join("\n") || "none"}`,
+    skipped.length ? `Visible only, these skip overlaps and do not reduce open time:\n${skipped.join("\n")}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+function resolvePlanCalendar(
+  value: string,
+  calendars: { id: string; title: string }[],
+  blocks: AgendaTimeBlock[],
+  date: string,
+  start: string,
+): string {
+  if (calendars.some((calendar) => calendar.id === value)) return value;
+  const named = calendars.find((calendar) => calendar.title.toLowerCase() === value.toLowerCase());
+  if (named) return named.id;
+  const block = blocks.find((candidate) => lineFitsBlock({ date, start }, candidate));
+  if (block && calendars.some((calendar) => calendar.id === block.calendarId)) return block.calendarId;
+  return calendars.length === 1 ? calendars[0]!.id : "";
 }
 
 async function writableCalendars() {
@@ -488,42 +995,6 @@ function dateInZone(iso: string, zone: string): string {
     month: "2-digit",
     day: "2-digit",
   }).format(new Date(iso));
-}
-
-function spanOnDay(event: CalendarEvent, day: string, zone: string): BusySpan | null {
-  if (event.allDay) return null;
-  const startDay = dateInZone(event.start, zone);
-  const endDay = dateInZone(event.end, zone);
-  if (startDay > day || endDay < day) return null;
-  const startMin = startDay < day ? 0 : minutesInZone(event.start, zone);
-  let endMin = endDay > day ? 24 * 60 : minutesInZone(event.end, zone);
-  if (endMin <= startMin) endMin = startMin + 1;
-  return { id: event.id, title: event.title, startMin, endMin };
-}
-
-async function createPlaced(
-  gateway: ReturnType<typeof createEventKitGateway>,
-  calendarId: string,
-  title: string,
-  isoDate: string,
-  startMin: number,
-  duration: number,
-  zone: string,
-) {
-  const [year, month, day] = splitDate(isoDate);
-  const start = zonedDateTime(zone, year, month, day, Math.floor(startMin / 60), startMin % 60);
-  const endMin = startMin + duration;
-  const endDay = endMin >= 24 * 60 ? shiftDate(isoDate, 1) : isoDate;
-  const endClock = endMin >= 24 * 60 ? endMin - 24 * 60 : endMin;
-  const [endYear, endMonth, endDate] = splitDate(endDay);
-  const end = zonedDateTime(zone, endYear, endMonth, endDate, Math.floor(endClock / 60), endClock % 60);
-  return gateway.create({
-    calendarId,
-    title,
-    start: start.toISOString(),
-    end: end.toISOString(),
-    notes: "Placed from Reminders.",
-  });
 }
 
 function clockOnDate(date: string, hhmm: string, zone: string): Date {

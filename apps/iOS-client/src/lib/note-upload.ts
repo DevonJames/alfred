@@ -16,11 +16,20 @@ import {
   getAudioNote,
   getNoteUploadSession,
   putNoteUploadChunk,
+  uploadNotePhoto,
 } from "./desktop-api";
-import type { AudioNote, AudioNoteJob, AudioNoteTemplate } from "./types";
+import type { AudioNoteTemplate } from "./types";
 
 const STORAGE_KEY = "alfred_note_upload";
 const LAN_SINGLE_POST_MAX = 8 * 1024 * 1024;
+
+export interface NoteStillInput {
+  uri: string;
+  filename: string;
+  mimeType: string;
+  offsetSeconds: number;
+  capturedAt?: string;
+}
 
 export interface NoteUploadInput {
   uri: string;
@@ -31,6 +40,7 @@ export interface NoteUploadInput {
   attendees?: string[];
   durationSeconds?: number;
   durationMode: "short" | "long";
+  stills?: NoteStillInput[];
 }
 
 export interface NoteUploadProgress {
@@ -166,6 +176,35 @@ async function runPersisted(
   return noteId;
 }
 
+async function uploadStills(noteId: string, stills: NoteStillInput[] | undefined): Promise<void> {
+  if (!stills?.length) return;
+  for (const still of stills) {
+    let lastError: unknown;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        const image = await FileSystem.readAsStringAsync(still.uri, {
+          encoding: FileSystem.EncodingType.Base64,
+        });
+        await uploadNotePhoto(noteId, {
+          image,
+          filename: still.filename,
+          mimeType: still.mimeType,
+          offsetSeconds: still.offsetSeconds,
+          capturedAt: still.capturedAt,
+        });
+        lastError = undefined;
+        break;
+      } catch (err) {
+        lastError = err;
+        await new Promise((resolve) => setTimeout(resolve, 800 * (attempt + 1)));
+      }
+    }
+    if (lastError) {
+      console.warn("[notes] still upload failed", still.filename, lastError);
+    }
+  }
+}
+
 async function finishUpload(
   session: PersistedUpload,
   onProgress: (patch: Partial<NoteUploadProgress>) => void,
@@ -176,6 +215,8 @@ async function finishUpload(
     const remote = await getNoteUploadSession(session.uploadId).catch(() => null);
     if (remote?.status === "completed" && remote.noteId) {
       await getAudioNote(remote.noteId).catch(() => null);
+      onProgress({ status: "completing", message: "Sending pictures" });
+      await uploadStills(remote.noteId, session.stills);
       return remote.noteId;
     }
     if (remote?.status === "failed") {
@@ -185,9 +226,11 @@ async function finishUpload(
       try {
         const finished = await completeNoteUploadSession(session.uploadId);
         posted = true;
-        if (finished.note?.id) return finished.note.id;
-        if (finished.upload.status === "completed" && finished.upload.noteId) {
-          return finished.upload.noteId;
+        const noteId = finished.note?.id ?? finished.upload.noteId;
+        if (noteId) {
+          onProgress({ status: "completing", message: "Sending pictures" });
+          await uploadStills(noteId, session.stills);
+          return noteId;
         }
         onProgress({ status: "completing", message: "Saving recording on your Mac" });
       } catch {
@@ -243,6 +286,7 @@ export const useNoteUpload = create<NoteUploadState>((set, get) => ({
         durationMode: input.durationMode,
       });
       const noteId = result.note?.id ?? result.job?.noteId;
+      if (noteId) await uploadStills(noteId, input.stills);
       return { noteId, deferred: false };
     }
 

@@ -213,6 +213,11 @@
         border-color: var(--line);
         color: var(--muted);
       }
+      .row-actions button:disabled,
+      .detail-overlay-actions button:disabled {
+        opacity: 0.45;
+        cursor: wait;
+      }
 
       .stats {
         margin-top: 0.85rem;
@@ -365,6 +370,10 @@
       .detail-label-row label {
         margin-bottom: 0;
       }
+      .detail-label-row span {
+        display: flex;
+        gap: 0.35rem;
+      }
       .detail-expand {
         border: 1px solid var(--line);
         background: transparent;
@@ -488,6 +497,64 @@
       .detail-overlay-actions button.ghost {
         border-color: var(--line);
         color: var(--muted);
+      }
+      .report-overlay-panel {
+        width: min(56rem, calc(100vw - 3rem));
+        max-height: min(88vh, 52rem);
+      }
+      .report-scope {
+        color: var(--muted);
+        font-size: 0.8rem;
+        margin: 0 2rem 0.75rem 0;
+        line-height: 1.4;
+      }
+      .report-compose label {
+        display: block;
+        font-size: 0.72rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--muted);
+        margin: 0 0 0.35rem;
+      }
+      #report-prompt {
+        width: 100%;
+        min-height: 8rem;
+        border: 1px solid var(--line);
+        background: #121714;
+        color: var(--ink);
+        padding: 0.75rem 0.85rem;
+        font: inherit;
+        font-size: 0.95rem;
+        line-height: 1.45;
+        outline: none;
+        resize: vertical;
+      }
+      #report-prompt:focus {
+        border-color: var(--brass);
+      }
+      .report-body {
+        flex: 1;
+        min-height: 18rem;
+        max-height: min(62vh, 36rem);
+        overflow: auto;
+        margin: 0;
+        padding: 0.75rem 0.85rem;
+        border: 1px solid var(--line);
+        background: #121714;
+        color: var(--ink);
+        font-size: 0.95rem;
+        line-height: 1.5;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+      .report-status {
+        font-size: 0.78rem;
+        color: var(--muted);
+        min-height: 1.1em;
+        margin: 0.5rem 0 0;
+      }
+      .report-status.err {
+        color: var(--coral);
       }
       .detail .edit-status {
         font-size: 0.78rem;
@@ -723,6 +790,7 @@
         </div>
         <div class="row-actions">
           <button type="button" id="btn-reload">Reload</button>
+          <button type="button" id="btn-report">Report</button>
           <button type="button" class="ghost" id="btn-rebuild">Rebuild index</button>
           <button type="button" class="ghost" id="btn-clean">Clean Index</button>
           <button type="button" class="ghost" id="btn-reset">Reset view</button>
@@ -747,8 +815,44 @@
         <figure class="detail-overlay-file" id="detail-overlay-file" hidden></figure>
         <textarea id="detail-overlay-text"></textarea>
         <div class="detail-overlay-actions">
+          <button type="button" id="detail-overlay-copy">Copy</button>
+          <button type="button" id="detail-overlay-download">Download</button>
           <button type="button" id="detail-overlay-save">Save changes</button>
           <button type="button" class="ghost" id="detail-overlay-done">Done</button>
+        </div>
+      </div>
+    </div>
+    <div class="detail-overlay" id="report-overlay" hidden>
+      <div
+        class="panel detail-overlay-panel report-overlay-panel"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="report-overlay-title"
+      >
+        <button type="button" class="close-x" id="report-overlay-close" aria-label="Close report">×</button>
+        <h2 id="report-overlay-title">Report from this view</h2>
+        <p class="report-scope" id="report-scope"></p>
+        <div id="report-compose">
+          <label for="report-prompt">Focus</label>
+          <textarea
+            id="report-prompt"
+            placeholder="What should this report focus on? Themes, contradictions, practical takeaways…"
+          ></textarea>
+          <div class="detail-overlay-actions">
+            <button type="button" id="report-generate">Generate report</button>
+            <button type="button" class="ghost" id="report-cancel">Cancel</button>
+          </div>
+          <p class="report-status" id="report-status"></p>
+        </div>
+        <div id="report-result" hidden>
+          <pre class="report-body" id="report-body"></pre>
+          <div class="detail-overlay-actions">
+            <button type="button" id="report-download">Download</button>
+            <button type="button" id="report-copy">Copy</button>
+            <button type="button" id="report-talk">Talk</button>
+            <button type="button" id="report-open">Open in graph</button>
+            <button type="button" class="ghost" id="report-again">New report</button>
+          </div>
         </div>
       </div>
     </div>

@@ -19,6 +19,12 @@ describe("liveKitIdentityPrefix", () => {
     expect(liveKitIdentityPrefix("")).toBe("alfred-ios");
     expect(liveKitIdentityPrefix("ios")).toBe("alfred-ios");
   });
+
+  it("maps FitnessAlly clients onto their own prefix", () => {
+    expect(liveKitIdentityPrefix("fitnessally-web")).toBe("alfred-fitness");
+    expect(liveKitIdentityPrefix("fitnessally-ios")).toBe("alfred-fitness");
+    expect(shouldDispatchLiveAgent("fitnessally-ios")).toBe(true);
+  });
 });
 
 describe("shared robot room", () => {

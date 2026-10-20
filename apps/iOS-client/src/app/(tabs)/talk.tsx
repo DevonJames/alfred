@@ -5,10 +5,11 @@
  * scrollable response below. Text: transcript thread + composer. LiveKit
  * `alfred.control` keeps the Mac agent in sync with layout (voice vs chat).
  */
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import * as Haptics from "expo-haptics";
-import { useFocusEffect } from "expo-router";
-import { Keyboard, Radio, Send } from "lucide-react-native";
+import * as Linking from "expo-linking";
+import { router, useFocusEffect } from "expo-router";
+import { History, Keyboard, Plus, Radio, Send, Sunrise } from "lucide-react-native";
 import { useCallback, useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { AppState, Image, Pressable, ScrollView, Text, TextInput, View, type ImageSourcePropType } from "react-native";
 import { KeyboardAvoidingView } from "react-native-keyboard-controller";
@@ -24,15 +25,22 @@ import Animated, {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AgentWaveform } from "@/components/AgentWaveform";
 import { AlfredMarkdown } from "@/components/AlfredMarkdown";
-import { Backdrop, BRASS, ConnectionPill, Display, Notice } from "@/components/ui";
+import { Backdrop, BRASS, ConnectionPill, Display, Notice, Sheet } from "@/components/ui";
 import { cn } from "@/lib/cn";
 import { useConnection } from "@/lib/connection";
 import { isRobotAudioEnabled, isRobotTalkEnabled } from "@/lib/robot-audio";
 import { rediscover } from "@/lib/discovery";
-import { desktopErrorMessage, sendTurn } from "@/lib/desktop-api";
+import {
+  desktopErrorMessage,
+  getBriefing,
+  listConversations,
+  prepareNewConversation,
+  sendTurn,
+  setActiveConversation,
+} from "@/lib/desktop-api";
 import { stripMarkdown } from "@/lib/markdown";
 import { useConversationSession, useSession } from "@/lib/session";
-import type { ConversationTurn } from "@/lib/types";
+import type { BriefingDisplaySection, ConversationSummary, ConversationTurn } from "@/lib/types";
 import {
   setCallServiceHandlers,
   setCallServiceMuted,
@@ -101,8 +109,10 @@ const BLOCKER_MESSAGE: Record<Exclude<VoiceBlocker, "none">, string> = {
 
 export default function Talk() {
   const insets = useSafeAreaInsets();
+  const queryClient = useQueryClient();
   const mode = useConnection((s) => s.mode);
   const discovering = useConnection((s) => s.discovering);
+  const connected = useConnection((s) => Boolean(s.serverUrl && s.deviceToken));
 
   const [focused, setFocused] = useState(false);
   const [layout, setUiLayout] = useState<UiLayout>("voice");
@@ -115,6 +125,62 @@ export default function Talk() {
   const [draft, setDraft] = useState("");
   const [robotAudio, setRobotAudio] = useState(false);
   const [robotTalk, setRobotTalk] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [briefOpen, setBriefOpen] = useState(false);
+
+  const history = useQuery({
+    queryKey: ["conversations"],
+    queryFn: listConversations,
+    enabled: connected && historyOpen,
+  });
+
+  const dailyBrief = useQuery({
+    queryKey: ["briefing", "daily"],
+    queryFn: () => getBriefing({ refresh: false }),
+    enabled: connected && focused,
+    staleTime: 5 * 60_000,
+  });
+
+  const resumeConversation = useMutation({
+    mutationFn: (id: string) => setActiveConversation(id),
+    onSuccess: (result) => {
+      const sessionId = useSession.getState().token?.sessionId ?? result.conversation.id;
+      const turns: ConversationTurn[] = (result.conversation.messages ?? []).map((m) => ({
+        id: m.id,
+        sessionId,
+        role: m.role,
+        text: m.text,
+        ledger: "delivered",
+        addendumOf: null,
+        memoryIdsUsed: [],
+        createdAt: m.at,
+      }));
+      useSession.getState().set({ turns, partial: null, error: null, state: "idle" });
+      setHistoryOpen(false);
+      void queryClient.invalidateQueries({ queryKey: ["conversations"] });
+      Haptics.selectionAsync();
+    },
+    onError: (err) => {
+      useSession.getState().set({
+        error: desktopErrorMessage(err, "Couldn't open that conversation."),
+      });
+    },
+  });
+
+  const newConversation = useMutation({
+    mutationFn: () => prepareNewConversation(),
+    onSuccess: () => {
+      useSession.getState().set({ turns: [], partial: null, error: null, state: "idle" });
+      setHistoryOpen(false);
+      void queryClient.invalidateQueries({ queryKey: ["conversations"] });
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    },
+    onError: (err) => {
+      useSession.getState().set({
+        error: desktopErrorMessage(err, "Couldn't start a new chat."),
+      });
+    },
+  });
 
   const turns = useSession((s) => s.turns);
   const partial = useSession((s) => s.partial);
@@ -441,14 +507,54 @@ export default function Talk() {
             busy={discovering}
             onPress={() => rediscover().catch(() => {})}
           />
-          <LayoutToggle
-            layout={inVoiceLayout ? "voice" : "chat"}
-            disabled={sessionUnavailable}
-            voiceDisabled={voiceBlocked}
-            onVoice={() => void switchLayout("voice")}
-            onChat={() => void switchLayout("chat")}
-          />
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+            <Pressable
+              testID="history-toggle"
+              accessibilityLabel="Conversation history"
+              disabled={!connected}
+              onPress={() => {
+                Haptics.selectionAsync();
+                setHistoryOpen(true);
+              }}
+              style={{
+                width: 40,
+                height: 40,
+                borderRadius: 20,
+                borderWidth: 1,
+                borderColor: "rgba(216,165,74,0.35)",
+                alignItems: "center",
+                justifyContent: "center",
+                opacity: connected ? 1 : 0.35,
+              }}
+            >
+              <History color={BRASS} size={18} />
+            </Pressable>
+            <LayoutToggle
+              layout={inVoiceLayout ? "voice" : "chat"}
+              disabled={sessionUnavailable}
+              voiceDisabled={voiceBlocked}
+              onVoice={() => void switchLayout("voice")}
+              onChat={() => void switchLayout("chat")}
+            />
+          </View>
         </View>
+
+        <Sheet
+          visible={historyOpen}
+          onClose={() => setHistoryOpen(false)}
+          title="History"
+          testID="history-sheet"
+        >
+          <HistoryPanel
+            items={history.data?.conversations ?? []}
+            activeId={history.data?.activeId ?? null}
+            loading={history.isLoading}
+            error={history.isError ? desktopErrorMessage(history.error, "Couldn't load history.") : null}
+            busy={resumeConversation.isPending || newConversation.isPending}
+            onNew={() => newConversation.mutate()}
+            onSelect={(id) => resumeConversation.mutate(id)}
+          />
+        </Sheet>
 
         {robotSession ? (
           <View style={{ marginBottom: 8 }}>
@@ -459,6 +565,55 @@ export default function Talk() {
             </Notice>
           </View>
         ) : null}
+
+        {connected && (dailyBrief.data?.display?.sections?.length ?? 0) > 0 ? (
+          <Pressable
+            testID="talk-brief-chip"
+            onPress={() => {
+              Haptics.selectionAsync();
+              setBriefOpen(true);
+            }}
+            style={{
+              marginBottom: 8,
+              borderRadius: 14,
+              borderWidth: 1,
+              borderColor: "rgba(216,165,74,0.35)",
+              backgroundColor: "rgba(216,165,74,0.08)",
+              paddingHorizontal: 12,
+              paddingVertical: 10,
+              flexDirection: "row",
+              alignItems: "center",
+              gap: 10,
+            }}
+          >
+            <Sunrise color={BRASS} size={16} />
+            <View style={{ flex: 1 }}>
+              <Text style={{ color: "#D8A54A", fontSize: 12, letterSpacing: 0.6 }}>
+                TODAY’S BRIEF
+              </Text>
+              <Text style={{ color: "#C7CCD6", fontSize: 13, marginTop: 2 }} numberOfLines={1}>
+                {dailyBrief.data?.display?.when ||
+                  dailyBrief.data?.briefing?.greeting ||
+                  "Open today’s Daily Brief"}
+              </Text>
+            </View>
+          </Pressable>
+        ) : null}
+
+        <Sheet
+          visible={briefOpen}
+          onClose={() => setBriefOpen(false)}
+          title="Today’s brief"
+          testID="talk-brief-sheet"
+        >
+          <TalkBriefPanel
+            sections={dailyBrief.data?.display?.sections ?? []}
+            onOpenBriefTab={() => {
+              setBriefOpen(false);
+              router.push("/(tabs)/brief");
+            }}
+          />
+        </Sheet>
 
         {inVoiceLayout ? (
           <VoiceStage
@@ -913,6 +1068,131 @@ function Caption({ turn }: { turn: ConversationTurn }) {
         </Text>
       ) : null}
     </Animated.View>
+  );
+}
+
+function TalkBriefPanel({
+  sections,
+  onOpenBriefTab,
+}: {
+  sections: BriefingDisplaySection[];
+  onOpenBriefTab: () => void;
+}) {
+  return (
+    <View testID="talk-brief-panel" className="pb-4">
+      {sections.map((section) => (
+        <View key={section.id} className="mb-4">
+          <Text className="text-xs uppercase text-faint" style={{ letterSpacing: 1.2 }}>
+            {section.title || section.id}
+          </Text>
+          <View className="mt-2 space-y-1.5">
+            {section.lines.map((line, i) =>
+              line.newsUrl ? (
+                <Pressable
+                  key={`${section.id}-${i}`}
+                  onPress={() => Linking.openURL(line.newsUrl!)}
+                  className="active:opacity-70"
+                >
+                  <Text className="text-sm leading-5 text-brass">{line.text}</Text>
+                </Pressable>
+              ) : (
+                <Text key={`${section.id}-${i}`} className="text-sm leading-5 text-bone">
+                  {line.text}
+                </Text>
+              )
+            )}
+          </View>
+        </View>
+      ))}
+      <Pressable
+        testID="talk-open-brief-tab"
+        onPress={onOpenBriefTab}
+        className="mt-2 items-center rounded-full border border-brass/40 bg-brass/10 px-4 py-3 active:opacity-70"
+      >
+        <Text className="text-sm text-brass">Open Brief tab</Text>
+      </Pressable>
+    </View>
+  );
+}
+
+function HistoryPanel({
+  items,
+  activeId,
+  loading,
+  error,
+  busy,
+  onNew,
+  onSelect,
+}: {
+  items: ConversationSummary[];
+  activeId: string | null;
+  loading: boolean;
+  error: string | null;
+  busy: boolean;
+  onNew: () => void;
+  onSelect: (id: string) => void;
+}) {
+  return (
+    <View testID="history-panel">
+      <Pressable
+        testID="history-new"
+        disabled={busy}
+        onPress={onNew}
+        className="mb-4 flex-row items-center justify-center space-x-2 rounded-full border border-brass/40 bg-brass/10 px-4 py-3 active:opacity-70"
+      >
+        <Plus color={BRASS} size={16} />
+        <Text className="text-sm text-brass">New chat</Text>
+      </Pressable>
+
+      {loading ? <Text className="text-sm text-muted">Loading…</Text> : null}
+      {error ? (
+        <Text className="text-sm text-warn" testID="history-error">
+          {error}
+        </Text>
+      ) : null}
+      {!loading && !error && items.length === 0 ? (
+        <Text className="text-sm text-muted" testID="history-empty">
+          No conversations yet. Talk or type and they’ll show up here.
+        </Text>
+      ) : null}
+
+      <View className="space-y-2">
+        {items.map((item) => {
+          const active = item.id === activeId;
+          return (
+            <Pressable
+              key={item.id}
+              testID={`history-item-${item.id}`}
+              disabled={busy}
+              onPress={() => onSelect(item.id)}
+              className={cn(
+                "rounded-2xl border px-4 py-3 active:opacity-70",
+                active ? "border-brass/50 bg-brass/10" : "border-line bg-ink-700"
+              )}
+            >
+              <Text className="text-base text-bone" numberOfLines={1}>
+                {item.title || "Conversation"}
+              </Text>
+              <Text className="mt-1 text-xs text-faint">
+                {item.modality}
+                {item.messageCount ? ` · ${item.messageCount} messages` : ""}
+                {item.updatedAt
+                  ? ` · ${new Date(item.updatedAt).toLocaleString(undefined, {
+                      dateStyle: "medium",
+                      timeStyle: "short",
+                    })}`
+                  : ""}
+              </Text>
+              {item.preview ? (
+                <Text className="mt-1.5 text-sm text-muted" numberOfLines={2}>
+                  {item.preview}
+                </Text>
+              ) : null}
+            </Pressable>
+          );
+        })}
+      </View>
+    </View>
   );
 }
 

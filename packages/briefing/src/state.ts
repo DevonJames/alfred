@@ -7,6 +7,11 @@ export interface BriefingOfferState {
   lastPlayedDay: string | null;
   offerPending: boolean;
   /**
+   * After a briefing finishes, Alfred asks whether to read headlines.
+   * Affirm/decline apply to that ask (not the soft briefing offer).
+   */
+  newsOfferPending: boolean;
+  /**
    * Bumped by resetSoftOffer so other voice processes (cascade / GPT-Live /
    * Speech Engine) re-arm after the Brief tab clears today's markers.
    */
@@ -18,6 +23,7 @@ const DEFAULT_STATE: BriefingOfferState = {
   lastDeclinedDay: null,
   lastPlayedDay: null,
   offerPending: false,
+  newsOfferPending: false,
   softOfferGeneration: 0,
 };
 
@@ -27,6 +33,7 @@ function normalizeState(parsed: Partial<BriefingOfferState>): BriefingOfferState
     lastDeclinedDay: parsed.lastDeclinedDay ?? null,
     lastPlayedDay: parsed.lastPlayedDay ?? null,
     offerPending: Boolean(parsed.offerPending),
+    newsOfferPending: Boolean(parsed.newsOfferPending),
     softOfferGeneration:
       typeof parsed.softOfferGeneration === "number" && Number.isFinite(parsed.softOfferGeneration)
         ? Math.max(0, Math.floor(parsed.softOfferGeneration))

@@ -1,5 +1,5 @@
 import { Tabs } from "expo-router";
-import { Archive, Bot, Mic, MessageSquare, Settings, Sunrise } from "lucide-react-native";
+import { Archive, Bot, CalendarDays, Mic, MessageSquare, Pill, Settings, Sunrise } from "lucide-react-native";
 import { useEffect, useState } from "react";
 import { AppState } from "react-native";
 import { BRASS, INK } from "@/components/ui";
@@ -64,6 +64,20 @@ export default function TabLayout() {
         options={{
           title: "Brief",
           tabBarIcon: ({ color, size }) => <Sunrise color={color} size={size ?? 22} />,
+        }}
+      />
+      <Tabs.Screen
+        name="agenda"
+        options={{
+          title: "Agenda",
+          tabBarIcon: ({ color, size }) => <CalendarDays color={color} size={size ?? 22} />,
+        }}
+      />
+      <Tabs.Screen
+        name="medicine"
+        options={{
+          title: "Meds",
+          tabBarIcon: ({ color, size }) => <Pill color={color} size={size ?? 22} />,
         }}
       />
       <Tabs.Screen

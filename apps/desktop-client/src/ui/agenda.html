@@ -492,6 +492,126 @@
       #place-form[hidden], #place-choice[hidden], #place-custom-label[hidden], #reminders-panel[hidden] {
         display: none !important;
       }
+      #plan-panel {
+        position: fixed;
+        z-index: 30;
+        top: 4.2rem;
+        right: 0.8rem;
+        bottom: 0.8rem;
+        left: 0.8rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.65rem;
+        background: #0b1218;
+        border: 1px solid var(--line);
+        padding: 0.85rem 1rem 1rem;
+        box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
+      }
+      #plan-panel[hidden] { display: none !important; }
+      .plan-bar { display: flex; gap: 0.7rem; align-items: center; flex-wrap: wrap; }
+      .plan-bar h2 { margin: 0; font-family: Syne, sans-serif; font-size: 1.15rem; }
+      .plan-scopes, .plan-nav { display: flex; gap: 0.25rem; align-items: center; }
+      .plan-nav span { min-width: 12rem; text-align: center; }
+      #plan-lines {
+        flex: 1;
+        overflow: auto;
+        min-height: 0;
+        font-family: "IBM Plex Mono", ui-monospace, monospace;
+        font-size: 0.92rem;
+        line-height: 1.55;
+      }
+      .plan-section { margin: 0 0 1.1rem; }
+      .plan-section h3 {
+        margin: 0.2rem 0 0.15rem;
+        font-family: inherit;
+        font-size: 0.92rem;
+        font-weight: 500;
+        letter-spacing: 0;
+        text-transform: none;
+        color: var(--accent);
+      }
+      .plan-row {
+        display: flex;
+        align-items: baseline;
+        gap: 0.85rem;
+        position: relative;
+        padding-right: 1.15rem;
+      }
+      .plan-row .when { display: inline-flex; align-items: baseline; gap: 0.2rem; flex: 0 0 auto; }
+      .plan-row .dash { color: var(--muted); }
+      .plan-now {
+        height: 1px;
+        margin: 0.28rem 0;
+        background: #c8ffd8;
+      }
+      .plan-row.is-calendar input,
+      .plan-row.is-calendar select { color: #8b97a8; }
+      .plan-row input, .plan-row select {
+        font: inherit;
+        color: var(--fg);
+        background: transparent;
+        border: 0;
+        padding: 0;
+        margin: 0;
+        outline: none;
+        appearance: none;
+        -webkit-appearance: none;
+        border-radius: 0;
+      }
+      .plan-row input[type="time"] { width: 5.15rem; }
+      .plan-row input[type="time"]::-webkit-calendar-picker-indicator { display: none; }
+      .plan-row input[type="time"]::-webkit-datetime-edit { padding: 0; }
+      .plan-row input[type="text"] { flex: 1 1 auto; min-width: 0; width: 100%; }
+      .plan-row select { color: var(--muted); cursor: pointer; flex: 0 0 auto; margin-left: auto; text-align: right; }
+      .plan-row button, .plan-add {
+        font: inherit;
+        color: var(--muted);
+        background: transparent;
+        border: 0;
+        padding: 0;
+        cursor: pointer;
+      }
+      .plan-row button { visibility: hidden; position: absolute; right: 0; top: 0; }
+      .plan-row:hover button { visibility: visible; }
+      .plan-add { display: block; margin: 0.05rem 0 0; text-align: left; }
+      .plan-bar button, #plan-ask input, #plan-ask button, #plan-commit {
+        font: inherit;
+        color: var(--fg);
+        background: #101820;
+        border: 1px solid var(--line);
+        padding: 0.35rem 0.45rem;
+      }
+      #plan-chat { max-height: 6.5rem; overflow: auto; font-family: "IBM Plex Mono", ui-monospace, monospace; }
+      #plan-chat p { margin: 0.15rem 0; font-size: 0.85rem; }
+      #plan-chat .user { color: #ffe2b0; }
+      #plan-ask { display: flex; gap: 0.4rem; }
+      #plan-ask input { flex: 1; }
+      .plan-foot { display: flex; justify-content: space-between; align-items: center; gap: 0.8rem; }
+      #plan-status { margin: 0; color: var(--muted); font-size: 0.82rem; }
+      #standard-plan {
+        border: 1px solid var(--line);
+        padding: 0.55rem 0.7rem 0.65rem;
+        max-height: 16rem;
+        overflow: auto;
+        font-family: "IBM Plex Mono", ui-monospace, monospace;
+        font-size: 0.78rem;
+      }
+      #standard-plan[hidden] { display: none !important; }
+      #standard-plan h2 { margin: 0; font-family: Syne, sans-serif; font-size: 0.95rem; }
+      .standard-head { display: flex; justify-content: space-between; align-items: center; gap: 0.6rem; margin-bottom: 0.35rem; }
+      .standard-row { display: flex; gap: 0.45rem; align-items: center; flex-wrap: wrap; margin: 0.35rem 0; }
+      .standard-row button, #standard-plan select, .standard-head button {
+        font: inherit;
+        color: var(--fg);
+        background: #101820;
+        border: 1px solid var(--line);
+        padding: 0.2rem 0.4rem;
+        cursor: pointer;
+      }
+      .standard-note { color: var(--muted); margin: 0.35rem 0 0; }
+      .standard-note.warn { color: var(--warn); }
+      #standard-plan a { color: var(--accent); }
+      #plan-commit { background: var(--accent); color: #071018; border: 0; padding: 0.45rem 0.95rem; font-weight: 600; }
       #place-form label, #place-choice p { color: var(--muted); font-size: 0.72rem; }
       .place-actions { display: flex; gap: 0.4rem; flex-wrap: wrap; margin-top: 0.55rem; }
       button.primary { color: #042018; background: var(--mint); border-color: var(--mint); cursor: pointer; }
@@ -522,6 +642,34 @@
       </div>
       <div class="tray">
         <button type="button" class="seg" id="reminders-toggle">Reminders</button>
+        <button type="button" class="seg" id="plan-toggle">Plan</button>
+        <div id="plan-panel" hidden>
+          <div class="plan-bar">
+            <h2>Plan</h2>
+            <div class="plan-scopes">
+              <button type="button" data-scope="day">Day</button>
+              <button type="button" data-scope="weekend">Weekend</button>
+              <button type="button" data-scope="week">Week</button>
+            </div>
+            <div class="plan-nav">
+              <button type="button" id="plan-prev" aria-label="Previous period">‹</button>
+              <span id="plan-label"></span>
+              <button type="button" id="plan-next" aria-label="Next period">›</button>
+            </div>
+            <button type="button" id="plan-close">Close</button>
+          </div>
+          <div id="standard-plan" hidden></div>
+          <div id="plan-lines"></div>
+          <div id="plan-chat"></div>
+          <form id="plan-ask">
+            <input id="plan-text" type="text" autocomplete="off" placeholder="Describe what you want to get done, or how to move what’s already here" />
+            <button type="submit">Send</button>
+          </form>
+          <div class="plan-foot">
+            <p id="plan-status"></p>
+            <button type="button" id="plan-commit">Commit</button>
+          </div>
+        </div>
         <a class="seg" id="blocks-link" href="/agenda/settings">Blocks</a>
         <div id="reminders-panel" hidden>
           <h2>Reminders</h2>
@@ -2110,6 +2258,670 @@
         void submitPlace(null);
       });
       paintPlaceHint();
+
+      const planPanel = document.getElementById("plan-panel");
+      const planState = { scope: "day", anchor: "", period: null, blocks: [], calendars: [], items: [], chat: [] };
+      let planTimer = 0;
+      let standardPlan = null;
+      let standardNote = "";
+
+      function planShift(iso, days) {
+        const [year, month, day] = iso.split("-").map(Number);
+        const next = new Date(Date.UTC(year, month - 1, day + days, 12));
+        return next.toISOString().slice(0, 10);
+      }
+
+      function planMinutes(hhmm) {
+        const [hour, minute] = String(hhmm || "0:0").split(":").map(Number);
+        return hour * 60 + minute;
+      }
+
+      function planClock(hhmm) {
+        const [hour, minute] = String(hhmm).split(":").map(Number);
+        const suffix = hour >= 12 ? "PM" : "AM";
+        const h = hour % 12 || 12;
+        return minute ? `${h}:${String(minute).padStart(2, "0")} ${suffix}` : `${h} ${suffix}`;
+      }
+
+      function planBlockRuns(block, iso) {
+        const day = new Date(`${iso}T12:00:00Z`).getUTCDay();
+        if (block.repeat === "all") return true;
+        if (block.repeat === "weekdays") return day >= 1 && day <= 5;
+        if (block.repeat === "weekends") return day === 0 || day === 6;
+        return Array.isArray(block.days) && block.days.includes(day);
+      }
+
+      function planStatus(text) {
+        document.getElementById("plan-status").textContent = text || "";
+      }
+
+      function rememberPlan(items) {
+        return items.map((item) => ({
+          ...item,
+          base: item.base || {
+            start: item.start,
+            end: item.end,
+            title: item.title,
+            calendarId: item.calendarId,
+            dirty: Boolean(item.dirty),
+          },
+        }));
+      }
+
+      function paintPlanScopes() {
+        for (const button of document.querySelectorAll(".plan-scopes button")) {
+          button.classList.toggle("on", button.dataset.scope === planState.scope);
+        }
+        document.getElementById("plan-label").textContent = planState.period ? planState.period.label : "";
+      }
+
+      function planSections() {
+        const dates = planState.period?.dates || [];
+        const sections = [];
+        for (const date of dates) {
+          const dayBlocks = planState.blocks.filter((block) => planBlockRuns(block, date));
+          for (const block of dayBlocks) {
+            sections.push({
+              id: `${block.id}:${date}`,
+              date,
+              block,
+              label: `${calendarDayLabel(date)} · ${block.name} · ${planClock(block.start)}–${planClock(block.end)}`,
+              start: block.start,
+              end: block.end,
+              lines: [],
+            });
+          }
+          sections.push({
+            id: `open:${date}`,
+            date,
+            label: dayBlocks.length ? `${calendarDayLabel(date)} · Open` : calendarDayLabel(date),
+            start: "",
+            end: "",
+            lines: [],
+            open: true,
+          });
+        }
+        for (const item of planState.items) {
+          const blocks = sections.filter((section) => section.date === item.date && section.block);
+          const start = planMinutes(item.start);
+          const hit = blocks.find((section) => start >= planMinutes(section.start) && start < planMinutes(section.end));
+          const section = hit || sections.find((candidate) => candidate.id === `open:${item.date}`);
+          if (section) section.lines.push(item);
+        }
+        const datesWithBlocks = new Set(sections.filter((section) => section.block).map((section) => section.date));
+        const today = board?.todayDate;
+        return sections.filter((section) => {
+          if (section.lines.length || !section.open) return true;
+          return section.date === today && !datesWithBlocks.has(section.date);
+        });
+      }
+
+      function sortPlanItems() {
+        planState.items.sort((a, b) => {
+          if (a.date !== b.date) return a.date < b.date ? -1 : 1;
+          const start = planMinutes(a.start) - planMinutes(b.start);
+          if (start) return start;
+          return planMinutes(a.end) - planMinutes(b.end);
+        });
+      }
+
+      function planNowMinutes() {
+        const now = new Date();
+        return now.getHours() * 60 + now.getMinutes();
+      }
+
+      function planNowLine() {
+        const line = document.createElement("div");
+        line.className = "plan-now";
+        line.setAttribute("role", "separator");
+        line.setAttribute("aria-label", "Current time");
+        return line;
+      }
+
+      function sectionOwnsNow(section, nowMin, sections) {
+        if (!board?.todayDate || section.date !== board.todayDate) return false;
+        if (section.block) return nowMin >= planMinutes(section.start) && nowMin < planMinutes(section.end);
+        return !sections.some((other) =>
+          other.date === section.date &&
+          other.block &&
+          nowMin >= planMinutes(other.start) &&
+          nowMin < planMinutes(other.end),
+        );
+      }
+
+      function renderPlan() {
+        sortPlanItems();
+        paintPlanScopes();
+        const root = document.getElementById("plan-lines");
+        root.replaceChildren();
+        const sections = planSections();
+        const nowMin = planNowMinutes();
+        for (const section of sections) {
+          const wrap = document.createElement("section");
+          wrap.className = "plan-section";
+          wrap.dataset.planDate = section.date;
+          const heading = document.createElement("h3");
+          heading.textContent = section.label;
+          wrap.appendChild(heading);
+          const markNow = sectionOwnsNow(section, nowMin, sections);
+          let marked = false;
+          for (const item of section.lines) {
+            if (markNow && !marked && planMinutes(item.start) > nowMin) {
+              wrap.appendChild(planNowLine());
+              marked = true;
+            }
+            wrap.appendChild(planRow(item));
+          }
+          if (markNow && !marked) wrap.appendChild(planNowLine());
+          const add = document.createElement("button");
+          add.type = "button";
+          add.className = "plan-add";
+          add.textContent = "new line";
+          add.addEventListener("click", () => addPlanLine(section));
+          wrap.appendChild(add);
+          root.appendChild(wrap);
+        }
+        const chat = document.getElementById("plan-chat");
+        chat.replaceChildren();
+        for (const turn of planState.chat) {
+          const line = document.createElement("p");
+          line.className = turn.role;
+          line.textContent = turn.text;
+          chat.appendChild(line);
+        }
+        chat.scrollTop = chat.scrollHeight;
+      }
+
+      function alignPlanToToday() {
+        const root = document.getElementById("plan-lines");
+        root.style.paddingBottom = "";
+        const today = board?.todayDate;
+        if (!today || !planState.period?.dates?.includes(today)) return;
+        const target = root.querySelector(`[data-plan-date="${today}"]`);
+        if (!target) return;
+        requestAnimationFrame(() => {
+          const delta = target.getBoundingClientRect().top - root.getBoundingClientRect().top + root.scrollTop;
+          if (delta < 8) return;
+          root.style.paddingBottom = `${root.clientHeight}px`;
+          requestAnimationFrame(() => {
+            root.scrollTop = delta;
+          });
+        });
+      }
+
+      function planRow(item) {
+        const row = document.createElement("div");
+        const dim = item.origin === "calendar" && !item.dirty;
+        row.className = dim ? "plan-row is-calendar" : "plan-row";
+        const start = document.createElement("input");
+        start.type = "time";
+        start.value = item.start;
+        const end = document.createElement("input");
+        end.type = "time";
+        end.value = item.end;
+        const title = document.createElement("input");
+        title.type = "text";
+        title.value = item.title;
+        title.placeholder = "title";
+        title.dataset.planKey = item.key;
+        const dash = document.createElement("span");
+        dash.className = "dash";
+        dash.textContent = "–";
+        const select = document.createElement("select");
+        for (const calendar of planState.calendars) {
+          const option = document.createElement("option");
+          option.value = calendar.id;
+          option.textContent = `${calendar.title} · ${calendar.sourceTitle}`;
+          if (calendar.id === item.calendarId) option.selected = true;
+          select.appendChild(option);
+        }
+        if (item.calendarId && !planState.calendars.some((calendar) => calendar.id === item.calendarId)) {
+          const option = document.createElement("option");
+          option.value = item.calendarId;
+          option.textContent = "Read only";
+          option.selected = true;
+          select.appendChild(option);
+        }
+        function touch() {
+          item.start = start.value || item.start;
+          item.end = end.value || item.end;
+          item.title = title.value;
+          item.calendarId = select.value;
+          if (item.origin === "calendar" && item.base && !item.base.dirty) {
+            item.dirty = item.start !== item.base.start || item.end !== item.base.end || item.title !== item.base.title || item.calendarId !== item.base.calendarId;
+          } else if (item.origin === "calendar") item.dirty = true;
+          row.classList.toggle("is-calendar", item.origin === "calendar" && !item.dirty);
+          schedulePlanSave();
+        }
+        start.addEventListener("change", () => {
+          touch();
+          renderPlan();
+        });
+        end.addEventListener("change", touch);
+        title.addEventListener("input", touch);
+        select.addEventListener("change", touch);
+        const when = document.createElement("span");
+        when.className = "when";
+        when.append(start, dash, end);
+        row.append(when, title, select);
+        if (!item.eventId) {
+          const remove = document.createElement("button");
+          remove.type = "button";
+          remove.textContent = "×";
+          remove.setAttribute("aria-label", "Remove line");
+          remove.addEventListener("click", () => {
+            planState.items = planState.items.filter((line) => line.key !== item.key);
+            renderPlan();
+            schedulePlanSave();
+          });
+          row.appendChild(remove);
+        }
+        return row;
+      }
+
+      function addPlanLine(section) {
+        const start = section.start || "09:00";
+        const endMin = section.end ? Math.min(planMinutes(start) + 60, planMinutes(section.end)) : planMinutes("09:30");
+        const key = crypto.randomUUID();
+        planState.items.push({
+          key,
+          date: section.date,
+          start,
+          end: `${String(Math.floor(endMin / 60)).padStart(2, "0")}:${String(endMin % 60).padStart(2, "0")}`,
+          title: "",
+          calendarId: section.block?.calendarId || planState.calendars[0]?.id || "",
+          origin: "draft",
+          dirty: true,
+        });
+        renderPlan();
+        document.querySelector(`[data-plan-key="${key}"]`)?.focus();
+      }
+
+      function schedulePlanSave() {
+        window.clearTimeout(planTimer);
+        planTimer = window.setTimeout(() => { void savePlanDraft(); }, 400);
+      }
+
+      async function savePlanDraft() {
+        if (!planState.period) return;
+        await fetch(api("/agenda/plan"), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            scope: planState.scope,
+            date: planState.anchor,
+            items: planState.items.filter((item) => item.title.trim()),
+          }),
+        });
+      }
+
+      function formatPlanHours(minutes) {
+        const hours = minutes / 60;
+        const rounded = Math.round(hours * 10) / 10;
+        return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
+      }
+
+      function standardDayLabel(iso) {
+        const [year, month, day] = iso.split("-").map(Number);
+        return new Intl.DateTimeFormat("en-US", {
+          timeZone: "UTC",
+          weekday: "short",
+          month: "short",
+          day: "numeric",
+        }).format(new Date(Date.UTC(year, month - 1, day, 12)));
+      }
+
+      function cadenceText(category) {
+        const hours = Number.isInteger(category.hours) ? String(category.hours) : String(Math.round(category.hours * 10) / 10);
+        if (category.cadence === "day") return `${hours}h a day`;
+        if (category.cadence === "fortnight") return `${hours}h each 2 weeks`;
+        if (category.cadence === "month") return `${hours}h a month`;
+        return `${hours}h a week`;
+      }
+
+      async function loadStandard() {
+        if (planState.scope !== "week" || !planState.anchor) {
+          standardPlan = null;
+          return;
+        }
+        try {
+          const res = await fetch(api(`/agenda/standard-plan/data?date=${encodeURIComponent(planState.anchor)}`));
+          const body = await res.json().catch(() => ({}));
+          standardPlan = res.ok ? body : { error: body.error || "Could not load the weekly plan" };
+        } catch (err) {
+          standardPlan = { error: err instanceof Error ? err.message : String(err) };
+        }
+      }
+
+      function adoptDraft(draft) {
+        const [line] = rememberPlan([draft]);
+        planState.items.push(line);
+      }
+
+      async function fillStandardWeek() {
+        standardNote = "Planning the week…";
+        renderStandard();
+        await savePlanDraft();
+        const res = await fetch(api("/agenda/standard-plan/fill"), {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            date: planState.anchor,
+            items: planState.items.filter((item) => item.title.trim()),
+          }),
+        });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          standardNote = body.error || "Could not plan the week";
+          renderStandard();
+          return;
+        }
+        for (const draft of body.drafts || []) adoptDraft(draft);
+        renderPlan();
+        await savePlanDraft();
+        const notes = (body.unplaced || []).map((item) =>
+          item.reason === "unassigned"
+            ? `${item.name} is not on a time block.`
+            : `${item.name}: ${formatPlanHours(item.minutes)}h did not fit.`,
+        );
+        standardNote = notes.length ? notes.join(" ") : body.drafts?.length ? "Weekly activities are in the plan." : "Those weekly activities are already planned.";
+        renderStandard();
+      }
+
+      async function fillStandardCategory(categoryId, note) {
+        note.textContent = "Planning…";
+        await savePlanDraft();
+        const res = await fetch(api("/agenda/standard-plan/fill"), {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            date: planState.anchor,
+            categoryId,
+            items: planState.items.filter((item) => item.title.trim()),
+          }),
+        });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          note.textContent = body.error || "Could not plan that";
+          return;
+        }
+        for (const draft of body.drafts || []) adoptDraft(draft);
+        renderPlan();
+        await savePlanDraft();
+        const left = (body.unplaced || [])[0];
+        note.textContent = left
+          ? left.reason === "unassigned"
+            ? `${left.name} is not on a time block.`
+            : `${formatPlanHours(left.minutes)}h did not fit.`
+          : body.drafts?.length
+            ? "Planned this week."
+            : "Already planned this week.";
+      }
+
+      async function placeStandard(categoryId, date, note) {
+        note.textContent = "Placing…";
+        await savePlanDraft();
+        const res = await fetch(api("/agenda/standard-plan/place"), {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            categoryId,
+            date,
+            items: planState.items.filter((item) => item.title.trim()),
+          }),
+        });
+        const body = await res.json().catch(() => ({}));
+        note.replaceChildren();
+        if (!res.ok) {
+          note.textContent = body.error || "Could not place that";
+          return;
+        }
+        const drafts = body.drafts || (body.draft ? [body.draft] : []);
+        if (drafts.length) {
+          for (const draft of drafts) adoptDraft(draft);
+          renderPlan();
+          await savePlanDraft();
+          note.textContent = "Placed.";
+          return;
+        }
+        note.textContent = body.message || "Could not place that";
+        if (body.next?.date) {
+          note.append(document.createTextNode(" "));
+          const button = document.createElement("button");
+          button.type = "button";
+          button.textContent = `Place on ${body.next.label}`;
+          button.addEventListener("click", () => { void placeStandard(categoryId, body.next.date, note); });
+          note.appendChild(button);
+        }
+      }
+
+      function renderStandard() {
+        const root = document.getElementById("standard-plan");
+        if (!root) return;
+        root.replaceChildren();
+        if (planState.scope !== "week" || !standardPlan) {
+          root.hidden = true;
+          return;
+        }
+        root.hidden = false;
+        const head = document.createElement("div");
+        head.className = "standard-head";
+        const title = document.createElement("h2");
+        title.textContent = "Standard plan";
+        head.appendChild(title);
+        if (standardPlan.error) {
+          root.appendChild(head);
+          const note = document.createElement("p");
+          note.className = "standard-note warn";
+          note.textContent = standardPlan.error;
+          root.appendChild(note);
+          return;
+        }
+        if (!standardPlan.saved) {
+          root.appendChild(head);
+          const empty = document.createElement("p");
+          empty.className = "standard-note";
+          const link = document.createElement("a");
+          link.href = api("/agenda/standard-plan");
+          link.textContent = "Set up a weekly plan";
+          empty.append(link, document.createTextNode(" to plan these hours into time blocks."));
+          root.appendChild(empty);
+          return;
+        }
+        const rows = new Map((standardPlan.week?.rows || []).map((row) => [row.id, row]));
+        const weekly = (standardPlan.categories || []).filter((category) => category.cadence === "week");
+        if (weekly.length) {
+          const fill = document.createElement("button");
+          fill.type = "button";
+          fill.textContent = "Plan the week";
+          fill.addEventListener("click", () => { void fillStandardWeek(); });
+          head.appendChild(fill);
+        }
+        root.appendChild(head);
+        for (const category of standardPlan.categories || []) {
+          const rowInfo = rows.get(category.id) || {};
+          const row = document.createElement("div");
+          row.className = "standard-row";
+          const label = document.createElement("span");
+          const where = rowInfo.blockName ? rowInfo.blockName : "not on a time block";
+          label.textContent = `${category.name} · ${cadenceText(category)} · ${where}`;
+          row.appendChild(label);
+          if (!rowInfo.blockId) {
+            root.appendChild(row);
+            continue;
+          }
+          if (category.cadence === "fortnight") {
+            const planWeek = document.createElement("button");
+            planWeek.type = "button";
+            planWeek.textContent = "Plan this week";
+            const note = document.createElement("span");
+            note.className = "standard-note";
+            planWeek.addEventListener("click", () => { void fillStandardCategory(category.id, note); });
+            row.append(planWeek, note);
+          }
+          if (category.cadence === "day") {
+            const select = document.createElement("select");
+            const dates = standardPlan.week?.dates || [];
+            const today = board?.todayDate;
+            for (const date of dates) {
+              const option = document.createElement("option");
+              option.value = date;
+              option.textContent = standardDayLabel(date);
+              if (date === today) option.selected = true;
+              select.appendChild(option);
+            }
+            const place = document.createElement("button");
+            place.type = "button";
+            place.textContent = "Place";
+            const note = document.createElement("span");
+            note.className = "standard-note";
+            place.addEventListener("click", () => { void placeStandard(category.id, select.value, note); });
+            row.append(select, place, note);
+          }
+          if (category.cadence === "month") {
+            const note = document.createElement("span");
+            note.className = "standard-note";
+            if (rowInfo.monthMissing) {
+              note.textContent = `No ${rowInfo.monthLabel || "such day"} this month.`;
+              note.classList.add("warn");
+            } else if (!rowInfo.monthInWeek) {
+              note.textContent = rowInfo.monthDate
+                ? `${rowInfo.monthLabel} is ${standardDayLabel(rowInfo.monthDate)}, outside this week.`
+                : "Not in this week.";
+            } else {
+              if (rowInfo.monthClamped) note.textContent = `The day falls on ${standardDayLabel(rowInfo.monthDate)}. `;
+              const place = document.createElement("button");
+              place.type = "button";
+              place.textContent = "Place";
+              place.addEventListener("click", () => { void placeStandard(category.id, rowInfo.monthDate, note); });
+              row.appendChild(place);
+            }
+            row.appendChild(note);
+          }
+          root.appendChild(row);
+        }
+        if (standardNote) {
+          const note = document.createElement("p");
+          note.className = "standard-note";
+          note.textContent = standardNote;
+          root.appendChild(note);
+        }
+      }
+
+      async function loadPlan() {
+        planStatus("Loading…");
+        const res = await fetch(api(`/agenda/plan?scope=${encodeURIComponent(planState.scope)}&date=${encodeURIComponent(planState.anchor)}`));
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          planStatus(body.error || "Restart Alfred, then open Plan again.");
+          return;
+        }
+        planState.period = body.period;
+        planState.anchor = body.period.anchor;
+        planState.blocks = body.blocks || [];
+        planState.calendars = body.calendars || [];
+        planState.items = rememberPlan(body.items || []);
+        planState.chat = body.chat || [];
+        standardNote = "";
+        await loadStandard();
+        planStatus(planState.calendars.length ? "" : "No calendars are open for writes.");
+        renderPlan();
+        renderStandard();
+        alignPlanToToday();
+      }
+
+      function openPlan() {
+        remindersPanel.hidden = true;
+        planState.scope = view === "week" ? "week" : "day";
+        planState.anchor = board?.todayDate || (view === "week" ? weekDate : dayDate) || "";
+        planPanel.hidden = false;
+        void loadPlan();
+      }
+
+      document.getElementById("plan-toggle").addEventListener("click", () => {
+        if (planPanel.hidden) openPlan();
+        else planPanel.hidden = true;
+      });
+      document.getElementById("plan-close").addEventListener("click", () => {
+        planPanel.hidden = true;
+        void savePlanDraft();
+      });
+      for (const button of document.querySelectorAll(".plan-scopes button")) {
+        button.addEventListener("click", () => {
+          planState.scope = button.dataset.scope;
+          void loadPlan();
+        });
+      }
+      document.getElementById("plan-prev").addEventListener("click", () => {
+        planState.anchor = planShift(planState.anchor, planState.scope === "day" ? -1 : -7);
+        void loadPlan();
+      });
+      document.getElementById("plan-next").addEventListener("click", () => {
+        planState.anchor = planShift(planState.anchor, planState.scope === "day" ? 1 : 7);
+        void loadPlan();
+      });
+      document.getElementById("plan-ask").addEventListener("submit", (event) => {
+        event.preventDefault();
+        const input = document.getElementById("plan-text");
+        const text = input.value.trim();
+        if (!text) return;
+        input.value = "";
+        void sendPlan(text);
+      });
+      document.getElementById("plan-commit").addEventListener("click", () => { void commitPlan(); });
+
+      async function sendPlan(text) {
+        planStatus("Planning…");
+        const res = await fetch(api("/agenda/plan/chat"), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            scope: planState.scope,
+            date: planState.anchor,
+            selected: planState.scope === "day" ? planState.anchor : selectedDay,
+            text,
+            items: planState.items.filter((item) => item.title.trim()),
+          }),
+        });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok || body.error) {
+          planStatus(body.error || "Could not plan that.");
+          if (body.items) planState.items = rememberPlan(body.items);
+          if (body.chat) planState.chat = body.chat;
+          renderPlan();
+          return;
+        }
+        planState.items = rememberPlan(body.items || []);
+        planState.chat = body.chat || [];
+        planStatus(body.reply || "");
+        renderPlan();
+      }
+
+      async function commitPlan() {
+        planStatus("Adding these to the calendars…");
+        const res = await fetch(api("/agenda/plan/commit"), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            scope: planState.scope,
+            date: planState.anchor,
+            items: planState.items.filter((item) => item.title.trim()),
+          }),
+        });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          planStatus(body.error || "Could not commit.");
+          return;
+        }
+        planState.items = rememberPlan(body.items || []);
+        const parts = [];
+        if (body.created) parts.push(`Added ${body.created}.`);
+        if (body.updated) parts.push(`Updated ${body.updated}.`);
+        if (Array.isArray(body.errors) && body.errors.length) parts.push(body.errors.join(" "));
+        planStatus(parts.join(" ") || "Nothing new to add.");
+        renderPlan();
+        void load();
+      }
 
       setInterval(paintClock, 1000);
       window.addEventListener("resize", () => handWave());

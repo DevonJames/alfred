@@ -8,13 +8,13 @@
  * Text colors use StyleSheet — NativeWind className-only color often resolves
  * to black on this build and leaves cards unreadable.
  */
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { Audio } from "expo-av";
 import { Image } from "expo-image";
 import { Link, Stack, router, useLocalSearchParams } from "expo-router";
-import { ChevronLeft, FileText, Pause, Pencil, Play, Trash2 } from "lucide-react-native";
+import { ChevronLeft, FileText, MessageSquare, Pause, Pencil, Play, Trash2 } from "lucide-react-native";
 import { useEffect, useState } from "react";
-import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import Animated, { FadeIn, FadeInDown } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
@@ -36,7 +36,14 @@ import {
   Sheet,
   WARN,
 } from "@/components/ui";
-import { assetHeaders, assetUrl, desktopErrorMessage, getProvenance, isNotBuiltYet } from "@/lib/desktop-api";
+import {
+  assetHeaders,
+  assetUrl,
+  desktopErrorMessage,
+  getProvenance,
+  isNotBuiltYet,
+  setTalkFocusFromGraph,
+} from "@/lib/desktop-api";
 import { describeCopy, recallOne } from "@/lib/recall";
 import type { ArtifactRef, AssertionRef } from "@/lib/types";
 
@@ -69,6 +76,14 @@ export default function MemoryDetail() {
     enabled: Boolean(provenanceFor),
   });
 
+  const talkFocus = useMutation({
+    mutationFn: (nodeId: string) => setTalkFocusFromGraph(nodeId),
+    onSuccess: () => router.push("/(tabs)/talk"),
+    onError: (err) => {
+      Alert.alert("Couldn't focus Talk", desktopErrorMessage(err, "Try again when the Mac is up."));
+    },
+  });
+
   const pkg = memory.data?.data.memory;
   const fromPhone = memory.data?.source === "phone";
   const current = pkg?.assertions.filter((a) => a.current) ?? [];
@@ -88,6 +103,14 @@ export default function MemoryDetail() {
           </Pressable>
           {pkg ? (
             <View style={[styles.actions, fromPhone && { opacity: 0.3 }]}>
+              <Pressable
+                testID="memory-talk-focus"
+                disabled={fromPhone || talkFocus.isPending}
+                onPress={() => talkFocus.mutate(pkg.id)}
+                style={styles.iconBtnBordered}
+              >
+                <MessageSquare color={BRASS} size={17} />
+              </Pressable>
               <Pressable
                 testID="open-correct"
                 disabled={fromPhone}

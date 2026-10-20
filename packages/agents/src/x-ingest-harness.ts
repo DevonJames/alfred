@@ -9,6 +9,7 @@ import {
   ingestXNotes,
   ingestXUrl,
   parseXIngestIntent,
+  sanitizeXIngestError,
   type XCaptureAdapter,
   type XIngestItemResult,
   type XIngestRunResult,
@@ -23,7 +24,7 @@ export function speechFromItem(item: XIngestItemResult): string {
   if (item.status === "failed") {
     const title = item.headline ?? item.url;
     const noun = item.kind === "video" || /youtube|youtu\.be/i.test(item.url) ? "YouTube video" : "link";
-    return `The ${noun} titled ${title} could not be ingested because of ${item.error ?? "an error"}.`;
+    return `The ${noun} titled ${title} could not be ingested because of ${sanitizeXIngestError(item.error)}.`;
   }
   return `Skipped ${item.url}.`;
 }

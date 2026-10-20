@@ -1,11 +1,15 @@
 import {
   createId,
+  CALCULATE_TOOL,
   CONTROL_STUDIO_LIGHTS_TOOL,
   DELEGATE_TASK_TOOL,
   GET_CRYPTO_PRICE_TOOL,
   GET_CURRENT_TIME_TOOL,
   GET_EARTHQUAKES_TOOL,
   GET_EXCHANGE_RATE_TOOL,
+  GET_FITNESS_FOCUS_TOOL,
+  GET_FITNESS_PLAN_TOOL,
+  LOG_MEDICINE_TOOL,
   GET_HACKER_NEWS_TOOL,
   GET_METALS_PRICE_TOOL,
   GET_NATURAL_EVENTS_TOOL,
@@ -36,6 +40,7 @@ import type { EventLedger } from "./event-ledger.js";
 import { StickyFailoverController } from "./failover.js";
 import type { BackchannelClassifier, InterruptionArbiter } from "./interruption.js";
 import { HeuristicBackchannelClassifier, RuleBasedInterruptionArbiter } from "./interruption.js";
+import { speakMath } from "./math.js";
 import type { MediaPort, UiCommand, UiLayout } from "./media-port.js";
 import { NullMediaPort } from "./media-port.js";
 import type {
@@ -86,6 +91,7 @@ import { looksLikeSituationalTask, parseSituationalIntent } from "./situational-
 /** Structural port for Daily Briefing (implemented by @alfred/briefing). */
 export type BriefingVoiceDecision =
   | { action: "play"; speech: string; newsHeadlines?: NewsHeadlineRef[] }
+  | { action: "playNews"; speech: string; newsHeadlines?: NewsHeadlineRef[] }
   | { action: "decline"; speech: string }
   | { action: "chat"; appendOffer: boolean; systemHint?: string };
 
@@ -128,6 +134,17 @@ export interface VoiceSessionDeps {
   situational?: SituationalPort;
   /** Optional local Elgato Key Light control. */
   lights?: StudioLightsPort;
+  /** Today's FitnessAlly plan and the on-screen recipe or workout card. */
+  fitness?: {
+    planSpeech(): Promise<string>;
+    focusSpeech(): Promise<string>;
+  };
+  /** Today's medicine checklist. */
+  medicine?: {
+    log(args: { mode: string; period?: string; names?: string[] }): Promise<string>;
+  };
+  /** Extra system text for this turn (FitnessAlly focus when that client owns the room). */
+  fitnessContext?: () => Promise<string | undefined>;
   /** Optional Alexandria archive. Set only when ALFRED_ARCHIVE_URL is configured. */
   archive?: ArchivePort;
   backchannelClassifier?: BackchannelClassifier;
@@ -954,7 +971,7 @@ export class VoiceSessionController {
         limit: 8,
       }),
       this.loadDueReminders(),
-      this.studioLightsHint(),
+      this.turnContext(),
     ]);
     this.provisionalHadDurableMemory = memory.items.some((m) => {
       const kind = m.provenance?.kind;
@@ -1144,13 +1161,20 @@ export class VoiceSessionController {
       }),
     ]);
 
-    if (briefingDecision?.action === "play" || briefingDecision?.action === "decline") {
+    if (
+      briefingDecision?.action === "play" ||
+      briefingDecision?.action === "playNews" ||
+      briefingDecision?.action === "decline"
+    ) {
       try {
         this.provisionalAbort?.abort({ reason: "briefing_short_circuit" });
         const responseId = this.deps.responseLedger.beginResponse(this.deps.sessionId, turnId);
         this.provisionalResponseId = responseId;
         const assistantText = briefingDecision.speech;
-        if (briefingDecision.action === "play" && briefingDecision.newsHeadlines?.length) {
+        if (
+          (briefingDecision.action === "play" || briefingDecision.action === "playNews") &&
+          briefingDecision.newsHeadlines?.length
+        ) {
           this.lastNewsHeadlines = briefingDecision.newsHeadlines;
           this.deps.news?.rememberHeadlines?.(briefingDecision.newsHeadlines);
         }
@@ -1579,7 +1603,7 @@ export class VoiceSessionController {
           : this.deps.config.systemInstructions;
         const [dueReminders, extraSystem] = await Promise.all([
           this.loadDueReminders(),
-          this.studioLightsHint(),
+          this.turnContext(),
         ]);
         const availableCapabilities = this.voiceCapabilities();
         const prompt = this.promptAssembler.assemble({
@@ -1762,10 +1786,21 @@ export class VoiceSessionController {
       );
     }
     if (this.deps.lights) caps.push("control_studio_lights");
+    if (this.deps.fitness) caps.push("get_fitness_plan", "get_fitness_focus");
+    if (this.deps.medicine) caps.push("log_medicine");
     if (this.deps.archive) {
       caps.push("search_archive", "open_archive_record", "archive_neighbors", "ask_archive");
     }
     return caps;
+  }
+
+  private async turnContext(): Promise<string | undefined> {
+    const [lights, fitness] = await Promise.all([
+      this.studioLightsHint(),
+      this.deps.fitnessContext?.() ?? Promise.resolve(undefined),
+    ]);
+    const text = [lights, fitness].map((part) => part?.trim()).filter(Boolean).join("\n\n");
+    return text || undefined;
   }
 
   private async studioLightsHint(): Promise<string | undefined> {
@@ -1805,7 +1840,7 @@ export class VoiceSessionController {
       name: string;
       description: string;
       parameters: Record<string, unknown>;
-    }> = [DELEGATE_TASK_TOOL];
+    }> = [DELEGATE_TASK_TOOL, CALCULATE_TOOL];
     if (this.deps.reminders) tools.push(UPDATE_REMINDER_TOOL);
     if (this.deps.structuredMemory) tools.push(REMEMBER_MEMORY_TOOL);
     if (this.deps.weather) tools.push(GET_WEATHER_FORECAST_TOOL);
@@ -1827,6 +1862,11 @@ export class VoiceSessionController {
       tools.push(GET_HACKER_NEWS_TOOL);
     }
     if (this.deps.lights) tools.push(CONTROL_STUDIO_LIGHTS_TOOL);
+    if (this.deps.fitness) {
+      tools.push(GET_FITNESS_PLAN_TOOL);
+      tools.push(GET_FITNESS_FOCUS_TOOL);
+    }
+    if (this.deps.medicine) tools.push(LOG_MEDICINE_TOOL);
     if (this.deps.archive) {
       tools.push(SEARCH_ARCHIVE_TOOL, OPEN_ARCHIVE_RECORD_TOOL, ARCHIVE_NEIGHBORS_TOOL, ASK_ARCHIVE_TOOL);
     }
@@ -1887,6 +1927,11 @@ export class VoiceSessionController {
         return spoken;
       }
     }
+    if (toolCall?.toolName === "calculate") {
+      const spoken = speakMath(String(toolCall.toolArgs?.expression ?? ""));
+      if (opts?.streamCaptions) await this.publishCaptionReveal(spoken, true);
+      return spoken;
+    }
     if (toolCall?.toolName === "update_reminder" && this.deps.reminders) {
       const ack = await this.applyReminderUpdate(toolCall.toolArgs ?? {}, dueReminders);
       const spoken = text.trim();
@@ -1928,6 +1973,27 @@ export class VoiceSessionController {
     }
     if (toolCall?.toolName === "control_studio_lights" && this.deps.lights) {
       const speech = await this.applyStudioLights(toolCall.toolArgs ?? {});
+      if (opts?.streamCaptions) await this.publishCaptionReveal(speech, true);
+      return speech;
+    }
+    if (toolCall?.toolName === "get_fitness_plan" && this.deps.fitness) {
+      const speech = await this.deps.fitness.planSpeech();
+      if (opts?.streamCaptions) await this.publishCaptionReveal(speech, true);
+      return speech;
+    }
+    if (toolCall?.toolName === "get_fitness_focus" && this.deps.fitness) {
+      const speech = await this.deps.fitness.focusSpeech();
+      if (opts?.streamCaptions) await this.publishCaptionReveal(speech, true);
+      return speech;
+    }
+    if (toolCall?.toolName === "log_medicine" && this.deps.medicine) {
+      const args = toolCall.toolArgs ?? {};
+      const names = Array.isArray(args.names) ? args.names.map((name) => String(name)) : undefined;
+      const speech = await this.deps.medicine.log({
+        mode: typeof args.mode === "string" ? args.mode : "",
+        period: typeof args.period === "string" ? args.period : undefined,
+        names,
+      });
       if (opts?.streamCaptions) await this.publishCaptionReveal(speech, true);
       return speech;
     }

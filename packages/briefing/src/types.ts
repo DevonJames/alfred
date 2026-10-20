@@ -5,6 +5,9 @@ import type { LaunchInfo } from "./launches.js";
 import type { MarketQuote } from "./markets.js";
 import type { NewsHeadline } from "./news.js";
 import type { BriefingAgendaEvent } from "./agenda.js";
+import type { FitnessDayPlan } from "./fitness.js";
+import type { MedicineItem } from "./medicine.js";
+import type { BriefingModuleResult } from "./modules.js";
 import type { WeatherData } from "./weather.js";
 
 export interface XIngestBriefingItem {
@@ -45,15 +48,28 @@ export interface BriefingData {
   /** Full headlines (title/url/source) so article follow-ups work after the briefing. */
   news: NewsHeadline[];
   newsText: string | null;
+  /**
+   * Spoken ask at the end of the brief (headlines are not read until the user accepts).
+   * Example: "Want the latest headlines?"
+   */
+  headlineOffer?: string | null;
   xIngest: XIngestBriefing | null;
   xIngestText: string | null;
   /** Today's events from calendars chosen in Briefing settings. Omitted when Agenda is not configured. */
   agenda?: BriefingAgendaEvent[];
   agendaText?: string | null;
+  /** Today's FitnessAlly meals and workouts. Omitted when the snapshot is missing or stale. */
+  fitness?: FitnessDayPlan | null;
+  fitnessText?: string | null;
+  /** Untaken morning medicine, when that briefing section is on. */
+  medicine?: MedicineItem[] | null;
+  medicineText?: string | null;
   reminders: DueReminder[];
   /** Apple Reminders due today or still open from an earlier day. Replaces memory reminders when set. */
   taskReminders?: TaskReminder[];
   remindersText: string | null;
+  /** User-added sections loaded from data/briefing/<profile>/modules. */
+  modules?: BriefingModuleResult[];
   generated: string;
 }
 

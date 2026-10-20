@@ -6,6 +6,7 @@ import {
 import { hashBytes } from "./oip-local/hashing.js";
 import { SCHEMA_ORG } from "./oip-local/schema-org.js";
 import type { MemoryRevision } from "./oip-local/schemas.js";
+import { photoMimeFromFilename, type PhotoAnalysis } from "./photo-analyze.js";
 
 export const AUDIO_NOTE_TEMPLATES = ["meeting", "brainstorm", "checkin", "freeform"] as const;
 export type AudioNoteTemplate = (typeof AUDIO_NOTE_TEMPLATES)[number];
@@ -27,6 +28,33 @@ export interface AudioNoteMetadata {
 }
 
 export type AudioNoteProcessingStatus = "processing" | "completed" | "failed";
+export type AudioNotePhotoAnalysisStatus = "pending" | "completed" | "failed";
+
+export interface AudioNotePhotoAnalysis {
+  summary: string;
+  fullText: string;
+  handwrittenNotes: PhotoAnalysis["handwrittenNotes"];
+  names: string[];
+  dates: string[];
+  places: string[];
+  objects: string[];
+  documentType?: string;
+  backend?: string;
+  model?: string;
+}
+
+export interface AudioNotePhoto {
+  id: string;
+  artifactId: string;
+  fileEntityId: string | null;
+  filename: string;
+  mimeType: string;
+  offsetSeconds: number;
+  capturedAt: string;
+  analysisStatus: AudioNotePhotoAnalysisStatus;
+  analysis?: AudioNotePhotoAnalysis;
+  analysisError?: string;
+}
 
 export interface AudioNoteIngestResult {
   mode: "audio_note";
@@ -205,6 +233,7 @@ function episodeSchema(opts: {
   filename: string;
   mimeType: string;
   durationSeconds?: number;
+  photos?: AudioNotePhoto[];
 }): Record<string, unknown> {
   return {
     "@type": "Event",
@@ -221,6 +250,7 @@ function episodeSchema(opts: {
     encodingFormat: opts.mimeType,
     originalFilename: opts.filename,
     ...(opts.durationSeconds != null ? { durationSeconds: opts.durationSeconds } : {}),
+    ...(opts.photos?.length ? { photos: opts.photos } : {}),
   };
 }
 
@@ -516,6 +546,8 @@ export async function completeAudioNote(opts: {
   const processingStatus = opts.processingStatus ?? "completed";
   const durationSeconds =
     typeof schema.durationSeconds === "number" ? schema.durationSeconds : undefined;
+  const latest = await provider.resolveRef(opts.episodeId);
+  const photos = photosFromSchema((latest?.schema ?? schema) as Record<string, unknown>);
 
   const updated = await provider.updateRecord(
     opts.episodeId,
@@ -530,6 +562,7 @@ export async function completeAudioNote(opts: {
         filename,
         mimeType,
         durationSeconds,
+        photos,
       }),
       alfred: {
         ...(current.alfred ?? {}),
@@ -652,6 +685,7 @@ export function audioNoteFromEpisode(rev: MemoryRevision): {
   createdAt: string;
   updatedAt: string;
   filename: string | null;
+  photos: AudioNotePhoto[];
 } {
   const schema = (rev.schema ?? {}) as Record<string, unknown>;
   const templateRaw = typeof schema.template === "string" ? schema.template : "freeform";
@@ -702,7 +736,282 @@ export function audioNoteFromEpisode(rev: MemoryRevision): {
       (typeof schema.originalFilename === "string" && schema.originalFilename) ||
       rev.originalFilename ||
       null,
+    photos: photosFromSchema(schema),
   };
+}
+
+export function formatAudioNoteOffset(seconds: number): string {
+  const total = Math.max(0, Math.round(Number.isFinite(seconds) ? seconds : 0));
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const secs = total % 60;
+  if (hours > 0) {
+    return `${hours}:${minutes.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
+  }
+  return `${minutes}:${secs.toString().padStart(2, "0")}`;
+}
+
+export function photosFromSchema(schema: Record<string, unknown> | null | undefined): AudioNotePhoto[] {
+  if (!schema || !Array.isArray(schema.photos)) return [];
+  return schema.photos.map(normalizeAudioNotePhoto).filter((photo): photo is AudioNotePhoto => Boolean(photo));
+}
+
+export async function attachAudioNotePhoto(opts: {
+  episodeId: string;
+  filename: string;
+  bytes: Buffer;
+  mimeType?: string;
+  offsetSeconds: number;
+  capturedAt?: string;
+  analysis?: AudioNotePhotoAnalysis;
+  analysisStatus?: AudioNotePhotoAnalysisStatus;
+  analysisError?: string;
+  profileId?: string;
+  providerId?: string;
+}): Promise<AudioNotePhoto> {
+  const { provider } = providerFor(opts);
+  const current = await provider.resolveRef(opts.episodeId);
+  if (!current || current.type !== "Episode") {
+    throw new Error(`Audio note episode not found: ${opts.episodeId}`);
+  }
+
+  const filename = opts.filename.trim() || `note-still-${Date.now()}.jpg`;
+  const mimeType = opts.mimeType?.startsWith("image/")
+    ? opts.mimeType
+    : photoMimeFromFilename(filename);
+  const learnedAt = opts.capturedAt?.trim() || new Date().toISOString();
+  const contentHash = hashBytes(opts.bytes);
+  const schema = { ...(current.schema ?? {}) } as Record<string, unknown>;
+  const title = current.name || "Audio note";
+
+  const artifact = await provider.putArtifactBytes(opts.bytes, {
+    mimeType,
+    originalFilename: filename,
+    name: filename,
+    reindex: false,
+  });
+
+  const file = await provider.createRecord(
+    "Entity",
+    {
+      name: filename,
+      text: opts.analysis?.summary || `${title} still at ${formatAudioNoteOffset(opts.offsetSeconds)}`,
+      schemaType: SCHEMA_ORG.ImageObject,
+      schema: {
+        "@type": "ImageObject",
+        name: filename,
+        encodingFormat: mimeType,
+        description: opts.analysis?.summary || title,
+      },
+      alfred: { entityClass: "audio_note_photo", visibility: "private" as const, confidence: 1 },
+      learnedAt,
+      contentHash,
+      originalFilename: filename,
+      mimeType,
+      provenance: audioNoteProvenance({
+        filename,
+        contentHash,
+        learnedAt,
+        noteName: title,
+        extractionMethod: "audio_note_photo",
+      }),
+      drefs: {
+        sourceArtifact: artifact.id,
+        isPartOf: current.id,
+      },
+    },
+    undefined,
+    { reindex: false },
+  );
+
+  const photo: AudioNotePhoto = {
+    id: artifact.id,
+    artifactId: artifact.id,
+    fileEntityId: file.id,
+    filename,
+    mimeType,
+    offsetSeconds: Math.max(0, Math.round(opts.offsetSeconds || 0)),
+    capturedAt: learnedAt,
+    analysisStatus: opts.analysisStatus ?? (opts.analysis ? "completed" : "pending"),
+    ...(opts.analysis ? { analysis: opts.analysis } : {}),
+    ...(opts.analysisError ? { analysisError: opts.analysisError } : {}),
+  };
+  const latest = await provider.resolveRef(opts.episodeId);
+  const latestSchema = { ...(latest?.schema ?? schema) } as Record<string, unknown>;
+  const latestPhotos = photosFromSchema(latestSchema);
+  latestPhotos.push(photo);
+  latestSchema.photos = latestPhotos;
+
+  await provider.updateRecord(opts.episodeId, { schema: latestSchema }, { reindex: false });
+  if (photo.analysisStatus === "completed" && photo.analysis) {
+    await writePhotoObservation(provider, {
+      title,
+      filename,
+      contentHash,
+      learnedAt,
+      artifactId: artifact.id,
+      episodeId: current.id,
+      photo,
+    });
+  }
+  await provider.rebuildIndexes();
+  return photo;
+}
+
+export async function updateAudioNotePhoto(opts: {
+  episodeId: string;
+  photoId: string;
+  analysis?: AudioNotePhotoAnalysis;
+  analysisStatus?: AudioNotePhotoAnalysisStatus;
+  analysisError?: string;
+  profileId?: string;
+  providerId?: string;
+}): Promise<AudioNotePhoto | null> {
+  const { provider } = providerFor(opts);
+  const current = await provider.resolveRef(opts.episodeId);
+  if (!current || current.type !== "Episode") {
+    throw new Error(`Audio note episode not found: ${opts.episodeId}`);
+  }
+  const schema = { ...(current.schema ?? {}) } as Record<string, unknown>;
+  const photos = photosFromSchema(schema);
+  const index = photos.findIndex((photo) => photo.id === opts.photoId || photo.artifactId === opts.photoId);
+  if (index < 0) return null;
+
+  const previous = photos[index]!;
+  const next: AudioNotePhoto = {
+    ...previous,
+    ...(opts.analysis ? { analysis: opts.analysis } : {}),
+    ...(opts.analysisStatus ? { analysisStatus: opts.analysisStatus } : {}),
+    analysisError: opts.analysisError,
+  };
+  photos[index] = next;
+  schema.photos = photos;
+  await provider.updateRecord(opts.episodeId, { schema }, { reindex: false });
+
+  const shouldWrite =
+    next.analysisStatus === "completed" &&
+    next.analysis &&
+    previous.analysisStatus !== "completed";
+  if (shouldWrite) {
+    const artifactId = String(current.drefs?.sourceArtifact ?? current.sourceArtifact ?? next.artifactId);
+    const contentHash =
+      (typeof current.provenance?.contentHash === "string" && current.provenance.contentHash) ||
+      current.contentHash ||
+      "";
+    await writePhotoObservation(provider, {
+      title: current.name || "Audio note",
+      filename: next.filename,
+      contentHash,
+      learnedAt: next.capturedAt,
+      artifactId,
+      episodeId: current.id,
+      photo: next,
+    });
+  }
+  await provider.rebuildIndexes();
+  return next;
+}
+
+function normalizeAudioNotePhoto(raw: unknown): AudioNotePhoto | null {
+  if (!raw || typeof raw !== "object") return null;
+  const rec = raw as Record<string, unknown>;
+  const id = typeof rec.id === "string" && rec.id.trim()
+    ? rec.id.trim()
+    : typeof rec.artifactId === "string" && rec.artifactId.trim()
+      ? rec.artifactId.trim()
+      : "";
+  if (!id) return null;
+  const statusRaw = typeof rec.analysisStatus === "string" ? rec.analysisStatus : "pending";
+  const analysisStatus: AudioNotePhotoAnalysisStatus =
+    statusRaw === "completed" || statusRaw === "failed" ? statusRaw : "pending";
+  const analysis = rec.analysis && typeof rec.analysis === "object"
+    ? normalizeStoredPhotoAnalysis(rec.analysis as Record<string, unknown>)
+    : undefined;
+  return {
+    id,
+    artifactId: typeof rec.artifactId === "string" && rec.artifactId.trim() ? rec.artifactId.trim() : id,
+    fileEntityId: typeof rec.fileEntityId === "string" && rec.fileEntityId.trim() ? rec.fileEntityId.trim() : null,
+    filename: typeof rec.filename === "string" && rec.filename.trim() ? rec.filename.trim() : "note-still.jpg",
+    mimeType: typeof rec.mimeType === "string" && rec.mimeType.trim() ? rec.mimeType.trim() : "image/jpeg",
+    offsetSeconds: typeof rec.offsetSeconds === "number" && Number.isFinite(rec.offsetSeconds)
+      ? Math.max(0, Math.round(rec.offsetSeconds))
+      : 0,
+    capturedAt: typeof rec.capturedAt === "string" && rec.capturedAt.trim()
+      ? rec.capturedAt
+      : new Date().toISOString(),
+    analysisStatus,
+    ...(analysis ? { analysis } : {}),
+    ...(typeof rec.analysisError === "string" && rec.analysisError.trim()
+      ? { analysisError: rec.analysisError }
+      : {}),
+  };
+}
+
+function normalizeStoredPhotoAnalysis(raw: Record<string, unknown>): AudioNotePhotoAnalysis {
+  return {
+    summary: typeof raw.summary === "string" ? raw.summary : "",
+    fullText: typeof raw.fullText === "string" ? raw.fullText : "",
+    handwrittenNotes: Array.isArray(raw.handwrittenNotes) ? raw.handwrittenNotes as AudioNotePhotoAnalysis["handwrittenNotes"] : [],
+    names: Array.isArray(raw.names) ? raw.names.map((item) => String(item)) : [],
+    dates: Array.isArray(raw.dates) ? raw.dates.map((item) => String(item)) : [],
+    places: Array.isArray(raw.places) ? raw.places.map((item) => String(item)) : [],
+    objects: Array.isArray(raw.objects) ? raw.objects.map((item) => String(item)) : [],
+    ...(typeof raw.documentType === "string" && raw.documentType.trim()
+      ? { documentType: raw.documentType.trim() }
+      : {}),
+    ...(typeof raw.backend === "string" && raw.backend.trim() ? { backend: raw.backend.trim() } : {}),
+    ...(typeof raw.model === "string" && raw.model.trim() ? { model: raw.model.trim() } : {}),
+  };
+}
+
+async function writePhotoObservation(
+  provider: OipLocalMemoryProvider,
+  opts: {
+    title: string;
+    filename: string;
+    contentHash: string;
+    learnedAt: string;
+    artifactId: string;
+    episodeId: string;
+    photo: AudioNotePhoto;
+  },
+): Promise<void> {
+  const analysis = opts.photo.analysis;
+  if (!analysis) return;
+  const offset = formatAudioNoteOffset(opts.photo.offsetSeconds);
+  const parts = [
+    `Photo taken at ${offset} in the recording.`,
+    analysis.summary.trim(),
+    analysis.fullText.trim() ? `Text in image:\n${analysis.fullText.trim()}` : "",
+    analysis.names.length ? `Names: ${analysis.names.join(", ")}` : "",
+  ].filter(Boolean);
+  const text = parts.join("\n\n").trim();
+  if (!text) return;
+  await provider.createRecord(
+    "Observation",
+    {
+      name: `${opts.title} · photo at ${offset}`,
+      text,
+      schemaType: SCHEMA_ORG.CreativeWork,
+      schema: { "@type": "CreativeWork", name: `${opts.title} · photo at ${offset}`, text },
+      alfred: { visibility: "private" as const, confidence: 1, assertionType: "explicit" as const },
+      learnedAt: opts.learnedAt,
+      observedAt: opts.learnedAt,
+      drefs: {
+        isPartOf: opts.episodeId,
+        sourceArtifact: opts.artifactId,
+      },
+      provenance: audioNoteProvenance({
+        filename: opts.filename,
+        contentHash: opts.contentHash,
+        learnedAt: opts.learnedAt,
+        noteName: opts.title,
+        extractionMethod: "audio_note_photo",
+      }),
+    },
+    undefined,
+    { reindex: false },
+  );
 }
 
 function parseNoteDueDate(raw?: string): string | null {

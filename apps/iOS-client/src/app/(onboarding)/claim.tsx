@@ -26,6 +26,7 @@ import {
 } from "@/lib/claim-qr";
 import { useConnection } from "@/lib/connection";
 import { fetchDesktopInfo } from "@/lib/desktop-api";
+import { KEYS, setItem } from "@/lib/secure-store";
 
 /** Accept "192.168.1.24:3000", "mac.local" or a full URL. */
 function normalizeAddress(input: string): string {
@@ -48,9 +49,11 @@ export default function FindYourMac() {
   const insets = useSafeAreaInsets();
   const setServer = useConnection((s) => s.setServer);
   const setCloudSession = useConnection((s) => s.setCloudSession);
+  const knownServerId = useConnection((s) => s.serverId);
+  const linkedToken = useConnection((s) => s.cloudToken);
 
   const [mode, setMode] = useState<"scan" | "manual">("manual");
-  const [serverId, setServerId] = useState("");
+  const [serverId, setServerId] = useState(knownServerId ?? "");
   const [secret, setSecret] = useState("");
   const [address, setAddress] = useState("");
   const [pasted, setPasted] = useState("");
@@ -61,6 +64,7 @@ export default function FindYourMac() {
   const claim = useMutation({
     mutationFn: async (input: ClaimPayload) => {
       const result = await linkDesktop(input.serverId, input.claimSecret);
+      await setItem(KEYS.claimSecret, input.claimSecret.trim().toUpperCase());
       await setCloudSession(result.token);
       await setServer(result.serverId);
       return result;
@@ -145,9 +149,9 @@ export default function FindYourMac() {
               color: "#8D939E",
             }}
           >
-            Alfred is running on your Mac and showing a code. Scan it, or type the eight characters
-            underneath it. Your memory never leaves that machine — this only tells the phone where
-            to knock.
+            {knownServerId && !linkedToken
+              ? "This phone's link to your Mac expired. Enter the claim secret from the Mac to renew it. You don't need to forget the Mac first."
+              : "Alfred is running on your Mac and showing a code. Scan it, or type the eight characters underneath it. Your memory never leaves that machine — this only tells the phone where to knock."}
           </Text>
         </View>
 

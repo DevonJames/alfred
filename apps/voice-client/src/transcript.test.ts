@@ -45,6 +45,19 @@ describe("TranscriptThread.load", () => {
       expect(created[1]?.innerHTML).toMatch(/ready when you are/);
       thread.endStreaming();
       expect(created.filter((c) => c.className.includes("streaming"))).toHaveLength(0);
+
+      thread.handleCaption({ type: "start", text: "" });
+      thread.handleCaption({ type: "reveal", text: "I'm on" });
+      thread.handleCaption({ type: "end", reason: "complete" });
+      thread.handleCaption({ type: "reveal", text: "I'm on it. Give me a sec." });
+      thread.handleCaption({ type: "end", reason: "complete" });
+      thread.handleCaption({ type: "reveal", text: "Splendid." });
+      const assistant = children.filter((c) => c.className.includes("bubble-assistant"));
+      expect(assistant.map((c) => c.innerHTML)).toEqual([
+        expect.stringMatching(/ready when you are/),
+        expect.stringMatching(/Give me a sec/),
+        expect.stringMatching(/Splendid\./),
+      ]);
     } finally {
       Object.defineProperty(globalThis, "document", {
         configurable: true,

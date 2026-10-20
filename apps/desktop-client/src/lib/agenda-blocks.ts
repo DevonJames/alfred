@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { calendarPolicyPath } from "@alfred/calendar-gateway";
@@ -16,6 +17,8 @@ export interface AgendaTimeBlock extends TimeBlockRule {
   id: string;
   name: string;
   calendarId: string;
+  /** Categories from the standard weekly plan that this block hosts. */
+  categoryIds: string[];
 }
 
 export interface AgendaBlocksFile {
@@ -36,6 +39,15 @@ export interface Placement {
   startMin: number;
   endMin: number;
   overlapTitle: string | null;
+}
+
+export function categoryIdsOf(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  return [
+    ...new Set(
+      raw.flatMap((id) => (typeof id === "string" && id.trim() ? [id.trim()] : [])),
+    ),
+  ];
 }
 
 export function agendaBlocksPath(profileId?: string): string {
@@ -153,8 +165,9 @@ export function nextFittingDay(input: {
 export async function loadAgendaBlocks(profileId?: string): Promise<AgendaBlocksFile> {
   try {
     const raw = JSON.parse(await readFile(agendaBlocksPath(profileId), "utf8")) as AgendaBlocksFile;
+    const blocks = Array.isArray(raw?.blocks) ? raw.blocks : [];
     return {
-      blocks: Array.isArray(raw?.blocks) ? raw.blocks : [],
+      blocks: blocks.map((block) => ({ ...block, categoryIds: categoryIdsOf(block?.categoryIds) })),
       placed: Array.isArray(raw?.placed) ? raw.placed.filter((id) => typeof id === "string") : [],
     };
   } catch {
@@ -166,4 +179,34 @@ export async function saveAgendaBlocks(file: AgendaBlocksFile, profileId?: strin
   const target = agendaBlocksPath(profileId);
   await mkdir(path.dirname(target), { recursive: true });
   await writeFile(target, `${JSON.stringify(file, null, 2)}\n`, "utf8");
+}
+
+/** Normalize a client/time-block payload, or null if required fields are missing. */
+export function cleanAgendaBlock(raw: unknown): AgendaTimeBlock | null {
+  if (!raw || typeof raw !== "object") return null;
+  const row = raw as Record<string, unknown>;
+  const name = typeof row.name === "string" ? row.name.trim() : "";
+  const start = typeof row.start === "string" ? row.start : "";
+  const end = typeof row.end === "string" ? row.end : "";
+  const calendarId = typeof row.calendarId === "string" ? row.calendarId.trim() : "";
+  const repeat = row.repeat;
+  const days = Array.isArray(row.days)
+    ? [...new Set(row.days.filter((day): day is number => typeof day === "number" && day >= 0 && day <= 6))]
+    : [];
+  const startMin = parseClock(start);
+  const endMin = parseClock(end);
+  if (!name || !calendarId || startMin == null || endMin == null || startMin >= endMin) return null;
+  if (repeat !== "all" && repeat !== "weekdays" && repeat !== "weekends" && repeat !== "custom") return null;
+  if (repeat === "custom" && !days.length) return null;
+  const id = typeof row.id === "string" && row.id.trim() ? row.id.trim() : randomUUID();
+  return {
+    id,
+    name: name.slice(0, 80),
+    start,
+    end,
+    repeat: repeat as BlockRepeat,
+    days,
+    calendarId,
+    categoryIds: categoryIdsOf(row.categoryIds),
+  };
 }

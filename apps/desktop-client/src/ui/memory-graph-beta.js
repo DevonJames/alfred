@@ -1431,7 +1431,11 @@
           <div>
             <div class="detail-label-row">
               <label for="edit-text">Details</label>
-              <button type="button" class="detail-expand" id="btn-expand-details">Expand</button>
+              <span>
+                <button type="button" class="detail-expand" id="btn-copy-details">Copy</button>
+                <button type="button" class="detail-expand" id="btn-download-details">Download</button>
+                <button type="button" class="detail-expand" id="btn-expand-details">Expand</button>
+              </span>
             </div>
             <textarea id="edit-text" name="text">${escapeHtml(String(text))}</textarea>
           </div>
@@ -1499,6 +1503,12 @@
       });
       document.getElementById("btn-center")?.addEventListener("click", () => {
         flyToNode(id, { dist: 220, ms: 700 });
+      });
+      document.getElementById("btn-copy-details")?.addEventListener("click", () => {
+        copyFieldText(document.getElementById("edit-text"), document.getElementById("btn-copy-details"));
+      });
+      document.getElementById("btn-download-details")?.addEventListener("click", () => {
+        downloadFieldText(document.getElementById("edit-text"));
       });
       document.getElementById("btn-expand-details")?.addEventListener("click", () => {
         openDetailOverlay(name);
@@ -1654,6 +1664,71 @@
     } catch (err) {
       elDetailBody.innerHTML = `<p class="meta">${escapeHtml(err.message || String(err))}</p>`;
     }
+  }
+
+  async function copyFieldText(field, btn) {
+    const text = field?.value || "";
+    if (!text || !btn) return;
+    let copied = false;
+    try {
+      await navigator.clipboard.writeText(text);
+      copied = true;
+    } catch {
+      const start = field.selectionStart;
+      const end = field.selectionEnd;
+      field.focus();
+      field.select();
+      try {
+        copied = document.execCommand("copy");
+      } catch {
+        copied = false;
+      }
+      if (typeof start === "number" && typeof end === "number") field.setSelectionRange(start, end);
+    }
+    const previous = btn.textContent;
+    btn.textContent = copied ? "Copied" : "Copy failed";
+    window.setTimeout(() => {
+      if (btn.isConnected) btn.textContent = previous;
+    }, 1400);
+  }
+
+  function txtFilename(name) {
+    const base = String(name || "memory")
+      .replace(/[<>:"/\\|?*\u0000-\u001f]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 80);
+    const stem = base || "memory";
+    return stem.toLowerCase().endsWith(".txt") ? stem : `${stem}.txt`;
+  }
+
+  async function downloadFieldText(field) {
+    const text = field?.value || "";
+    if (!text) return;
+    const suggestedName = txtFilename(document.getElementById("detail-title")?.textContent);
+    if (typeof window.showSaveFilePicker === "function") {
+      try {
+        const handle = await window.showSaveFilePicker({
+          suggestedName,
+          types: [{ description: "Text file", accept: { "text/plain": [".txt"] } }],
+        });
+        const writable = await handle.createWritable();
+        await writable.write(text);
+        await writable.close();
+        return;
+      } catch (err) {
+        if (err && err.name === "AbortError") return;
+      }
+    }
+    const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = suggestedName;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
   }
 
   function syncDetailOverlay(title) {
@@ -2011,6 +2086,12 @@
   });
   document.getElementById("detail-overlay-close")?.addEventListener("click", closeDetailOverlay);
   document.getElementById("detail-overlay-done")?.addEventListener("click", closeDetailOverlay);
+  document.getElementById("detail-overlay-copy")?.addEventListener("click", () => {
+    copyFieldText(elOverlayText, document.getElementById("detail-overlay-copy"));
+  });
+  document.getElementById("detail-overlay-download")?.addEventListener("click", () => {
+    downloadFieldText(elOverlayText);
+  });
   document.getElementById("detail-overlay-save")?.addEventListener("click", () => {
     const editText = document.getElementById("edit-text");
     if (elOverlayText && editText) editText.value = elOverlayText.value;

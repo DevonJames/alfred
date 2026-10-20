@@ -290,7 +290,7 @@
         const box = document.createElement("input");
         box.type = "checkbox";
         box.checked = calendar.ignoreOverlaps === true;
-        box.title = "Events stay on the agenda and do not count as conflicts when placing a reminder.";
+        box.title = "Events stay visible. Plan and Reminders may place something on top of them.";
         box.addEventListener("change", () => {
           calendar.ignoreOverlaps = box.checked;
           void save();

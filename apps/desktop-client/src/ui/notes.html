@@ -119,6 +119,20 @@
       .box p, .box li { font-size: 0.82rem; line-height: 1.45; margin: 0 0 0.4rem; }
       .box ul { margin: 0; padding-left: 1.1rem; }
       .wide { grid-column: 1 / -1; }
+      .stills { display: grid; gap: 0.85rem; }
+      .still {
+        display: grid;
+        gap: 0.45rem;
+      }
+      .still img {
+        width: 100%;
+        max-height: 22rem;
+        object-fit: contain;
+        background: #0a121a;
+        border: 1px solid var(--line);
+      }
+      .still figcaption { color: var(--muted); font-size: 0.72rem; letter-spacing: 0.06em; text-transform: uppercase; }
+      .still .ocr { color: var(--fg); font-size: 0.78rem; white-space: pre-wrap; }
       audio { width: 100%; margin: 0.5rem 0 0; }
       .empty { color: var(--muted); font-size: 0.8rem; }
       @media (max-width: 720px) { .boxes { grid-template-columns: 1fr; } }
@@ -261,9 +275,39 @@
           box("Open Questions", listItems(note.openQuestions, "None")) +
           box("Place", note.location ? `<p>${escapeHtml(note.location)}</p>` : `<p class="empty">None</p>`) +
           box("Attendees", listItems((note.attendees || []).map((a) => a.name || a), "None")) +
+          stillsBox(note) +
           `<article class="box wide"><h4>Transcript</h4>${
             note.transcript ? `<p>${escapeHtml(note.transcript)}</p>` : `<p class="empty">No transcript yet.</p>`
           }</article>`;
+      }
+
+      function formatOffset(seconds) {
+        const total = Math.max(0, Math.round(Number(seconds) || 0));
+        const m = Math.floor(total / 60);
+        const s = total % 60;
+        return `${m}:${String(s).padStart(2, "0")}`;
+      }
+
+      function stillsBox(note) {
+        const photos = note.photos || [];
+        if (!photos.length) return "";
+        const figures = photos.map((photo) => {
+          const analysis = photo.analysis || {};
+          const status = photo.analysisStatus === "completed"
+            ? (analysis.summary || "Analyzed")
+            : photo.analysisStatus === "failed"
+              ? (photo.analysisError || "Analysis failed")
+              : "Analyzing…";
+          const ocr = analysis.fullText
+            ? `<p class="ocr">${escapeHtml(analysis.fullText)}</p>`
+            : "";
+          return `<figure class="still">
+            <img src="${api(`/notes/${encodeURIComponent(note.id)}/photos/${encodeURIComponent(photo.id)}`)}" alt="${escapeHtml(photo.filename || "Still")}" />
+            <figcaption>${escapeHtml(formatOffset(photo.offsetSeconds))} · ${escapeHtml(status)}</figcaption>
+            ${ocr}
+          </figure>`;
+        }).join("");
+        return `<article class="box wide"><h4>Stills</h4><div class="stills">${figures}</div></article>`;
       }
 
       async function loadNotes() {
@@ -275,7 +319,10 @@
           const current = notes.find((n) => n.id === selectedId);
           if (current) renderDetail(current);
         }
-        const busy = notes.some((n) => n.processingStatus === "processing");
+        const busy = notes.some((n) =>
+          n.processingStatus === "processing" ||
+          (n.photos || []).some((p) => p.analysisStatus === "pending")
+        );
         if (busy && !listPoll) {
           listPoll = setInterval(() => { loadNotes().catch(() => {}); }, 4000);
         }

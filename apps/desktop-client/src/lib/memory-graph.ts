@@ -10,9 +10,15 @@ import {
   rebuildOpenAiEmbeddings,
   buildSemanticMap,
   setSelfPerson,
+  writeGraphViewReport,
+  writeTalkFocus,
   type DedupeProgressHandler,
+  type TalkFocus,
   type EmbeddingRebuildProgress,
   type EmbeddingSpaceSnapshot,
+  type GraphReportProgressHandler,
+  type GraphReportView,
+  type GraphReportWriteResult,
   type MemoryRevision,
   type SemanticMapMethod,
   type SemanticMapResult,
@@ -499,6 +505,54 @@ export async function setMemorySelf(
   const detail = await loadMemoryRecordDetail(result.selfId, profileId);
   if (!detail) return null;
   return { ...result, detail };
+}
+
+export async function setTalkFocusFromNode(
+  id: string,
+  profileId?: string,
+): Promise<TalkFocus | null> {
+  const detail = await loadMemoryRecordDetail(id, profileId);
+  if (!detail?.index) return null;
+  const rev = detail.revision;
+  const schema = (rev?.schema ?? {}) as Record<string, unknown>;
+  const text = [
+    rev?.text,
+    typeof schema.description === "string" ? schema.description : "",
+    typeof schema.text === "string" ? schema.text : "",
+    detail.index.search_text,
+  ]
+    .map((part) => String(part || "").trim())
+    .filter(Boolean)
+    .join("\n\n")
+    .trim();
+  const focus: TalkFocus = {
+    did: detail.index.id,
+    name: (detail.index.name || rev?.name || "Memory").trim(),
+    type: detail.index.record_type || rev?.type || "Entity",
+    text,
+    setAt: new Date().toISOString(),
+  };
+  await writeTalkFocus(focus);
+  return focus;
+}
+
+export async function generateGraphViewReport(opts: {
+  nodeIds: string[];
+  prompt?: string;
+  title?: string;
+  view?: GraphReportView;
+  profileId?: string;
+  onProgress?: GraphReportProgressHandler;
+}): Promise<GraphReportWriteResult> {
+  const provider = getProvider(opts.profileId);
+  return writeGraphViewReport({
+    provider,
+    nodeIds: opts.nodeIds,
+    prompt: opts.prompt,
+    title: opts.title,
+    view: opts.view,
+    onProgress: opts.onProgress,
+  });
 }
 
 /** Merge duplicate Entity nodes and union their assertion connections. */

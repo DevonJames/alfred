@@ -496,6 +496,24 @@ export const GET_EXCHANGE_RATE_TOOL = {
   },
 } as const;
 
+export const ADD_BRIEFING_MODULE_TOOL = {
+  name: "add_briefing_module",
+  description:
+    "Add a new section to the daily briefing. Call when the user asks to add, include, or create a briefing category " +
+    "(for example 'add upcoming rocket launches to my briefing'). " +
+    "Pass their request in their own words. Do not invent the section contents yourself.",
+  parameters: {
+    type: "object",
+    properties: {
+      request: {
+        type: "string",
+        description: "What the user wants added to the daily briefing, in their words.",
+      },
+    },
+    required: ["request"],
+  },
+} as const;
+
 export const GET_HACKER_NEWS_TOOL = {
   name: "get_hacker_news",
   description:
@@ -511,6 +529,71 @@ export const GET_HACKER_NEWS_TOOL = {
         description: "ai filters titles for AI. general is the front page.",
       },
     },
+  },
+} as const;
+
+export const GET_FITNESS_PLAN_TOOL = {
+  name: "get_fitness_plan",
+  description:
+    "Read today's FitnessAlly meals and workouts. " +
+    "Call when the user asks what they are eating, what's for breakfast, lunch, or dinner, or what they are training today. " +
+    "Do not invent meals or workouts. If this returns that there is no plan, say so.",
+  parameters: { type: "object", properties: {} },
+} as const;
+
+export const GET_FITNESS_FOCUS_TOOL = {
+  name: "get_fitness_focus",
+  description:
+    "Read the FitnessAlly recipe or workout currently on the user's screen, including the batch size they have selected. " +
+    "Call when they ask about ingredients, spices, amounts, steps, or the recipe or workout they have open, including this recipe, this exercise, or this one. " +
+    "Answer from the card. Do not ask which recipe when a card is present. If a detail is missing, say so. Do not invent ingredients or steps.",
+  parameters: { type: "object", properties: {} },
+} as const;
+
+export const LOG_MEDICINE_TOOL = {
+  name: "log_medicine",
+  description:
+    "Update today's medicine and supplement checklist. " +
+    "Call when the user says they took their pills or supplements, took everything except one, skipped or undid one, or asks what is still untaken. " +
+    "mode only marks the named items. mode all marks a period or the whole day. mode except marks everything in that scope except the named items. mode undo clears named items. mode status reads what is still untaken. " +
+    "Do not invent products. If the result says a name is ambiguous, ask which one and do not guess.",
+  parameters: {
+    type: "object",
+    properties: {
+      mode: {
+        type: "string",
+        enum: ["only", "all", "except", "undo", "status"],
+        description: "only, all, except, undo, or status.",
+      },
+      period: {
+        type: "string",
+        enum: ["morning", "midday", "evening"],
+        description: "morning, midday, or evening. Omit for the whole day.",
+      },
+      names: {
+        type: "array",
+        items: { type: "string" },
+        description: "Product names as the user said them. Required for only, except, and undo.",
+      },
+    },
+    required: ["mode"],
+  },
+} as const;
+
+export const CALCULATE_TOOL = {
+  name: "calculate",
+  description:
+    "Evaluate an arithmetic expression. Call this for every sum, difference, product, or total instead of doing the arithmetic yourself. " +
+    "Pass the expression with numbers, +, -, *, /, and parentheses. Example: 9.75 + 10.75 + 8 + 9 + 9 + 9.5",
+  parameters: {
+    type: "object",
+    properties: {
+      expression: {
+        type: "string",
+        description: "The arithmetic to evaluate, such as (2 + 3) * 4.",
+      },
+    },
+    required: ["expression"],
   },
 } as const;
 

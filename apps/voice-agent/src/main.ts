@@ -21,6 +21,7 @@ import { resolve } from "node:path";
 import { LiveKitRoomSession } from "@alfred/livekit";
 import { createCascadedVoiceRuntime } from "./wiring.js";
 import { setConversationHistoryStack } from "./conversation-history.js";
+import { noteRoomIdentities } from "./fitness-room.js";
 
 // Load repo-root .env when started from apps/voice-agent.
 loadEnv({ path: resolve(process.cwd(), "../../.env") });
@@ -61,6 +62,7 @@ async function main(): Promise<void> {
     outputSampleRate: 24_000,
     media: runtime.media,
     targetIdentity: process.env.LIVEKIT_TARGET_IDENTITY,
+    onParticipants: noteRoomIdentities,
   });
 
   await roomSession.start().catch((err) => {

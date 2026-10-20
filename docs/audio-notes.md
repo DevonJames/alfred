@@ -78,8 +78,8 @@ summarizeAudioNote()      Grok/xAI, else OpenAI; map-reduce if transcript is lon
     │
     ▼
 completeAudioNote()
-    Episode schema: summary, takeaways, nextSteps, openQuestions, attendees, template, transcript
-    Observations: summary, takeaways, actions (remindAt), questions, transcript chunks
+    Episode schema: summary, takeaways, nextSteps, openQuestions, attendees, template, transcript, photos[]
+    Observations: summary, takeaways, actions (remindAt), questions, transcript chunks, photo OCR
     rebuildIndexes()
     processingStatus=completed
 ```
@@ -113,6 +113,27 @@ Observations
     audio_note_action          (+ remindAt when dueDate is YYYY-MM-DD)
     audio_note_question
     audio_note_transcript      (~2200 char chunks)
+    audio_note_photo           (OCR + Grok analysis, timestamped to the recording)
+Entity ImageObject             alfred.entityClass = audio_note_photo
+```
+
+Stills taken during a recording are saved to the phone's Camera Roll **and** attached to the Episode at `offsetSeconds`. The Mac runs the same vision OCR + Grok path as photo ingest, then folds that text into `summarizeAudioNote`. `completeAudioNote` must preserve `schema.photos`.
+
+```json
+{
+  "id": "<artifact-id>",
+  "artifactId": "<artifact-id>",
+  "filename": "note-still-….jpg",
+  "mimeType": "image/jpeg",
+  "offsetSeconds": 94,
+  "capturedAt": "2026-10-20T12:34:00.000Z",
+  "analysisStatus": "pending | completed | failed",
+  "analysis": {
+    "summary": "A slide about pricing",
+    "fullText": "Q3 pricing change ships Friday",
+    "documentType": "screenshot"
+  }
+}
 ```
 
 Graph preview follows `drefs.sourceArtifact` and plays `kind: "audio"` (`<audio controls>` on desktop). Retrieval tags notes as `source=audio note`.
@@ -211,7 +232,8 @@ curl -sS -X POST http://127.0.0.1:3000/notes/from-audio-async \
     "createdAt": "...",
     "updatedAt": "...",
     "jobId": "<job-uuid>",
-    "job": { "...same job..." }
+    "job": { "...same job..." },
+    "photos": []
   }
 }
 ```
@@ -334,6 +356,7 @@ Mounted in `apps/desktop-client/src/main.ts`:
 | POST | `/notes/from-audio` | multipart `audio` | `{ note }` after **full** STT+summarize (short only) |
 | POST | `/notes/from-audio-async` | multipart `audio` | `{ job, note }` stub; work continues |
 | GET | `/notes/:id/audio` | | raw audio (`Content-Type` from the Artifact) |
+| GET | `/notes/:id/photos/:photoId` | | raw still |
 | POST | `/notes/:id/retry-details` | | `{ note }` |
 | POST | `/notes/:id/retry-transcript` | | `{ job }` |
 
@@ -357,6 +380,10 @@ All routes: `Authorization: Bearer <device-token>`. On relay also `X-Cloud-Token
 | GET | `/api/notes/:id/audio` | Raw bytes (broken over relay — use chunks) |
 | GET | `/api/notes/:id/audio/meta` | `{ audio: { filename, mimeType, byteLength, totalChunks, chunkSize } }` |
 | GET | `/api/notes/:id/audio/chunks/:index` | `{ chunk: { index, data, totalChunks, byteLength } }` |
+| POST | `/api/notes/:id/photos` | JSON `{ image: "<base64>", filename, mimeType, offsetSeconds }` — attach a still |
+| GET | `/api/notes/:id/photos/:photoId` | Raw still (broken over relay — use chunks) |
+| GET | `/api/notes/:id/photos/:photoId/meta` | `{ photo: { filename, mimeType, byteLength, totalChunks, chunkSize } }` |
+| GET | `/api/notes/:id/photos/:photoId/chunks/:index` | `{ chunk: { index, data, totalChunks, byteLength } }` |
 | POST | `/api/notes/:id/retry-details` | Re-summarize |
 | POST | `/api/notes/:id/retry-transcript` | Re-transcribe |
 

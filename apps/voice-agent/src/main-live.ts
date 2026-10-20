@@ -2,7 +2,8 @@
  * ALFRED experimental GPT-Live voice agent (LiveKit Agents + OpenAI GPT-Live-1).
  *
  * Separate from the cascade stack (Deepgram → Terra → ElevenLabs).
- * Voice: Ripple by default (custom Alfred clone later via OpenAI).
+ * Voice: a saved prompt-to-voice (default Alfred description), or a named
+ * builtin via ALFRED_GPT_LIVE_VOICE.
  *
  * Usage:
  *   1. OPENAI_API_KEY with GPT-Live alpha access + LIVEKIT_* in .env
@@ -31,9 +32,11 @@ import {
   type TrackPublication,
 } from "@livekit/rtc-node";
 import * as openai from "@livekit/agents-plugin-openai";
+import { formatNewsForDisplay } from "@alfred/briefing";
 import { createAlfredBrain } from "./brain.js";
 import { handleLiveControlPayload } from "./live/control.js";
 import { buildLiveBackendInstructions, buildLiveVoiceInstructions } from "./live/instructions.js";
+import { resolveGptLiveVoice } from "./live/gpt-live-voice.js";
 import { createAlfredLiveTools } from "./live/tools.js";
 import { createRoomUiTranscriptPublisher } from "./live/ui-transcripts.js";
 import { appendConversationTurn, setConversationHistoryStack } from "./conversation-history.js";
@@ -44,7 +47,6 @@ setConversationHistoryStack("live");
 
 export const LIVE_AGENT_NAME = process.env.LIVEKIT_AGENT_NAME?.trim() || "alfred-live";
 const LIVE_IDENTITY = process.env.LIVEKIT_IDENTITY?.trim() || "alfred-agent";
-const LIVE_VOICE = process.env.ALFRED_GPT_LIVE_VOICE?.trim() || "ripple";
 const BACKEND_MODEL = process.env.ALFRED_GPT_LIVE_BACKEND_MODEL?.trim() || "gpt-5.6-luna";
 
 /** GPT-Live caps each appendThinking/appendCommentary at 500 tokens. */
@@ -52,6 +54,10 @@ const MAX_APPEND_CHARS = 1_800;
 
 function isPhoneIdentity(identity: string): boolean {
   return identity.startsWith("alfred-ios");
+}
+
+function isFitnessIdentity(identity: string): boolean {
+  return identity.startsWith("alfred-fitness");
 }
 
 function isRobotIdentity(identity: string): boolean {
@@ -64,7 +70,16 @@ function isWebIdentity(identity: string): boolean {
 }
 
 function isTalkingIdentity(identity: string): boolean {
-  return isPhoneIdentity(identity) || isWebIdentity(identity) || isRobotIdentity(identity);
+  return (
+    isPhoneIdentity(identity) ||
+    isWebIdentity(identity) ||
+    isRobotIdentity(identity) ||
+    isFitnessIdentity(identity)
+  );
+}
+
+function talkersInRoom(room: Room): RemoteParticipant[] {
+  return talkingPeers(room).filter((participant) => !isRobotIdentity(participant.identity));
 }
 
 function isRobotLiveRoom(name: string | undefined | null): boolean {
@@ -101,6 +116,7 @@ function requestPhoneAudio(participant: RemoteParticipant): void {
 function pickTalkingPhone(room: Room): RemoteParticipant | undefined {
   const peers = talkingPeers(room);
   const phones = peers.filter((p) => isPhoneIdentity(p.identity));
+  const fitness = peers.filter((p) => isFitnessIdentity(p.identity));
   const webs = peers.filter((p) => isWebIdentity(p.identity));
   const robots = peers.filter((p) => isRobotIdentity(p.identity));
   const withPub = (list: RemoteParticipant[]) =>
@@ -109,12 +125,15 @@ function pickTalkingPhone(room: Room): RemoteParticipant | undefined {
     );
   return (
     phones.find(phoneHasSubscribedMic) ??
+    fitness.find(phoneHasSubscribedMic) ??
     webs.find(phoneHasSubscribedMic) ??
     robots.find(phoneHasSubscribedMic) ??
     withPub(phones) ??
+    withPub(fitness) ??
     withPub(webs) ??
     withPub(robots) ??
     phones.at(-1) ??
+    fitness.at(-1) ??
     webs.at(-1) ??
     robots.at(-1)
   );
@@ -210,7 +229,13 @@ function watchRobotPhone(
   });
 
   room.on(RoomEvent.ParticipantConnected, (participant) => {
-    if (!isPhoneIdentity(participant.identity)) return;
+    if (
+      !isPhoneIdentity(participant.identity) &&
+      !isWebIdentity(participant.identity) &&
+      !isFitnessIdentity(participant.identity)
+    ) {
+      return;
+    }
     cancelGrace();
     requestPhoneAudio(participant);
   });
@@ -220,14 +245,14 @@ function watchRobotPhone(
       cancelGrace();
       return;
     }
-    if (isPhoneIdentity(participant.identity) && phonesInRoom(room).length === 0) {
+    if (isPhoneIdentity(participant.identity) && talkersInRoom(room).length === 0) {
       console.log(
         `[voice:live] iPhone ${participant.identity} left — ${PHONE_LEAVE_GRACE_MS}ms grace`,
       );
       cancelGrace();
       grace = setTimeout(() => {
         grace = null;
-        if (phonesInRoom(room).length) return;
+        if (talkersInRoom(room).length) return;
         console.log("[voice:live] phone did not return — ending GPT-Live job");
         onPhoneGone();
       }, PHONE_LEAVE_GRACE_MS);
@@ -239,7 +264,7 @@ function watchRobotPhone(
       link(next.identity);
       return;
     }
-    if (phonesInRoom(room).length) {
+    if (talkersInRoom(room).length) {
       cancelGrace();
       return;
     }
@@ -252,7 +277,7 @@ function watchRobotPhone(
         if (phoneHasSubscribedMic(returned)) link(returned.identity);
         return;
       }
-      if (phonesInRoom(room).length) return;
+      if (talkersInRoom(room).length) return;
       console.log("[voice:live] phone did not return — ending GPT-Live job");
       onPhoneGone();
     }, PHONE_LEAVE_GRACE_MS);
@@ -280,8 +305,19 @@ export default defineAgent({
     const ui = createRoomUiTranscriptPublisher(() => ctx.room);
     const tools = createAlfredLiveTools(brain, {
       publishExpression: (event) => ui.publishExpression(event),
+      showStructuredCaption: (speech, display) => {
+        ui.beginCaption(speech, { layout: "briefing", display });
+      },
     });
-    const voiceInstructions = buildLiveVoiceInstructions(brain);
+    const liveVoice = await resolveGptLiveVoice();
+    const voiceLabel =
+      typeof liveVoice.voice === "string" ? liveVoice.voice : liveVoice.voice.id;
+    const voiceInstructions = [
+      await buildLiveVoiceInstructions(brain),
+      liveVoice.instruction ? `Speak in this voice: ${liveVoice.instruction}` : "",
+    ]
+      .filter(Boolean)
+      .join("\n\n");
     const backendInstructions = await buildLiveBackendInstructions(brain);
 
     console.log("[voice:live] job starting");
@@ -289,11 +325,13 @@ export default defineAgent({
     console.log(
       `  Persona: ${brain.persona.dir} (SOUL=${brain.persona.soul ? "yes" : "no"} IDENTITY=${brain.persona.identity ? "yes" : "no"} USER=${brain.persona.user ? "yes" : "no"})`,
     );
-    console.log(`  GPT-Live voice=${LIVE_VOICE} backend=${BACKEND_MODEL}`);
+    console.log(
+      `  GPT-Live voice=${voiceLabel} (${liveVoice.source}) backend=${BACKEND_MODEL}`,
+    );
     console.log(`  Room=${ctx.room.name} job=${ctx.job.id}`);
 
     const model = new openai.realtime.GPTLiveModel({
-      voice: LIVE_VOICE,
+      voice: liveVoice.voice,
       responsesOptions: {
         model: BACKEND_MODEL,
         instructions: backendInstructions,
@@ -395,6 +433,8 @@ export default defineAgent({
     const commitAndEnrichUserTurn = (text: string, source: "voice" | "text" = "voice"): void => {
       const gen = ++enrichGen;
       lastUserSource = source;
+      ui.releaseStructured();
+      assistantAcc = "";
 
       void brain.memory
         .commitTurn({
@@ -449,6 +489,15 @@ export default defineAgent({
               display: decision.payload.display,
             });
             ui.revealCaption(decision.speech);
+            duplex.appendCommentary(clipAppend(decision.speech));
+          } else if (decision.action === "playNews") {
+            if (decision.newsHeadlines?.length) {
+              brain.news.rememberHeadlines(decision.newsHeadlines);
+            }
+            ui.beginCaption(decision.speech, {
+              layout: "briefing",
+              display: formatNewsForDisplay(decision.newsHeadlines ?? []),
+            });
             duplex.appendCommentary(clipAppend(decision.speech));
           } else if (decision.action === "decline") {
             ui.beginCaption("");
